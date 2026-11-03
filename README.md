@@ -19,6 +19,10 @@ curl -fsSL https://raw.githubusercontent.com/swattoolchain/smart/main/deploy/dep
 
 Then point the `tharam.store` and `www.tharam.store` A records at the server's IP. HTTPS certificates are issued automatically.
 
+The script picks a mode automatically:
+- **Shared:** if a Caddy container named `specialley-caddy-1` already owns ports 80/443, Store Guard runs as its own compose project (`tharam`) on that Caddy's Docker network, and a `tharam.store` site block is appended to `/opt/specialley/deploy/Caddyfile` (backed up first, validated, then reloaded; restored if validation fails). Override with `EXISTING_CADDY=` and `EXISTING_CADDYFILE=`.
+- **Standalone:** otherwise it brings its own Caddy (`deploy/docker-compose.yml`).
+
 Update to the latest code at any time:
 
 ```bash
@@ -30,5 +34,5 @@ Settings live in `/opt/tharam/deploy/.env` (SMTP, admin email, check intervals).
 Back up the data volume (database, screenshots, visual baselines):
 
 ```bash
-cd /opt/tharam/deploy && docker compose exec guard sh -c 'tar czf - /data' > tharam-backup-$(date +%F).tgz
+cd /opt/tharam/deploy && docker compose -f docker-compose.shared.yml exec guard sh -c 'tar czf - /data' > tharam-backup-$(date +%F).tgz
 ```

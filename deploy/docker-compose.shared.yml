@@ -1,0 +1,28 @@
+# Store Guard behind an EXISTING Caddy that already owns ports 80/443 (e.g. the Specialley box).
+# Joins that Caddy's Docker network so Caddy can reach it as "tharam-guard:3000".
+name: tharam
+
+services:
+  guard:
+    build: ../apps/guard
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      PORT: "3000"
+    volumes:
+      - guard-data:/data
+    shm_size: "1gb"
+    mem_limit: 3g
+    restart: unless-stopped
+    networks:
+      edge:
+        aliases:
+          - tharam-guard
+
+networks:
+  edge:
+    external: true
+    name: ${EDGE_NETWORK}
+
+volumes:
+  guard-data:
