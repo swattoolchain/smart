@@ -3,35 +3,34 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tharam Store Guard – Know your Shopify store can still sell</title>
-<meta name="description" content="Store Guard shops your Shopify store like a real customer every few hours: search, add to cart, checkout, speed and SEO. Get an alert the moment a theme edit or app update breaks something.">
+<title>Tharam – Know your online store can still sell</title>
+<meta name="description" content="Tharam tests your online store like a real customer every few hours: add to cart, checkout, speed, SEO and more. Works with any store, deepest on Shopify. Get an alert the moment something breaks.">
 <link rel="canonical" href="https://tharam.store/">
 <meta property="og:title" content="Your store can be open and still not sell">
-<meta property="og:description" content="Free 2-minute check of your Shopify store: add to cart, checkout, speed, SEO, broken links.">
+<meta property="og:description" content="Free 2-minute check of your online store: add to cart, checkout, speed, SEO, broken links.">
 <meta property="og:image" content="https://tharam.store/assets/og.png">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;600&family=Public+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/fonts/fonts.css">
 <link rel="stylesheet" href="/assets/site.css">
 </head>
 <body>
 <header class="top"><div class="wrap">
-  <a class="brand" href="/"><svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.4 12 15 6.9-1.6 12-7.5 12-15V7L16 2z" fill="#1b1f3b"/><path d="m10.5 16.5 4 4 7.5-8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Tharam Store Guard</a>
-  <nav><a class="hide-sm" href="#what">What we test</a><a class="hide-sm" href="#pricing">Pricing</a><a href="/app">Log in</a></nav>
+  <a class="brand" href="/" aria-label="Tharam home"><img src="/assets/brand/tharam-mark.svg" width="30" height="30" alt=""><span class="wm">tharam</span></a>
+  <nav><a class="hide-sm" href="/checks">All checks</a><a class="hide-sm" href="#pricing">Pricing</a><a class="hide-sm" href="/demo">Book a demo</a><a href="/app">Log in</a></nav>
 </div></header>
 
 <main>
 <section class="hero"><div class="wrap">
   <div>
     <h1>Your store can be open and still not sell.</h1>
-    <p class="lede">Store Guard shops your Shopify store like a real customer, every few hours. When a theme edit or app update breaks add to cart or checkout, you hear about it before your customers do.</p>
+    <p class="lede">Tharam Store Guard tests your online store like a real customer, every few hours. When a theme edit, plugin or app update breaks add to cart or checkout, you hear about it before your customers do.</p>
     <form class="scan-form" id="scan-form" novalidate>
       <label for="url" class="visually-hidden" style="position:absolute;left:-9999px">Your store URL</label>
       <input id="url" name="url" type="text" inputmode="url" autocomplete="url" placeholder="yourstore.com" required>
       <button class="btn" type="submit" id="scan-btn">Run free check</button>
     </form>
     <p class="error-msg" id="scan-error" role="alert"></p>
-    <p class="scan-note">Free. No install or login. Takes about 2 minutes, and tests stop before payment.</p>
+    <p class="scan-note">Free. No install or login. Takes about 2 minutes, and tests stop before payment. Works with any store; deepest on Shopify.</p>
   </div>
   <div class="receipt" aria-label="Example Store Guard report">
     <div class="r-head"><b>STORE GUARD</b><br>yourstore.com<br>Thu 26 Nov, 02:14</div>
@@ -51,7 +50,7 @@
 <section class="band white" id="what"><div class="wrap">
   <div class="section-intro">
     <h2>Everything a customer does, tested for you</h2>
-    <p>Store Guard reads your products and collections automatically and builds a test suite for your store. Nothing to configure, no code.</p>
+    <p>Store Guard reads your products and collections automatically and builds a test suite for your store. Nothing to configure, no code. <a href="/checks">See every check</a>.</p>
   </div>
   <div class="cover-grid">
     <div><h3>Shopping journey</h3><ul>
@@ -63,6 +62,19 @@
   </div>
 </div></section>
 
+
+<section class="band"><div class="wrap">
+  <div class="section-intro"><h2>Any online store. Deepest on Shopify.</h2><p>Speed, SEO, accessibility, broken links and script errors are tested on any store. Full shopping-journey tests are built platform by platform.</p></div>
+  <div class="table-scroll"><table class="diff-table">
+    <thead><tr><th>Platform</th><th>Speed, SEO, accessibility, links, errors</th><th>Add to cart and checkout journey</th><th>Order messages and app-level checks</th></tr></thead>
+    <tbody>
+      <tr><td><b>Shopify</b></td><td class="yes">✓ Today</td><td class="yes">✓ Today</td><td>Shopify app in review</td></tr>
+      <tr><td><b>WooCommerce</b></td><td class="yes">✓ Today</td><td>Next</td><td>Planned</td></tr>
+      <tr><td><b>Magento, BigCommerce, Salesforce Commerce</b></td><td class="yes">✓ Today</td><td>Planned</td><td>Planned</td></tr>
+      <tr><td><b>Custom and headless stores</b></td><td class="yes">✓ Today</td><td>On request</td><td>On request</td></tr>
+    </tbody>
+  </table></div>
+</div></section>
 <section class="band"><div class="wrap">
   <div class="section-intro"><h2>How it works</h2></div>
   <ol class="steps">
@@ -111,13 +123,18 @@
   </div>
 </div></section>
 
+
+<section class="band"><div class="wrap">
+  <div class="section-intro"><h2>Running a larger store or an agency?</h2><p>We'll walk through your store's results, set up monitoring for your critical journeys, and talk through what your team needs.</p></div>
+  <a class="btn secondary" href="/demo">Book a 20-minute demo</a>
+</div></section>
 <section class="band"><div class="narrow">
   <h2>Questions</h2>
   <details class="faq"><summary>Will the tests place fake orders?</summary><p>No. Tests add one item to a fresh cart, open checkout, confirm the contact form appears, then stop and empty the cart. No payment details are ever entered, so no orders are created.</p></details>
   <details class="faq"><summary>Will it slow down my store?</summary><p>No. A test is a few page views every few hours, less than a single shopper. Store Guard identifies itself in its browser signature so you can filter it from analytics.</p></details>
   <details class="faq"><summary>Do I need to install anything?</summary><p>No. Store Guard tests your public storefront. A Shopify app with deeper checks, like alerts for failed order confirmation emails, is on the way.</p></details>
   <details class="faq"><summary>My store is password protected</summary><p>Add your storefront password to the store in your dashboard and Store Guard will unlock it before testing.</p></details>
-  <details class="faq"><summary>Does it work with any theme?</summary><p>It's built for Shopify and works with Online Store 2.0 themes and common page builders. If a check can't find something on your theme, it tells you instead of raising a false alarm.</p></details>
+  <details class="faq"><summary>Does it work with my platform and theme?</summary><p>Speed, SEO, accessibility, link and script-error checks work on any store. The full add-to-cart and checkout journey runs on Shopify today (Online Store 2.0 themes and common page builders), with WooCommerce next. If a check can't find something on your store, it tells you instead of raising a false alarm.</p></details>
 </div></section>
 </main>
 

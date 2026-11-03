@@ -52,6 +52,9 @@ export function summarize(checks, verdict) {
     const c = fails.find((f) => f.severity === 'critical');
     return `Customers may not be able to buy: ${PROBLEM[c.id] || c.title.toLowerCase()}.`;
   }
-  if (fails.length || warns.length) return `Customers can buy, but we found ${fails.length} problem(s) and ${warns.length} warning(s) to fix.`;
-  return 'Everything we tested works. Your store is in good shape.';
+  const journeyUntested = checks.some((c) => c.id === 'fn.platform');
+  const lead = journeyUntested ? 'Your store is up' : 'Customers can buy';
+  const tail = journeyUntested ? ' (Add to cart and checkout tests are not available for this platform yet.)' : '';
+  if (fails.length || warns.length) return `${lead}, but we found ${fails.length} problem(s) and ${warns.length} warning(s) to fix.${tail}`;
+  return `Everything we tested works.${tail || ' Your store is in good shape.'}`;
 }

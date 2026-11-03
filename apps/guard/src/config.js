@@ -19,6 +19,9 @@ export const config = {
     from: process.env.MAIL_FROM || 'Tharam Store Guard <alerts@tharam.store>',
   },
   adminEmail: process.env.ADMIN_EMAIL || '',
+  // Cal.com booking link, e.g. "tharam/demo" or a full https://cal.com/... URL.
+  calLink: (process.env.CAL_LINK || '').replace(/^https?:\/\/(app\.)?cal\.com\//, ''),
+  contactEmail: process.env.CONTACT_EMAIL || 'hello@tharam.store',
   // How often monitored stores are checked (minutes). Free beta default: every 3 hours.
   journeyIntervalMin: Number(process.env.JOURNEY_INTERVAL_MIN || 180),
   fullScanIntervalMin: Number(process.env.FULL_SCAN_INTERVAL_MIN || 1440),

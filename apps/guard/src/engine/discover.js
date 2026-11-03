@@ -43,9 +43,33 @@ function dataQuality(products) {
   return { sampled: products.length, zeroPrice, noImage, noDescription, soldOut, issues };
 }
 
+const PLATFORMS = [
+  ['shopify', 'Shopify', /cdn\.shopify\.com|window\.Shopify|Shopify\.theme|myshopify\.com/i],
+  ['woocommerce', 'WooCommerce', /woocommerce|wc-ajax|wp-content\/plugins\/woocommerce/i],
+  ['magento', 'Magento / Adobe Commerce', /Magento_|mage\/cookies|\/static\/version\d+\/frontend/i],
+  ['bigcommerce', 'BigCommerce', /cdn\d+\.bigcommerce\.com|BCData/i],
+  ['wix', 'Wix', /static\.wixstatic\.com|wix-bolt/i],
+  ['squarespace', 'Squarespace', /static1\.squarespace\.com|Static\.SQUARESPACE_CONTEXT/i],
+  ['salesforce', 'Salesforce Commerce Cloud', /demandware\.static|dwanalytics/i],
+  ['prestashop', 'PrestaShop', /prestashop/i],
+  ['opencart', 'OpenCart', /catalog\/view\/theme|route=product/i],
+];
+
+export async function detectPlatform(request, origin) {
+  try {
+    const res = await request.get(origin + '/', { timeout: 20000 });
+    const html = (await res.text()).slice(0, 400000);
+    for (const [key, label, re] of PLATFORMS) if (re.test(html)) return { key, label };
+  } catch {
+    /* fall through */
+  }
+  return { key: 'custom', label: 'Custom or headless store' };
+}
+
 export async function discover(request, origin) {
   const out = {
     origin,
+    platform: await detectPlatform(request, origin),
     isShopify: false,
     products: [],
     sampleSize: 0,
@@ -96,6 +120,7 @@ export async function discover(request, origin) {
       /* ignore */
     }
   }
+  if (out.isShopify) out.platform = { key: 'shopify', label: 'Shopify' };
   return out;
 }
 

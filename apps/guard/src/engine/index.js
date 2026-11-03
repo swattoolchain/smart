@@ -53,9 +53,9 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId 
     const lockedEarly = /\/password/.test(page.url());
     if (!info.isShopify && !lockedEarly && !(await isLocked(ctx, origin))) {
       rec.add(
-        check('fn.shopify', 'functional', 'Shopify store detected', 'warn', {
-          severity: 'major',
-          detail: 'This does not look like a Shopify storefront (or its product feed is disabled). Store Guard is built for Shopify; results may be limited.',
+        check('fn.platform', 'functional', 'Full shopping journey test', 'skip', {
+          severity: 'minor',
+          detail: `Detected platform: ${info.platform.label}. Automated add-to-cart and checkout tests currently run on Shopify stores; WooCommerce support is next. Uptime, speed, SEO, accessibility, links and script errors were fully tested.`,
         })
       );
     }
@@ -78,6 +78,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId 
       startedAt: new Date(started).toISOString(),
       durationMs: Date.now() - started,
       isShopify: info.isShopify,
+      platform: info.platform,
       discovered: { products: info.products.map((p) => ({ title: p.title, handle: p.handle })), collections: info.collections, sampleSize: info.sampleSize },
       checks: rec.checks,
       steps: rec.steps,

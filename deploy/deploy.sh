@@ -28,6 +28,7 @@ cd "$DIR/deploy"
 if [ ! -f .env ]; then
   say "First-time setup"
   read -rp "Your email (gets signup and lead notifications, unlocks the founder view): " ADMIN_EMAIL </dev/tty
+  read -rp "Cal.com booking link for demos, e.g. cal.com/yourname/demo (leave empty to set later): " CAL_LINK </dev/tty
   read -rp "SMTP host for alert emails (leave empty to set up later): " SMTP_HOST </dev/tty
   SMTP_PORT=587; SMTP_USER=""; SMTP_PASS=""
   if [ -n "$SMTP_HOST" ]; then
@@ -45,6 +46,8 @@ SMTP_PORT=$SMTP_PORT
 SMTP_USER=$SMTP_USER
 SMTP_PASS=$SMTP_PASS
 MAIL_FROM=Tharam Store Guard <alerts@$DOMAIN>
+CONTACT_EMAIL=hello@$DOMAIN
+CAL_LINK=$CAL_LINK
 RUN_CONCURRENCY=2
 JOURNEY_INTERVAL_MIN=180
 FULL_SCAN_INTERVAL_MIN=1440

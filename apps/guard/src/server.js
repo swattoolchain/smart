@@ -255,6 +255,7 @@ app.get('/api/admin/overview', requireUser, (req, res) => {
 });
 
 app.get('/healthz', (req, res) => res.json({ ok: true, queue: queueDepth() }));
+app.get('/api/public-config', (req, res) => res.json({ calLink: config.calLink, contactEmail: config.contactEmail }));
 
 // ---------- Website ----------
 const page = (f) => (req, res) => res.sendFile(path.join(config.publicDir, f));
@@ -264,6 +265,8 @@ app.get('/app', page('app.html'));
 app.get('/privacy', page('privacy.html'));
 app.get('/terms', page('terms.html'));
 app.get('/bot', page('bot.html'));
+app.get('/checks', page('checks.html'));
+app.get('/demo', page('demo.html'));
 app.use(express.static(config.publicDir, { maxAge: '1h', index: false }));
 app.use((req, res) => res.status(404).sendFile(path.join(config.publicDir, '404.html')));
 

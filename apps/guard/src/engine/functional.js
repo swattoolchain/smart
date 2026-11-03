@@ -125,6 +125,9 @@ export async function runFunctional({ page, rec, origin, info, password, shotDir
   // 2. Collection page
   const coll = info.collections[0];
   const collUrl = coll ? `${origin}/collections/${coll.handle}` : `${origin}/collections/all`;
+  // Collection, search, product and cart steps rely on Shopify's storefront conventions.
+  if (!info.isShopify) return { pageErrors };
+
   rec.step('Open a collection');
   try {
     const res = await page.goto(collUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });

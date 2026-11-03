@@ -39,7 +39,8 @@ p { margin: 0 0 1em; max-width: 68ch; }
 /* Header */
 .top { background: var(--white); border-bottom: 1px solid var(--line); }
 .top .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; gap: 16px; }
-.brand { display: flex; align-items: center; gap: 10px; font: 700 1.2rem var(--display); color: var(--ink); text-decoration: none; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
+.brand .wm { font: 700 1.55rem/1 var(--display); letter-spacing: -0.03em; }
 .brand svg { flex: none; }
 .top nav { display: flex; gap: 20px; align-items: center; font-size: 0.95rem; }
 .top nav a { color: var(--ink-soft); text-decoration: none; }
