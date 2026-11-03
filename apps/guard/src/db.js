@@ -1,0 +1,126 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import { config } from './config.js';
+
+fs.mkdirSync(config.dataDir, { recursive: true });
+fs.mkdirSync(path.join(config.dataDir, 'shots'), { recursive: true });
+fs.mkdirSync(path.join(config.dataDir, 'baselines'), { recursive: true });
+
+export const db = new Database(path.join(config.dataDir, 'guard.db'));
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  name TEXT,
+  plan TEXT NOT NULL DEFAULT 'beta',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS stores (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  name TEXT,
+  storefront_password TEXT,
+  alert_email TEXT,
+  slack_webhook TEXT,
+  monitoring INTEGER NOT NULL DEFAULT 1,
+  last_status TEXT,
+  last_score INTEGER,
+  last_run_at TEXT,
+  last_full_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS runs (
+  id INTEGER PRIMARY KEY,
+  store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  kind TEXT NOT NULL,           -- free | journeys | full
+  status TEXT NOT NULL DEFAULT 'queued', -- queued | running | done | error
+  score INTEGER,
+  verdict TEXT,                 -- healthy | warning | critical
+  result_json TEXT,
+  error TEXT,
+  requester_ip TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS runs_store ON runs(store_id, id DESC);
+CREATE TABLE IF NOT EXISTS leads (
+  id INTEGER PRIMARY KEY,
+  email TEXT NOT NULL,
+  store_url TEXT,
+  run_id INTEGER,
+  source TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS alerts (
+  id INTEGER PRIMARY KEY,
+  store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
+  check_id TEXT NOT NULL,
+  state TEXT NOT NULL,          -- failing | recovered
+  message TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS check_state (
+  store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
+  check_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  since TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (store_id, check_id)
+);
+`);
+
+export const q = {
+  userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
+  userById: db.prepare('SELECT id, email, name, plan, created_at FROM users WHERE id = ?'),
+  insertUser: db.prepare('INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)'),
+  storesByUser: db.prepare('SELECT * FROM stores WHERE user_id = ? ORDER BY id'),
+  storeById: db.prepare('SELECT * FROM stores WHERE id = ?'),
+  insertStore: db.prepare(
+    'INSERT INTO stores (user_id, url, name, storefront_password, alert_email, slack_webhook) VALUES (?, ?, ?, ?, ?, ?)'
+  ),
+  updateStoreSettings: db.prepare(
+    'UPDATE stores SET name = ?, storefront_password = ?, alert_email = ?, slack_webhook = ?, monitoring = ? WHERE id = ?'
+  ),
+  deleteStore: db.prepare('DELETE FROM stores WHERE id = ? AND user_id = ?'),
+  monitoredStores: db.prepare('SELECT * FROM stores WHERE monitoring = 1'),
+  insertRun: db.prepare('INSERT INTO runs (store_id, url, kind, requester_ip) VALUES (?, ?, ?, ?)'),
+  runById: db.prepare('SELECT * FROM runs WHERE id = ?'),
+  runsByStore: db.prepare(
+    'SELECT id, kind, status, score, verdict, created_at, finished_at FROM runs WHERE store_id = ? ORDER BY id DESC LIMIT ?'
+  ),
+  setRunRunning: db.prepare("UPDATE runs SET status = 'running' WHERE id = ?"),
+  finishRun: db.prepare(
+    "UPDATE runs SET status = 'done', score = ?, verdict = ?, result_json = ?, finished_at = datetime('now') WHERE id = ?"
+  ),
+  failRun: db.prepare("UPDATE runs SET status = 'error', error = ?, finished_at = datetime('now') WHERE id = ?"),
+  recentFreeRunsByIp: db.prepare(
+    "SELECT COUNT(*) AS n FROM runs WHERE kind = 'free' AND requester_ip = ? AND created_at > datetime('now', '-1 hour')"
+  ),
+  recentFreeRunForUrl: db.prepare(
+    "SELECT * FROM runs WHERE kind = 'free' AND url = ? AND status IN ('queued','running','done') AND created_at > datetime('now', '-1 hour') ORDER BY id DESC LIMIT 1"
+  ),
+  activeRunForStore: db.prepare(
+    "SELECT id FROM runs WHERE store_id = ? AND status IN ('queued','running') LIMIT 1"
+  ),
+  updateStoreAfterRun: db.prepare(
+    "UPDATE stores SET last_status = ?, last_score = ?, last_run_at = datetime('now') WHERE id = ?"
+  ),
+  markFullScan: db.prepare("UPDATE stores SET last_full_at = datetime('now') WHERE id = ?"),
+  insertLead: db.prepare('INSERT INTO leads (email, store_url, run_id, source) VALUES (?, ?, ?, ?)'),
+  getCheckState: db.prepare('SELECT * FROM check_state WHERE store_id = ? AND check_id = ?'),
+  upsertCheckState: db.prepare(
+    "INSERT INTO check_state (store_id, check_id, status, since) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(store_id, check_id) DO UPDATE SET status = excluded.status, since = datetime('now')"
+  ),
+  insertAlert: db.prepare('INSERT INTO alerts (store_id, check_id, state, message) VALUES (?, ?, ?, ?)'),
+  alertsByStore: db.prepare('SELECT * FROM alerts WHERE store_id = ? ORDER BY id DESC LIMIT 30'),
+  staleRuns: db.prepare("UPDATE runs SET status = 'error', error = 'Interrupted by restart' WHERE status IN ('queued','running')"),
+};
+
+// Runs that were in flight when the process stopped will never finish.
+q.staleRuns.run();

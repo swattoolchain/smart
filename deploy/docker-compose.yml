@@ -1,0 +1,33 @@
+services:
+  guard:
+    build: ../apps/guard
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      PORT: "3000"
+    volumes:
+      - guard-data:/data
+    shm_size: "1gb"
+    restart: unless-stopped
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-tharam.store}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - guard
+
+volumes:
+  guard-data:
+  caddy-data:
+  caddy-config:

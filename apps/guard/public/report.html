@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Store check report – Tharam Store Guard</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;600&family=Public+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="/"><svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.4 12 15 6.9-1.6 12-7.5 12-15V7L16 2z" fill="#1b1f3b"/><path d="m10.5 16.5 4 4 7.5-8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Tharam Store Guard</a>
+  <nav><a href="/">Check another store</a><a href="/app">Log in</a></nav>
+</div></header>
+<main class="wrap" style="padding:32px 0 64px;max-width:900px">
+  <div id="report"></div>
+</main>
+<script src="/assets/report.js"></script>
+<script>
+const id = location.pathname.split('/').pop();
+const el = document.getElementById('report');
+let shownCta = false;
+
+function ctaHtml(run) {
+  return `<div class="cta-monitor" id="monitor">
+    <h2>Keep this store protected</h2>
+    <p>This was one check. Store Guard can test ${escHtml(new URL(run.url).host)} every few hours and alert you the moment add to cart, checkout or speed breaks. Free during the beta.</p>
+    <form class="row" id="signup">
+      <input type="email" name="email" placeholder="Your email" autocomplete="email" required aria-label="Email">
+      <input type="password" name="password" placeholder="Choose a password (8+ characters)" autocomplete="new-password" minlength="8" required aria-label="Password">
+      <button class="btn" type="submit" style="background:#fff;color:var(--ink)">Start monitoring</button>
+    </form>
+    <p class="error-msg" id="signup-error" role="alert"></p>
+  </div>`;
+}
+
+async function load() {
+  const r = await fetch('/api/runs/' + id);
+  if (!r.ok) { el.innerHTML = '<div class="panel"><h2>Report not found</h2><p>This link may have expired. <a href="/">Run a new check</a>.</p></div>'; return; }
+  const run = await r.json();
+  if (run.status === 'queued' || run.status === 'running') { el.innerHTML = waitingHtml(run); setTimeout(load, 3000); return; }
+  if (run.status === 'error' || !run.result) {
+    el.innerHTML = `<div class="panel"><h2>The check couldn't finish</h2><p>${escHtml(run.error || 'Something went wrong while testing this store.')}</p><p>Check the address is correct and the store is online, then <a href="/">try again</a>.</p></div>`;
+    return;
+  }
+  document.title = `${new URL(run.url).host} – Store check report`;
+  renderReport(el, run.result, { afterHead: run.kind === 'free' ? ctaHtml(run) : '' });
+  const form = document.getElementById('signup');
+  if (form) form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const msg = document.getElementById('signup-error');
+    msg.textContent = '';
+    const body = { email: fd.get('email'), password: fd.get('password'), storeUrl: run.url };
+    fetch('/api/leads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: body.email, url: run.url, runId: run.id, source: 'report' }) }).catch(() => {});
+    const res = await fetch('/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await res.json();
+    if (!res.ok) { msg.textContent = j.error; return; }
+    location.href = '/app';
+  });
+}
+load();
+</script>
+</body>
+</html>

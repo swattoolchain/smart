@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tharam Store Guard – Know your Shopify store can still sell</title>
+<meta name="description" content="Store Guard shops your Shopify store like a real customer every few hours: search, add to cart, checkout, speed and SEO. Get an alert the moment a theme edit or app update breaks something.">
+<link rel="canonical" href="https://tharam.store/">
+<meta property="og:title" content="Your store can be open and still not sell">
+<meta property="og:description" content="Free 2-minute check of your Shopify store: add to cart, checkout, speed, SEO, broken links.">
+<meta property="og:image" content="https://tharam.store/assets/og.png">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;600&family=Public+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="/"><svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 2 4 7v8c0 7.5 5.1 13.4 12 15 6.9-1.6 12-7.5 12-15V7L16 2z" fill="#1b1f3b"/><path d="m10.5 16.5 4 4 7.5-8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Tharam Store Guard</a>
+  <nav><a class="hide-sm" href="#what">What we test</a><a class="hide-sm" href="#pricing">Pricing</a><a href="/app">Log in</a></nav>
+</div></header>
+
+<main>
+<section class="hero"><div class="wrap">
+  <div>
+    <h1>Your store can be open and still not sell.</h1>
+    <p class="lede">Store Guard shops your Shopify store like a real customer, every few hours. When a theme edit or app update breaks add to cart or checkout, you hear about it before your customers do.</p>
+    <form class="scan-form" id="scan-form" novalidate>
+      <label for="url" class="visually-hidden" style="position:absolute;left:-9999px">Your store URL</label>
+      <input id="url" name="url" type="text" inputmode="url" autocomplete="url" placeholder="yourstore.com" required>
+      <button class="btn" type="submit" id="scan-btn">Run free check</button>
+    </form>
+    <p class="error-msg" id="scan-error" role="alert"></p>
+    <p class="scan-note">Free. No install or login. Takes about 2 minutes, and tests stop before payment.</p>
+  </div>
+  <div class="receipt" aria-label="Example Store Guard report">
+    <div class="r-head"><b>STORE GUARD</b><br>yourstore.com<br>Thu 26 Nov, 02:14</div>
+    <div class="r-line" style="animation-delay:.2s"><span>Homepage loads</span><span class="ok">✓</span></div>
+    <div class="r-line" style="animation-delay:.4s"><span>Search finds products</span><span class="ok">✓</span></div>
+    <div class="r-line" style="animation-delay:.6s"><span>Variant picker</span><span class="ok">✓</span></div>
+    <div class="r-line" style="animation-delay:.8s"><span>Add to cart</span><span class="bad">✗</span></div>
+    <div class="r-line" style="animation-delay:1s"><span>Checkout opens</span><span class="ok">✓</span></div>
+    <div class="r-line" style="animation-delay:1.2s"><span>Mobile speed</span><span class="meh">3.1s</span></div>
+    <div class="r-line" style="animation-delay:1.4s"><span>Broken links</span><span class="meh">2</span></div>
+    <div class="r-line" style="animation-delay:1.6s"><span>Script errors</span><span class="bad">1</span></div>
+    <div class="r-total"><span>STORE HEALTH</span><span class="bad">42/100</span></div>
+    <div class="r-foot">Cart drawer app update broke the button at 01:58.<br>Alert sent to you at 02:15.</div>
+  </div>
+</div></section>
+
+<section class="band white" id="what"><div class="wrap">
+  <div class="section-intro">
+    <h2>Everything a customer does, tested for you</h2>
+    <p>Store Guard reads your products and collections automatically and builds a test suite for your store. Nothing to configure, no code.</p>
+  </div>
+  <div class="cover-grid">
+    <div><h3>Shopping journey</h3><ul>
+      <li>Homepage and collection pages load</li><li>Search returns your products</li><li>Product pages show prices</li><li>Variant selection picks the right item</li><li>Add to cart really adds the item</li><li>Cart shows items and total</li><li>Checkout opens, stopping before payment</li></ul></div>
+    <div><h3>Speed, SEO and accessibility</h3><ul>
+      <li>Mobile load time on key pages</li><li>Slow third-party apps named</li><li>Layout shifts that cause mis-taps</li><li>Titles, descriptions and headings</li><li>Pages accidentally hidden from Google</li><li>Colour contrast, labels and alt text</li></ul></div>
+    <div><h3>Errors, changes and catalog</h3><ul>
+      <li>JavaScript errors from apps and code</li><li>Broken links in menus and sections</li><li>Visual changes after theme edits</li><li>Products priced at zero or missing images</li><li>Policy pages payment providers expect</li><li>Insecure content warnings</li></ul></div>
+  </div>
+</div></section>
+
+<section class="band"><div class="wrap">
+  <div class="section-intro"><h2>How it works</h2></div>
+  <ol class="steps">
+    <li><h3>Enter your store address</h3><p>Run a free check now. For ongoing protection, create a free account and add your store.</p></li>
+    <li><h3>We test it on a schedule</h3><p>Every few hours, a real browser shops your store on desktop and mobile. A full health check runs daily.</p></li>
+    <li><h3>You hear only when it matters</h3><p>Email or Slack alerts when something breaks and when it recovers, with screenshots and how to fix it. Failures are re-tested before we alert you.</p></li>
+  </ol>
+</div></section>
+
+<section class="band white"><div class="wrap">
+  <div class="section-intro"><h2>Why "the site is up" isn't enough</h2><p>An uptime monitor sees your homepage load. It can't see that a cart app update stopped the Add to cart button working at 2am.</p></div>
+  <div class="table-scroll"><table class="diff-table">
+    <thead><tr><th>What gets checked</th><th>Checking manually</th><th>Uptime monitor</th><th class="us">Store Guard</th></tr></thead>
+    <tbody>
+      <tr><td>Store is online</td><td class="no">Sometimes</td><td class="yes">✓</td><td class="us yes">✓</td></tr>
+      <tr><td>Add to cart and checkout actually work</td><td class="no">When you remember</td><td class="no">–</td><td class="us yes">✓</td></tr>
+      <tr><td>Mobile speed, SEO and accessibility</td><td class="no">–</td><td class="no">–</td><td class="us yes">✓</td></tr>
+      <tr><td>What changed visually after an edit</td><td class="no">–</td><td class="no">–</td><td class="us yes">✓</td></tr>
+      <tr><td>Failures confirmed before alerting</td><td class="no">–</td><td class="no">–</td><td class="us yes">✓</td></tr>
+      <tr><td>Screenshot and how to fix it</td><td class="no">–</td><td class="no">–</td><td class="us yes">✓</td></tr>
+    </tbody>
+  </table></div>
+</div></section>
+
+<section class="band"><div class="wrap">
+  <div class="bf">
+    <div><h2>Black Friday is 27 November</h2><p>Theme tweaks, new apps and sale banners go live this month. Check that customers can still buy, and keep Store Guard watching through the sale weekend.</p></div>
+    <a class="btn" href="#url" id="bf-cta">Check my store now</a>
+  </div>
+</div></section>
+
+<section class="band white" id="pricing"><div class="wrap">
+  <div class="section-intro"><h2>Free during the beta</h2></div>
+  <div class="pricing">
+    <div class="price-box">
+      <h3>Beta</h3>
+      <div class="amount">Free</div>
+      <ul><li>Up to 5 stores</li><li>Shopping journey tested every 3 hours</li><li>Full health check daily, including visual changes</li><li>Email and Slack alerts</li><li>Screenshots and fix guidance</li></ul>
+      <a class="btn" href="/app#signup">Create free account</a>
+    </div>
+    <div class="later">
+      <h3>After the beta</h3>
+      <p>We'll give at least 30 days' notice before any charge, and beta users keep a founding discount. Planned prices, per store:</p>
+      <table><tr><td>Starter: daily journeys and alerts</td><td>$19/mo</td></tr><tr><td>Growth: hourly journeys, visual changes</td><td>$49/mo</td></tr><tr><td>Pro: every 15 minutes, order message checks</td><td>$99/mo</td></tr></table>
+    </div>
+  </div>
+</div></section>
+
+<section class="band"><div class="narrow">
+  <h2>Questions</h2>
+  <details class="faq"><summary>Will the tests place fake orders?</summary><p>No. Tests add one item to a fresh cart, open checkout, confirm the contact form appears, then stop and empty the cart. No payment details are ever entered, so no orders are created.</p></details>
+  <details class="faq"><summary>Will it slow down my store?</summary><p>No. A test is a few page views every few hours, less than a single shopper. Store Guard identifies itself in its browser signature so you can filter it from analytics.</p></details>
+  <details class="faq"><summary>Do I need to install anything?</summary><p>No. Store Guard tests your public storefront. A Shopify app with deeper checks, like alerts for failed order confirmation emails, is on the way.</p></details>
+  <details class="faq"><summary>My store is password protected</summary><p>Add your storefront password to the store in your dashboard and Store Guard will unlock it before testing.</p></details>
+  <details class="faq"><summary>Does it work with any theme?</summary><p>It's built for Shopify and works with Online Store 2.0 themes and common page builders. If a check can't find something on your theme, it tells you instead of raising a false alarm.</p></details>
+</div></section>
+</main>
+
+<footer class="foot"><div class="wrap">
+  <span>© 2026 Tharam</span>
+  <span><a href="/privacy">Privacy</a> &nbsp; <a href="/terms">Terms</a> &nbsp; <a href="/bot">About our test browser</a> &nbsp; <a href="mailto:hello@tharam.store">hello@tharam.store</a></span>
+</div></footer>
+
+<script>
+const form = document.getElementById('scan-form');
+const btn = document.getElementById('scan-btn');
+const err = document.getElementById('scan-error');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  err.textContent = '';
+  const url = document.getElementById('url').value.trim();
+  if (!url) { err.textContent = 'Enter your store address, like yourstore.com'; return; }
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try {
+    const r = await fetch('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Could not start the check');
+    location.href = '/scan/' + j.runId;
+  } catch (ex) {
+    err.textContent = ex.message; btn.disabled = false; btn.textContent = 'Run free check';
+  }
+});
+document.getElementById('bf-cta').addEventListener('click', (e) => { e.preventDefault(); const i = document.getElementById('url'); i.scrollIntoView({ behavior: 'smooth', block: 'center' }); i.focus({ preventScroll: true }); });
+</script>
+</body>
+</html>
