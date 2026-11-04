@@ -142,19 +142,28 @@
   function authView(mode) {
     clearTimeout(S.timer);
     document.body.className = 'app';
-    document.body.innerHTML = `<header class="app-top"><a class="brand" href="/" aria-label="Tharam home"><img src="/assets/brand/tharam-logo.svg" alt="Tharam" width="110" height="32"></a><span class="spacer"></span><a class="top-link" href="/checks">What we check</a></header>
-      <main class="auth-wrap"><div class="auth-card panel">
+    const point = (t, d) => `<li><span class="ab-check">${icon('check', 14)}</span><span><b>${t}</b>${d}</span></li>`;
+    document.body.innerHTML = `<div class="auth">
+      <aside class="auth-brand">
+        <a href="/" aria-label="Tharam home"><img src="/assets/brand/tharam-logo-dark.svg" alt="Tharam" width="120" height="34"></a>
+        <div class="ab-body"><h2>Know your store works before your customers find out.</h2>
+          <ul>${point('Shops your store like a customer', 'Search, product, add to cart and checkout, on desktop and phone, around the clock.')}
+            ${point('Checks every theme before you publish', 'Draft against live, side by side, with one clear verdict.')}
+            ${point('Watches your whole catalog', 'Zero prices, fake discounts, placeholder text and broken images, caught as they happen.')}</ul></div>
+        <p class="ab-foot">Free during the beta · <a href="/checks">What we check</a></p>
+      </aside>
+      <main class="auth-main"><div class="auth-card">
         <h1>${mode === 'signup' ? 'Create your account' : 'Welcome back'}</h1>
         <p class="sub">${mode === 'signup' ? 'Free during the beta. Nothing runs until you set up your store.' : 'Log in to see how your stores are doing.'}</p>
         <form id="auth" novalidate>
           ${mode === 'signup' ? '<div class="field"><label for="name">Your name</label><input id="name" name="name" autocomplete="name"></div>' : ''}
-          <div class="field" style="margin-top:14px"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required></div>
-          <div class="field" style="margin-top:14px"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${mode === 'signup' ? 'new-password' : 'current-password'}" minlength="8" required>${mode === 'signup' ? '<p class="hint">At least 8 characters</p>' : ''}</div>
-          <button class="btn" type="submit" style="width:100%;margin-top:20px">${mode === 'signup' ? 'Create account' : 'Log in'}</button>
+          <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required></div>
+          <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${mode === 'signup' ? 'new-password' : 'current-password'}" minlength="8" required>${mode === 'signup' ? '<p class="hint">At least 8 characters</p>' : ''}</div>
+          <button class="btn block" type="submit">${mode === 'signup' ? 'Create account' : 'Log in'}</button>
           <p class="error-msg" id="auth-err" role="alert"></p>
         </form>
         <p class="switch-mode">${mode === 'signup' ? 'Already have an account? <button type="button" data-m="login">Log in</button>' : 'New to Tharam? <button type="button" data-m="signup">Create an account</button>'}</p>
-      </div></main>`;
+      </div></main></div>`;
     $('[data-m]').onclick = (e) => authView(e.target.dataset.m);
     $('#auth').onsubmit = async (e) => {
       e.preventDefault();
@@ -804,7 +813,7 @@
     }
     const g = S.catalog.groups.filter((x) => !s.config.disabled.includes(x.key));
     const radios = (name, map, val) => `<div class="seg" role="radiogroup">${Object.entries(map).map(([k, l]) => `<label><input type="radio" name="${name}" value="${k}" ${Number(k) === val ? 'checked' : ''}><span>${esc(l)}</span></label>`).join('')}</div>`;
-    ctx.main.innerHTML = `<div class="main-inner">${head}<form id="mon">
+    ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="mon">
       <div class="form-section"><div><h3>Automatic monitoring</h3><p class="explain">When this is on, Store Guard tests your store on the schedule below and alerts you when something breaks or recovers.</p></div>
         <div class="controls"><label class="toggle-line"><span class="switch"><input type="checkbox" name="monitoring" ${s.monitoring ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Monitor this store</b><span>${s.last_run_at ? (s.monitoring ? `Next test ${esc(inMin(s.next_run_in))}.` : 'Paused. Only checks you start will run.') : 'Starts after the first check.'}</span></span></label></div></div>
       <div class="form-section"><div><h3>Journey tests</h3><p class="explain">Quick tests of the shopping journey: ${esc(listLabels(g.filter((x) => x.run === 'journeys')))}. If one fails, we re-test every 30 minutes until it's fixed.</p></div>
@@ -832,7 +841,7 @@
     const base = `#/s/${s.id}/alerts`;
     const head = storeHead(s, 'Alerts') + tabs(base, [[null, 'Incidents', s.failing.length || null], ['channels', 'Where alerts go']], tab);
     if (tab === 'channels') {
-      ctx.main.innerHTML = `<div class="main-inner">${head}<form id="ch">
+      ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="ch">
         <div class="form-section"><div><h3>When we alert</h3><p class="explain">Once when a check breaks, and once when it recovers. Never the same problem twice. A newly failing critical check is re-tested a minute later before we alert, so network blips don't wake you up.</p></div>
           <div class="controls"><div class="notice info"><p>Alerts include what broke, how to fix it, and a link to the report with screenshots.</p></div></div></div>
         <div class="form-section"><div><h3>Email</h3><p class="explain">The address that receives alerts for this store.</p></div>
@@ -910,7 +919,7 @@
 
   // Store settings
   STORE_PAGES.settings = async (ctx, s) => {
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Store settings')}<form id="set">
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Store settings')}<form class="settings-card" id="set">
       <div class="form-section"><div><h3>Store details</h3><p class="explain">The name is how this store appears in Tharam and in alerts.</p></div>
         <div class="controls"><div class="field"><label for="nm">Store name</label><input id="nm" name="name" value="${esc(s.name || '')}" required maxlength="80"></div>
         <div class="field"><label for="ad">Store address</label><input id="ad" value="${esc(s.url)}" readonly><p class="hint">To test a different address, add it as a new store.</p></div></div></div>
@@ -918,8 +927,8 @@
         <div class="controls"><div class="field"><label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="off" placeholder="${s.has_password ? 'Saved. Type to replace' : 'Not set'}"></div>
         ${s.has_password ? '<label class="toggle-line"><span class="switch"><input type="checkbox" name="clearpw"><span></span></span><span class="tl-text"><b>Remove saved password</b><span>Use this once your store is public.</span></span></label>' : ''}</div></div>
     </form>
-    <div class="form-section"><div><h3>Remove store</h3><p class="explain">Stops monitoring and deletes this store's runs, screenshots and alert history. This can't be undone.</p></div>
-      <div class="controls"><div><button class="btn danger" type="button" id="del">Remove ${esc(s.name || host(s.url))}</button></div></div></div></div>`;
+    <div class="settings-card danger-zone"><div class="form-section"><div><h3>Remove store</h3><p class="explain">Stops monitoring and deletes this store's runs, screenshots and alert history. This can't be undone.</p></div>
+      <div class="controls"><div><button class="btn danger" type="button" id="del">Remove ${esc(s.name || host(s.url))}</button></div></div></div></div></div>`;
     const form = $('#set');
     const mark = savebar($('.main-inner', ctx.main), {
       onSave: async () => {
@@ -1332,7 +1341,7 @@
     const tab = ctx.r.a === 'password' ? 'password' : null;
     const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', [[null, 'Profile'], ['password', 'Password']], tab);
     if (tab === 'password') {
-      ctx.main.innerHTML = `<div class="main-inner">${head}<form id="pwf"><div class="form-section"><div><h3>Change password</h3><p class="explain">Use at least 8 characters. You'll stay logged in on this device.</p></div>
+      ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="pwf"><div class="form-section"><div><h3>Change password</h3><p class="explain">Use at least 8 characters. You'll stay logged in on this device.</p></div>
         <div class="controls"><div class="field"><label for="cur">Current password</label><input id="cur" name="current" type="password" autocomplete="current-password" required></div>
         <div class="field"><label for="nx">New password</label><input id="nx" name="next" type="password" autocomplete="new-password" minlength="8" required></div>
         <div><button class="btn" type="submit">Change password</button></div><p class="error-msg" id="pw-err" role="alert"></p></div></div></form></div>`;
@@ -1345,7 +1354,7 @@
       };
       return;
     }
-    ctx.main.innerHTML = `<div class="main-inner">${head}<form id="prof">
+    ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="prof">
       <div class="form-section"><div><h3>Profile</h3><p class="explain">Your name appears in emails from us.</p></div>
         <div class="controls"><div class="field"><label for="pn">Name</label><input id="pn" name="name" value="${esc(S.me.name || '')}" autocomplete="name"></div>
         <div class="field"><label for="pe">Email</label><input id="pe" value="${esc(S.me.email)}" readonly><p class="hint">To change your login email, write to hello@tharam.store.</p></div></div></div>
@@ -1388,7 +1397,7 @@
     const names = ['Find your store', 'Choose tests', 'Schedule and alerts', 'Review'];
     const stepper = `<ol class="stepper">${names.map((n, i) => `<li class="${i + 1 < w.step ? 'done' : i + 1 === w.step ? 'current' : ''}" ${i + 1 === w.step ? 'aria-current="step"' : ''}><span>${n}</span></li>`).join('')}</ol>`;
     const wrap = (inner) => {
-      ctx.main.innerHTML = `<div class="main-inner narrow-page"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>Add a store</h1><div class="meta">Step ${w.step} of 4 · nothing runs until you finish</div></div>${w.step > 1 ? '<div class="actions"><button class="btn link" type="button" id="restart">Start over</button></div>' : ''}</div>${stepper}${inner}</div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>Add a store</h1><div class="meta">Step ${w.step} of 4 · nothing runs until you finish</div></div>${w.step > 1 ? '<div class="actions"><button class="btn link" type="button" id="restart">Start over</button></div>' : ''}</div>${stepper}<div class="panel wiz-card">${inner}</div></div>`;
       const r = $('#restart');
       if (r) r.onclick = () => { S.wizard = null; render(); };
     };
@@ -1457,7 +1466,7 @@
 
     if (w.step === 3) {
       const radios = (name, map, val) => `<div class="seg" role="radiogroup">${Object.entries(map).map(([k, l]) => `<label><input type="radio" name="${name}" value="${k}" ${Number(k) === val ? 'checked' : ''}><span>${esc(l)}</span></label>`).join('')}</div>`;
-      wrap(`<form id="w3" novalidate>
+      wrap(`<form class="settings-card" id="w3" novalidate>
         <div class="form-section"><div><h3>Journey tests</h3><p class="explain">How often we shop your store. If a test fails, we re-test every 30 minutes until it's fixed.</p></div><div class="controls">${radios('journeyIntervalMin', EVERY, w.journeyIntervalMin)}</div></div>
         <div class="form-section"><div><h3>Full check</h3><p class="explain">The journey plus speed, SEO, accessibility, links, catalog and visual changes.</p></div><div class="controls">${radios('fullIntervalMin', FULL_EVERY, w.fullIntervalMin)}</div></div>
         <div class="form-section"><div><h3>Alerts</h3><p class="explain">We alert once when something breaks and once when it recovers.</p></div>
