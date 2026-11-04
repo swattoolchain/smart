@@ -1,7 +1,7 @@
 /**
- * Everything the marketing site says about products, platforms and marketplaces lives here,
- * so adding a platform or marketplace is one entry. Status is always honest:
- * live = works today, beta = works with limits, soon = being built, planned = on the roadmap.
+ * Everything the website says about features, platforms, marketplaces and the managed service lives here.
+ * Written for shop owners, not developers: plain words, no jargon, and an honest status on everything
+ * (live = works today, beta = works, still being improved, soon = being built, planned = on the roadmap).
  */
 
 export const STATUS = {
@@ -12,128 +12,162 @@ export const STATUS = {
   early: { label: 'Early access', tone: 'soon' },
 };
 
-/** The five pillars of Commerce Assurance, each a product page. */
+/** The features. Each has its own page under /features. */
 export const PRODUCTS = [
   {
-    slug: 'monitoring', icon: 'pulse', name: 'Journey monitoring', pillar: 'Buyability', status: 'live',
-    short: 'A real browser shops your store around the clock and tells you the moment customers can’t buy.',
-    title: 'Know the moment customers can’t buy',
-    lede: 'Tharam shops your store like a real customer on desktop and phone, as often as every hour: homepage, search, collection, product, variant, add to cart and checkout. When something breaks, it re-tests to confirm, then alerts you with a screenshot and how to fix it.',
+    slug: 'monitoring', icon: 'pulse', name: 'Store checks, around the clock', pillar: 'Can customers buy?', status: 'live',
+    short: 'We shop your store every few hours, like a real customer, and tell you the moment someone can’t buy.',
+    title: 'Find out the moment customers can’t buy',
+    lede: 'Every few hours, Tharam visits your store like a real customer, on a computer and on a phone. It searches, opens products, picks a size, adds to cart and goes to checkout. If anything stops working, it checks again to be sure, then tells you what broke and how to fix it.',
     points: [
-      ['The whole buying journey', 'Search, collections, product pages, variant pickers, add to cart, cart and checkout, verified through the store’s own cart, not just by clicking.'],
-      ['Diagnosis, not just a red light', 'When the button is broken but the cart works, Tharam says so, and points at the theme code or app that is likely responsible.'],
-      ['No false alarms', 'A new critical failure is re-tested a minute later before anyone is woken up. Bot protection is reported as “blocked”, never as your store being broken.'],
-      ['Alerts only on change', 'One alert when something breaks and one when it recovers, by email or Slack, with the report link.'],
+      ['The whole shopping trip', 'Search, collections, product pages, sizes and colours, add to cart, cart and checkout. Exactly what your customers do.'],
+      ['It tells you why', 'Not just “something is wrong”. For example: the Add to cart button stopped working, probably because of a recently updated app.'],
+      ['No false alarms', 'Before alerting you, Tharam checks a second time. If your store’s security blocks our test, we say so instead of saying your store is broken.'],
+      ['Alerts only when it matters', 'One email or Slack message when something breaks, and one when it’s working again. Never the same problem twice.'],
     ],
   },
   {
-    slug: 'safe-to-publish', icon: 'publish', name: 'Safe to publish', pillar: 'Release safety', status: 'live',
-    short: 'Test a draft theme against your live store before it goes live, with one clear verdict.',
-    title: 'Publish theme changes without fear',
-    lede: 'Paste a theme preview link. Tharam runs your full test suite on the draft and on your live theme side by side, compares every check, screenshot and speed measure, and gives one verdict: safe to publish, review first, or don’t publish yet.',
+    slug: 'safe-to-publish', icon: 'publish', name: 'Safe to publish', pillar: 'Is this change safe?', status: 'live',
+    short: 'Changing your store’s design? We test the new version before your customers see it.',
+    title: 'Change your store without breaking it',
+    lede: 'Before you publish a new design, sale banner or theme update, share its preview link with Tharam. We test the new version next to your current store, on computer, tablet and phone, and give you a clear answer: safe to publish, have a look first, or don’t publish yet.',
     points: [
-      ['Draft against live, side by side', 'The same tests on both themes at the same time, so every difference is caused by the draft.'],
-      ['What breaks, and what it fixes', 'Every check that works live but fails on the draft, with how it behaves live and how to fix it, and every live problem the draft fixes.'],
-      ['Every device', 'Desktop, tablet and phone screenshots of the draft and live store, with changed pixels highlighted.'],
-      ['Nothing touches your store', 'The draft is opened only in Tharam’s test browser. Nothing is published, and no orders are placed.'],
+      ['New and current, side by side', 'The same tests on both versions, so every difference comes from your change.'],
+      ['What breaks, and what gets better', 'Anything that works today but breaks in the new version, and anything the new version fixes.'],
+      ['Every screen size', 'Pictures of the new version and your current store, with the differences highlighted.'],
+      ['Nothing changes on your store', 'The new version is only opened in our test browser. Nothing is published and no orders are placed.'],
     ],
   },
   {
-    slug: 'catalog', icon: 'catalog', name: 'Catalog guard', pillar: 'Catalog integrity', status: 'live',
-    short: 'Every product checked for pricing mistakes, placeholder text and missing images, with a log of what changed.',
-    title: 'Catch catalog mistakes before customers do',
-    lede: 'Tharam reads your whole catalog on every full check, fingerprints each product and validates it the way a careful merchandiser would. You see what is wrong and exactly what changed since the last check: prices, sales, stock, descriptions and images.',
+    slug: 'catalog', icon: 'catalog', name: 'Product and price checks', pillar: 'Are my products right?', status: 'live',
+    short: 'Every product checked for wrong prices, unfinished descriptions and missing photos.',
+    title: 'Catch product and price mistakes before customers do',
+    lede: 'One wrong price can cost a lot. Tharam reads every product in your store on every full check and looks for mistakes a careful person would spot. You also see exactly what changed since last time: prices, sales, stock, descriptions and photos.',
     points: [
-      ['Pricing mistakes', 'Zero prices, “sales” where the compare-at price isn’t higher, and price drops of more than half, shown in your store’s currency.'],
-      ['Content that looks unfinished', 'Lorem ipsum, TBD, template code and raw HTML showing as text, empty or duplicate descriptions.'],
-      ['Data that breaks operations', 'Duplicate SKUs, missing images, and product counts that don’t match your sitemap or collections.'],
-      ['A change log for every product', 'Who changed what is in your admin; what changed, and when, is in Tharam, word by word.'],
+      ['Price mistakes', 'Products priced at zero, “sale” prices that aren’t lower, and prices that suddenly dropped by more than half.'],
+      ['Unfinished descriptions', 'Dummy text like “lorem ipsum” or “TBD”, empty descriptions, and the same description copied across products.'],
+      ['Photos and stock codes', 'Products without photos, and products sharing the same stock code (SKU), which confuses stock and shipping apps.'],
+      ['What changed, word by word', 'A log of every price, stock, description and photo change since the last check.'],
     ],
   },
   {
-    slug: 'experience', icon: 'speed', name: 'Experience checks', pillar: 'Experience quality', status: 'live',
-    short: 'Speed, SEO, accessibility, broken links, script errors and visual changes, on any platform.',
-    title: 'Fast, findable and accessible, on every device',
-    lede: 'The things that quietly cost sales: a slow phone experience, a page accidentally hidden from Google, a broken link in the menu, a script error from an app update, a layout that shifted. Tharam checks them on every full check, on any e-commerce platform.',
+    slug: 'experience', icon: 'speed', name: 'Speed, Google and mobile checks', pillar: 'Is it fast and easy to find?', status: 'live',
+    short: 'A slow phone experience, a page hidden from Google, a broken link: the quiet things that cost sales.',
+    title: 'Fast on phones, easy to find on Google',
+    lede: 'Most customers shop on their phone and find you on Google. Tharam checks the things that quietly lose sales: slow pages, pages accidentally hidden from Google, broken links, error messages from apps, and design changes nobody approved. Works on any online store.',
     points: [
-      ['Mobile speed', 'Load time, layout shift, page weight and the third-party apps slowing you down, by name.'],
-      ['SEO basics', 'Titles, descriptions, headings, canonical links, share images, and pages hidden from Google.'],
-      ['Accessibility', 'Automated WCAG 2 A and AA checks and image alt text, so more customers can buy.'],
-      ['Visual changes', 'Desktop, tablet and phone screenshots compared with the look you approved.'],
+      ['Speed on phones', 'How fast your pages load on a phone, and which apps slow them down, by name.'],
+      ['Show up on Google', 'Page titles and descriptions, and pages accidentally hidden from Google search.'],
+      ['Easy for everyone', 'Checks that people using screen readers or bigger text can still shop (accessibility).'],
+      ['No surprise design changes', 'Pictures of your pages on computer, tablet and phone, compared with the look you approved.'],
     ],
   },
   {
-    slug: 'ai', icon: 'sparkle', name: 'AI review and AI shoppers', pillar: 'Human-eye checks', status: 'beta',
-    short: 'AI reviews pages and product copy like a shopper would. AI shopper agents are coming next.',
-    title: 'Everything a human would notice, checked by AI',
-    lede: 'Some problems only show up to a person looking at the page: text overlapping an image, a popup covering the buy button, a silk saree described as cotton. Tharam’s AI review looks at your pages and product copy like a shopper would. AI shopper agents, which browse and buy toward a goal on any theme, are being built now.',
+    slug: 'ai', icon: 'sparkle', name: 'AI that looks like a shopper', pillar: 'What would a person notice?', status: 'beta',
+    short: 'AI looks at your pages and reads your product text, and spots what a shopper would notice.',
+    title: 'An extra pair of eyes on every page',
+    lede: 'Some problems only a person looking at the page would notice: text covering a photo, a popup hiding the Buy button, a silk saree described as cotton. Tharam’s AI looks at your pages and reads your product text the way a shopper would, and tells you what looks wrong.',
     points: [
-      ['AI visual review', 'Each page on desktop and phone, reviewed for overlaps, cut-off text, broken images and anything blocking the buy button.'],
-      ['AI copy review', 'Spelling, grammar and contradictions in titles and descriptions. Only new or edited products are reviewed.'],
-      ['Explain this change', 'Ask why two screenshots differ and whether it looks intended or like a bug.'],
-      ['AI shopper agents (coming soon)', 'Goal-driven shoppers, like “find a gift under ₹2,000 and check out”, that report where they struggled.'],
+      ['Looks at every page', 'On computer and phone: overlapping text, cut-off prices, broken photos, and anything blocking the Buy button.'],
+      ['Reads your product text', 'Spelling, grammar and mix-ups in new or edited products, with a suggested correction.'],
+      ['Explains changes', 'When a page looks different, AI says what changed and whether it looks deliberate or like a mistake.'],
+      ['AI shoppers (coming soon)', 'AI shoppers with a goal, like “find a gift under ₹2,000 and check out”, that tell you where they got stuck.'],
     ],
   },
   {
-    slug: 'reports', icon: 'reports', name: 'Reports and Buyability', pillar: 'Proof', status: 'live',
-    short: 'Every check is a report you can compare with any earlier one, plus the Buyability score.',
-    title: 'Proof your store worked, and what changed',
-    lede: 'Every check produces a report. Compare it with the previous check, the same time yesterday or last week, or any report you choose: what newly broke, what was fixed, speed trends, catalog changes and screenshots. Save any report as a PDF for your team or your client.',
+    slug: 'reports', icon: 'reports', name: 'Reports and your store score', pillar: 'How did my store do?', status: 'live',
+    short: 'A clear report after every check, and one number that says how often customers could buy.',
+    title: 'Know how your store did, at a glance',
+    lede: 'Every check gives you a simple report: what works, what broke, what got fixed, and how it compares with yesterday or last week. One number sums it up, Buyability: how often customers could actually buy from you.',
     points: [
-      ['Compare any two checks', 'Newly broken, fixed and still broken, area by area, with before and after.'],
-      ['Buyability', 'The share of tests in which a customer could complete a purchase, over a day, a week and a month.'],
-      ['Incidents', 'Each time something broke and how long it took to fix.'],
-      ['PDF reports', 'A clean copy of any report, ready to share.'],
+      ['Compare with any day', 'What newly broke, what got fixed and what is still broken, compared with yesterday, last week or any earlier check.'],
+      ['Buyability', 'The share of checks in which a customer could find a product, add it to the cart and reach checkout.'],
+      ['Every problem, start to finish', 'When each problem started and how long it took to fix.'],
+      ['Share as PDF', 'Save any report as a PDF for your team, your developer or your agency.'],
     ],
   },
 ];
 
-/** Own-store platforms. Capabilities: experience (speed/SEO/a11y/links/visual), journey, catalog, publish, app. */
+/** Store platforms. What works where, in plain words. */
 export const PLATFORMS = [
-  { slug: 'shopify', name: 'Shopify', status: 'live', blurb: 'Our deepest integration. Every Tharam capability works on Shopify today, and the Shopify app is on its way to the App Store.',
+  { slug: 'shopify', name: 'Shopify', status: 'live', blurb: 'Everything Tharam does works on Shopify today. Our Shopify app is on its way to the Shopify App Store.',
     caps: { experience: 'live', journey: 'live', catalog: 'live', publish: 'live', app: 'soon' },
-    notes: ['Works with Online Store 2.0 themes, Dawn and popular premium themes.', 'Password-protected stores are tested using the storefront password.', 'Checkout tests stop before payment; no orders are created.'] },
-  { slug: 'woocommerce', name: 'WooCommerce', status: 'beta', blurb: 'Speed, SEO, accessibility, links, errors and visual changes are checked today. Shopping-journey tests and a WordPress plugin are next.',
+    notes: ['Works with Shopify’s standard themes, like Dawn, and popular paid themes.', 'Store still behind a password? Add the password and we’ll test it.', 'Our checkout test stops before payment, so no orders are ever placed.'] },
+  { slug: 'woocommerce', name: 'WooCommerce', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests and a WordPress plugin are next.',
     caps: { experience: 'live', journey: 'soon', catalog: 'soon', publish: 'planned', app: 'planned' },
-    notes: ['WooCommerce’s public Store API makes catalog checks possible without a plugin.', 'The plugin will add order and email checks.'] },
-  { slug: 'bigcommerce', name: 'BigCommerce', status: 'beta', blurb: 'Experience checks work today. Journey tests and a BigCommerce app are on the roadmap.',
+    notes: ['Product and price checks are possible without installing anything.', 'The plugin will also check order emails.'] },
+  { slug: 'bigcommerce', name: 'BigCommerce', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are on our roadmap.',
     caps: { experience: 'live', journey: 'planned', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: [] },
-  { slug: 'adobe-commerce', name: 'Adobe Commerce (Magento)', status: 'beta', blurb: 'Experience checks work today. Journey tests and a Magento extension are on the roadmap.',
+  { slug: 'adobe-commerce', name: 'Adobe Commerce (Magento)', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are on our roadmap.',
     caps: { experience: 'live', journey: 'planned', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: [] },
-  { slug: 'salesforce-commerce', name: 'Salesforce Commerce Cloud', status: 'beta', blurb: 'Experience checks work today. Journey tests for your storefront are set up with you.',
-    caps: { experience: 'live', journey: 'beta', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: ['Talk to us to set up custom journeys for your storefront.'] },
-  { slug: 'wix', name: 'Wix', status: 'beta', blurb: 'Experience checks work today. Journey tests are on the roadmap.',
+  { slug: 'salesforce-commerce', name: 'Salesforce Commerce Cloud', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are set up with you.',
+    caps: { experience: 'live', journey: 'beta', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: ['Talk to us and we’ll set up shopping tests for your store.'] },
+  { slug: 'wix', name: 'Wix', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are on our roadmap.',
     caps: { experience: 'live', journey: 'planned', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: [] },
-  { slug: 'squarespace', name: 'Squarespace', status: 'beta', blurb: 'Experience checks work today. Journey tests are on the roadmap.',
+  { slug: 'squarespace', name: 'Squarespace', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are on our roadmap.',
     caps: { experience: 'live', journey: 'planned', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: [] },
-  { slug: 'headless', name: 'Custom and headless', status: 'beta', blurb: 'Experience checks work on any storefront. Journey tests for custom and headless stores are set up with you.',
-    caps: { experience: 'live', journey: 'beta', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: ['Works with Hydrogen, Next.js and other headless storefronts on a public URL.'] },
+  { slug: 'headless', name: 'Custom-built stores', status: 'beta', blurb: 'Built your own store, or had a developer build one? Speed, Google, mobile and design checks work today, and we set up shopping tests with you.',
+    caps: { experience: 'live', journey: 'beta', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: ['Works with any store on a public web address, including “headless” stores built with Hydrogen or Next.js.'] },
 ];
 
 export const CAPS = [
-  ['experience', 'Speed, SEO, accessibility, links, errors and visual changes'],
-  ['journey', 'Shopping-journey monitoring (search, add to cart, checkout)'],
-  ['catalog', 'Catalog guard (pricing, content, images, change log)'],
-  ['publish', 'Safe to publish (draft theme against live)'],
-  ['app', 'Native app or plugin'],
+  ['experience', 'Speed, Google, mobile, broken links and page design'],
+  ['journey', 'Shopping tests: search, add to cart and checkout'],
+  ['catalog', 'Product and price checks'],
+  ['publish', 'Test design changes before publishing'],
+  ['app', 'Install from your platform’s app store'],
 ];
 
-/** Marketplaces: listing health for brands that sell on them. All early access. */
+/** Marketplaces: for brands that also sell there. All early access. */
 export const MARKETPLACES = [
-  { slug: 'amazon', name: 'Amazon', status: 'early', blurb: 'Listing health for brands selling on Amazon: suppressed listings, lost Buy Box, unwanted sellers on your listing, and changes to your titles, images and prices.',
-    watch: ['Listings suppressed or showing as unavailable', 'Losing the Buy Box, or new sellers on your listing', 'Title, image, bullet and price changes you didn’t make', 'Stock-outs and sudden review changes'], via: 'Amazon’s Selling Partner API, authorised by you.' },
-  { slug: 'flipkart', name: 'Flipkart', status: 'early', blurb: 'Listing health for brands selling on Flipkart: inactive listings, price and stock mismatches, and content drift.',
-    watch: ['Listings that went inactive or out of stock', 'Prices that differ from your own store', 'Content changes on your listings', 'Order flow that suddenly stops'], via: 'Flipkart’s Marketplace Seller APIs, authorised by you.' },
-  { slug: 'meesho', name: 'Meesho', status: 'early', blurb: 'Catalog consistency for brands selling on Meesho alongside their own store.',
-    watch: ['Prices and stock out of line with your store', 'Listings that disappear', 'Catalog content drift'], via: 'Connected with you during early access.' },
-  { slug: 'myntra', name: 'Myntra', status: 'early', blurb: 'Catalog consistency for fashion brands selling on Myntra alongside their own store.',
-    watch: ['Prices and stock out of line with your store', 'Listings that disappear', 'Catalog content drift'], via: 'Connected with you during early access.' },
+  { slug: 'amazon', name: 'Amazon', status: 'early', blurb: 'For brands selling on Amazon: know when a listing is hidden, when you lose the Buy Box, when another seller joins your listing, or when your title, photos or price change without you.',
+    watch: ['A listing becomes hidden or shows as unavailable', 'You lose the Buy Box, or a new seller appears on your listing', 'Your title, photos, bullet points or price change without you', 'Stock runs out, or reviews suddenly drop'], via: 'Amazon’s official seller connection, which you approve.' },
+  { slug: 'flipkart', name: 'Flipkart', status: 'early', blurb: 'For brands selling on Flipkart: know when a listing goes inactive, when prices or stock don’t match your own store, or when listing details change.',
+    watch: ['A listing goes inactive or out of stock', 'A price is different from your own store', 'Listing details change', 'Orders suddenly stop'], via: 'Flipkart’s official seller connection, which you approve.' },
+  { slug: 'meesho', name: 'Meesho', status: 'early', blurb: 'For brands selling on Meesho and their own store: keep prices, stock and product details in line everywhere.',
+    watch: ['Prices or stock out of line with your store', 'Listings that disappear', 'Product details that drift'], via: 'Set up with you during early access.' },
+  { slug: 'myntra', name: 'Myntra', status: 'early', blurb: 'For fashion brands selling on Myntra and their own store: keep prices, stock and product details in line everywhere.',
+    watch: ['Prices or stock out of line with your store', 'Listings that disappear', 'Product details that drift'], via: 'Set up with you during early access.' },
+];
+
+/** The managed service: we look after the store for you. */
+export const MANAGED = {
+  points: [
+    ['eye', 'We watch your store every day', 'We set up all the checks for you and read every alert ourselves, so you don’t have to.'],
+    ['tool', 'We fix what breaks', 'With your permission, we fix broken buttons, app clashes and broken links, or give your developer exact instructions.'],
+    ['publish', 'We check every change first', 'New design, sale banner or app? We test it before your customers see it.'],
+    ['catalog', 'We keep products and prices right', 'Wrong prices, missing photos and unfinished descriptions, spotted and corrected.'],
+    ['calendar', 'Ready for big sale days', 'Before Diwali, Black Friday and your big sales, a full readiness check, and a closer watch during the sale.'],
+    ['reports', 'A monthly report and call', 'What happened, what we fixed, and what would help you sell more.'],
+  ],
+  steps: [
+    ['Free store review', 'We check your store and walk you through what we find, on a 20-minute call.'],
+    ['We take over the watching', 'You give us access through Shopify’s staff and collaborator settings, which you can remove at any time.'],
+    ['You get on with selling', 'We watch, fix and report. You hear from us when something needs your decision.'],
+  ],
+};
+
+/** Who Tharam is for. */
+export const AUDIENCES = [
+  ['store', 'Store owners', 'Know your store works without checking it yourself every day.'],
+  ['agency', 'Agencies and freelancers', 'Watch every client store in one place and send them proof it works.'],
+  ['code', 'App and theme developers', 'Make sure your app or theme works on real stores before customers complain.'],
+  ['megaphone', 'Marketing agencies', 'Make sure the store works before you spend your client’s ad budget.'],
+];
+
+/** Plain promises shown under the homepage hero. */
+export const PROMISES = [
+  ['shield', 'No fake orders, ever'],
+  ['bolt', 'Nothing to install'],
+  ['lock', 'Your data stays private'],
+  ['check', 'Free while in beta'],
 ];
 
 export const FAQ = [
-  ['Will the tests place fake orders?', 'No. Tests add one item to a fresh cart, open checkout, confirm it loads, then stop and empty the cart. No payment details are entered, so no orders are created.'],
-  ['Will it slow down my store?', 'No. A test is a few page views every few hours, less than a single shopper. Tharam identifies itself in its browser signature so you can filter it from analytics.'],
-  ['Does it work with my platform?', 'Speed, SEO, accessibility, links, script errors and visual changes are checked on any store. Shopping-journey tests, catalog guard and Safe to publish run on Shopify today, with other platforms following. See Platforms for each one.'],
-  ['My store is password protected', 'Add your storefront password and Tharam unlocks the store before testing.'],
-  ['What is Commerce Assurance?', 'Continuous proof that customers can find, trust and buy from you, on your own store and every marketplace you sell on. Tharam is the platform built for it.'],
+  ['Do I need to be technical?', 'No. You enter your store address and choose how often to check. Tharam tells you in plain words what broke and how to fix it, or we fix it for you with the managed service.'],
+  ['Will the tests place fake orders?', 'No. Our test adds one item to a new cart, opens checkout to make sure it loads, then stops and empties the cart. It never enters payment details, so no order is ever created.'],
+  ['Will it slow down my store?', 'No. A check is a few page visits every few hours, less than a single customer. It also tells your analytics it’s a test, so it doesn’t mess up your numbers.'],
+  ['Does it work with my store?', 'Speed, Google, mobile, broken link and design checks work on any online store. Shopping tests, product checks and Safe to publish work on Shopify today, with other platforms following.'],
+  ['My store is still behind a password', 'No problem. Add your store password and we’ll unlock the store before each check.'],
+  ['Can you look after my store for me?', 'Yes. With the managed service, our team watches your store, fixes what breaks and checks every change for you. Start with a free store review.'],
 ];

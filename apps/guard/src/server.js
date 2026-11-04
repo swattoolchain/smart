@@ -558,6 +558,7 @@ app.get('/platforms/:slug', html((req) => site.platform(req.params.slug)));
 app.get('/marketplaces', html(() => site.marketIndex()));
 app.get('/marketplaces/:slug', html((req) => site.market(req.params.slug)));
 app.get('/pricing', html(() => site.pricing()));
+app.get('/managed', html(() => site.managed()));
 app.get('/scan/:id', old('report.html', { title: 'Store check report', noindex: true }));
 app.get('/app', page('app.html'));
 app.get('/privacy', old('privacy.html', { path: '/privacy' }));

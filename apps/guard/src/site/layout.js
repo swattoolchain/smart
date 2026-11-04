@@ -17,6 +17,13 @@ const P = {
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   shield: '<path d="M12 3.5 5 6v5.5c0 4.4 3 7.8 7 9 4-1.2 7-4.6 7-9V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+  tool: '<path d="M14.5 6.5a4 4 0 0 0-5.3 5L4 16.7 7.3 20l5.2-5.2a4 4 0 0 0 5-5.3l-2.4 2.4-2.6-.7-.7-2.6z"/>',
+  calendar: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/>',
+  code: '<path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4M13.5 5l-3 14"/>',
+  megaphone: '<path d="M4 10v4h3l7 4V6L7 10z"/><path d="M17.5 9.5a3.5 3.5 0 0 1 0 5"/>',
+  bolt: '<path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
   agency: '<rect x="3.5" y="7" width="17" height="12" rx="2"/><path d="M9 7V5.5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 5.5V7"/><path d="M3.5 12.5h17"/>',
 };
 export const icon = (k, size = 20) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[k] || ''}</svg>`;
@@ -27,15 +34,15 @@ function nav(path) {
   const item = (href, ic, title, sub, status) => `<a class="mm-item" href="${href}"><span class="mm-ic">${icon(ic, 18)}</span><span><b>${esc(title)} ${status && status !== 'live' ? badge(status) : ''}</b><span>${esc(sub)}</span></span></a>`;
   return `<nav class="mainnav" id="mainnav" aria-label="Main">
     <div class="nv"><button type="button" class="nv-btn"${on('/features')} aria-expanded="false">Features ${icon('chevron', 15)}</button>
-      <div class="mega wide"><p class="mega-intro">One platform. Every feature below is part of your Tharam plan.</p><div class="mega-grid">${PRODUCTS.map((p) => item(`/features/${p.slug}`, p.icon, p.name, p.short, p.status)).join('')}</div>
-        <a class="mega-foot" href="/checks">See every check we run ${icon('arrow', 15)}</a></div></div>
+      <div class="mega wide"><p class="mega-intro">Everything below is included in your Tharam plan.</p><div class="mega-grid">${PRODUCTS.map((p) => item(`/features/${p.slug}`, p.icon, p.name, p.short, p.status)).join('')}</div>
+        <div class="mega-foot two"><a href="/checks">See every check we run ${icon('arrow', 15)}</a><a href="/commerce-assurance">Why Tharam ${icon('arrow', 15)}</a></div></div></div>
     <div class="nv"><button type="button" class="nv-btn"${on('/platforms')} aria-expanded="false">Platforms ${icon('chevron', 15)}</button>
       <div class="mega"><p class="mega-label">Your own store</p><div class="mega-list">${PLATFORMS.map((p) => `<a href="/platforms/${p.slug}"><span>${esc(p.name)}</span>${badge(p.status)}</a>`).join('')}</div>
         <a class="mega-foot" href="/platforms">Compare platforms ${icon('arrow', 15)}</a></div></div>
     <div class="nv"><button type="button" class="nv-btn"${on('/marketplaces')} aria-expanded="false">Marketplaces ${icon('chevron', 15)}</button>
       <div class="mega"><p class="mega-label">Where you also sell</p><div class="mega-list">${MARKETPLACES.map((m) => `<a href="/marketplaces/${m.slug}"><span>${esc(m.name)}</span>${badge(m.status)}</a>`).join('')}</div>
         <a class="mega-foot" href="/marketplaces">How marketplace guard works ${icon('arrow', 15)}</a></div></div>
-    <a class="nv-link" href="/commerce-assurance"${on('/commerce-assurance')}>Commerce Assurance</a>
+    <a class="nv-link" href="/managed"${on('/managed')}>Managed service</a>
     <a class="nv-link" href="/pricing"${on('/pricing')}>Pricing</a>
     <a class="nv-link show-sm" href="/demo">Book a demo</a>
     <a class="nv-link show-sm" href="/app">Log in</a>
@@ -45,12 +52,12 @@ function nav(path) {
 function footer() {
   const col = (h, links) => `<div><h4>${esc(h)}</h4>${links.map(([href, l]) => `<a href="${href}">${esc(l)}</a>`).join('')}</div>`;
   return `<footer class="site-foot"><div class="wrap">
-    <div class="sf-brand"><img src="/assets/brand/tharam-logo-dark.svg" alt="Tharam" width="112" height="32"><p>The Commerce Assurance platform. Continuous proof that customers can find, trust and buy from you.</p>
-      <a class="btn small light" href="/#check">Free store check</a></div>
+    <div class="sf-brand"><img src="/assets/brand/tharam-logo-dark.svg" alt="Tharam" width="112" height="32"><p>AI-powered store checks for online sellers. Make sure customers can always buy from you.</p>
+      <a class="btn small light" href="/#check">Check my store free</a></div>
     ${col('Features', PRODUCTS.map((p) => [`/features/${p.slug}`, p.name]).concat([['/checks', 'Every check']]))}
     ${col('Platforms', PLATFORMS.slice(0, 6).map((p) => [`/platforms/${p.slug}`, p.name]).concat([['/platforms', 'All platforms']]))}
     ${col('Marketplaces', MARKETPLACES.map((m) => [`/marketplaces/${m.slug}`, m.name]))}
-    ${col('Company', [['/commerce-assurance', 'Commerce Assurance'], ['/pricing', 'Pricing'], ['/demo', 'Book a demo'], ['/bot', 'Our test browser'], ['mailto:hello@tharam.store', 'Contact']])}
+    ${col('Company', [['/commerce-assurance', 'Why Tharam'], ['/managed', 'Managed service'], ['/pricing', 'Pricing'], ['/demo', 'Book a demo'], ['/bot', 'Our test browser'], ['mailto:hello@tharam.store', 'Contact']])}
     </div><div class="wrap sf-legal"><span>© 2026 Tharam</span><span><a href="/privacy">Privacy</a><a href="/terms">Terms</a></span></div></footer>`;
 }
 
@@ -70,6 +77,9 @@ const SCRIPT = `<script>
     btn.disabled=true;btn.textContent='Starting…';
     try{var r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url})});var j=await r.json();if(!r.ok)throw new Error(j.error||'Could not start the check');location.href='/scan/'+j.runId;}
     catch(x){err.textContent=x.message;btn.disabled=false;btn.textContent='Run free check';}});
+  [].slice.call(document.querySelectorAll('[data-tabs]')).forEach(function(t){t.addEventListener('click',function(e){var b=e.target.closest('[data-tab]');if(!b)return;
+    [].slice.call(t.querySelectorAll('[data-tab]')).forEach(function(x){x.setAttribute('aria-selected',String(x===b));});
+    [].slice.call(t.querySelectorAll('[data-pane]')).forEach(function(p){p.hidden=p.dataset.pane!==b.dataset.tab;});});});
   [].slice.call(document.querySelectorAll('form[data-waitlist]')).forEach(function(w){w.addEventListener('submit',async function(e){e.preventDefault();var msg=w.querySelector('.wl-msg'),btn=w.querySelector('button');btn.disabled=true;
     try{var r=await fetch('/api/leads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:w.email.value.trim(),url:(w.url&&w.url.value)||'',source:w.dataset.waitlist})});var j=await r.json();if(!r.ok)throw new Error(j.error||'Please try again');msg.textContent='You are on the list. We will email you when it opens.';w.reset();}
     catch(x){msg.textContent=x.message;}btn.disabled=false;});});
@@ -78,7 +88,7 @@ const SCRIPT = `<script>
 
 /** Wraps page content in the site layout. */
 export function layout({ title, description = '', path = '/', body, noindex = false, extraHead = '', scripts = '' }) {
-  const full = title ? `${title} – Tharam` : 'Tharam – The AI-powered Commerce Assurance platform';
+  const full = title ? `${title} – Tharam` : 'Tharam – Make sure customers can always buy from you';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(full)}</title>${description ? `<meta name="description" content="${esc(description)}">` : ''}
