@@ -52,6 +52,8 @@ export function normalizeConfig(input = {}, base = {}) {
   if (Array.isArray(input.disabled)) cfg.disabled = input.disabled.filter((k) => GROUPS.some((g) => g.key === k && !g.locked));
   if (input.testProduct !== undefined) cfg.testProduct = input.testProduct ? String(input.testProduct).slice(0, 200) : null;
   if (input.journeyIntervalMin !== undefined && INTERVALS.includes(Number(input.journeyIntervalMin))) cfg.journeyIntervalMin = Number(input.journeyIntervalMin);
+  if (input.dailySales !== undefined) { const n = Number(input.dailySales); cfg.dailySales = Number.isFinite(n) && n > 0 ? Math.round(n) : null; }
+  if (input.currency !== undefined) cfg.currency = /^[A-Z]{3}$/.test(String(input.currency)) ? String(input.currency) : null;
   if (input.fullIntervalMin !== undefined && FULL_INTERVALS.includes(Number(input.fullIntervalMin))) cfg.fullIntervalMin = Number(input.fullIntervalMin);
   return cfg;
 }

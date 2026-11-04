@@ -83,7 +83,8 @@ async function execute({ runId, origin, kind, password, storeId, confirmed, disa
     // Publish-check runs (live and draft) never change the store's status and never alert.
     if (storeId && !release) {
       q.updateStoreAfterRun.run(result.verdict, result.score, storeId);
-      if (result.platform) q.updateStorePlatform.run(result.platform.label, storeId);
+      // Only trust platform detection when the store actually loaded; an outage looks like an unknown platform.
+      if (result.platform && (result.checks || []).some((c) => c.id === 'fn.home' && c.status === 'pass')) q.updateStorePlatform.run(result.platform.label, storeId);
       if (kind === 'full') q.markFullScan.run(storeId);
       // A critical check that just started failing is re-tested once before alerting,
       // so a one-off network blip never wakes a merchant up.

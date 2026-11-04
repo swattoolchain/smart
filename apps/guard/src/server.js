@@ -11,6 +11,7 @@ import { GROUPS, INTERVALS, FULL_INTERVALS, normalizeConfig } from './engine/cat
 import { startRun, startScheduler, storeConfig, intervals, nextRunIn } from './scheduler.js';
 import { queueDepth, cancelRun } from './queue.js';
 import { liveView } from './live.js';
+import { scorecard, weekBuyability } from './scorecard.js';
 import { previewUrlFor, startRelease, settleRelease } from './release.js';
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
@@ -264,7 +265,8 @@ function storeView(s) {
   const active = q.activeRunForStore.get(s.id);
   return {
     ...publicStore(s),
-    config: { disabled: cfg.disabled || [], testProduct: cfg.testProduct || null, ...iv },
+    config: { disabled: cfg.disabled || [], testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, ...iv },
+    buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
     failing: q.failingChecks.all(s.id),
@@ -334,6 +336,12 @@ app.delete('/api/stores/:id', requireUser, (req, res) => {
   q.deleteStore.run(s.id, req.user.id);
   fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
   res.json({ ok: true });
+});
+
+app.get('/api/stores/:id/scorecard', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(scorecard(s));
 });
 
 app.post('/api/stores/:id/run', requireUser, (req, res) => {

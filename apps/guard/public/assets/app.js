@@ -490,7 +490,7 @@
     const runs = data.runs;
     const active = runs.find((r) => r.status === 'queued' || r.status === 'running');
     const lastDone = runs.find((r) => r.status === 'done');
-    const [latest, activeRun] = await Promise.all([lastDone ? api('/api/runs/' + lastDone.id) : null, active ? api('/api/runs/' + active.id) : null, S.catalog ? null : api('/api/catalog').then((c) => (S.catalog = c))]);
+    const [latest, activeRun, sc] = await Promise.all([lastDone ? api('/api/runs/' + lastDone.id) : null, active ? api('/api/runs/' + active.id) : null, api(`/api/stores/${s.id}/scorecard`).catch(() => null), S.catalog ? null : api('/api/catalog').then((c) => (S.catalog = c))]);
     if (!ctx.alive()) return;
     const res = latest?.result;
     const problems = problemsFrom(res);
@@ -512,6 +512,7 @@
       if (res.verdict === 'blocked') { const bc = res.checks.find((c) => c.id === 'fn.blocked'); body += `<div class="notice"><p><b>${esc(bc?.evidence?.vendor || 'Bot protection')} stopped our test browser.</b> ${esc(bc?.fix || '')}</p></div>`; }
       if (res.verdict === 'locked') body += `<div class="notice"><p>Your store is password protected. <a href="#/s/${s.id}/settings">Add the storefront password</a> so we can test the shopping journey.</p></div>`;
     }
+    if (sc && (res || done.length)) body += scorecardPanel(sc, s);
     if (res || done.length) {
       body += `<div class="grid-2">
         <section class="panel"><div class="panel-head"><h2>What needs fixing</h2>${lastDone ? `<a href="#/s/${s.id}/reports/${lastDone.id}">Full report ${icon('right', 14)}</a>` : ''}</div>
@@ -521,7 +522,7 @@
         <section class="panel"><div class="panel-head"><h2>Recent tests</h2><a href="#/s/${s.id}/runs">All runs ${icon('right', 14)}</a></div>
           ${strip(runs)}<div class="strip-legend"><span>Older</span><span>Latest</span></div>${LEGEND}
           <div class="figures" style="margin:18px 0 0;grid-template-columns:repeat(2,minmax(0,1fr))">
-            <div class="figure"><b>${done.length ? Math.round((ok / done.length) * 100) + '%' : '–'}</b><span>of recent tests could buy</span></div>
+            <div class="figure"><b>${sc?.buyability.week.runs ?? '–'}</b><span>checks in the last 7 days</span></div>
             <div class="figure"><b>${s.monitoring && s.last_run_at ? esc(inMin(s.next_run_in).replace(/^in /, '')) : '–'}</b><span>${s.monitoring ? (s.last_run_at ? 'until the next test' : 'monitoring starts after first check') : 'monitoring paused'}</span></div>
           </div>
         </section>
@@ -648,6 +649,24 @@
       } catch (ex) { done(); toast(ex.message, 'error'); }
     });
   };
+
+  // Scorecard: Buyability is the headline; the rest explain it.
+  const pctTxt = (v) => (v == null ? '–' : `${v}%`);
+  const durTxt = (m) => (m == null ? '–' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`);
+  const moneyTxt = (n, cur) => { try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur || 'USD', maximumFractionDigits: 0 }).format(n); } catch { return String(n); } };
+  function scorecardPanel(sc, s) {
+    const b = sc.buyability, t = sc.timeToFix, r = sc.revenueAtRisk, c = sc.catalog, pb = sc.publishing;
+    const tone = (v) => (v == null ? '' : v >= 99 ? 'good' : v >= 95 ? 'mid' : 'bad');
+    const bars = b.daily.slice(-14).map((d) => `<i class="${d.pct == null ? 'none' : tone(d.pct)}" style="--h:${d.pct ?? 8}" title="${esc(d.day)}: ${d.pct == null ? 'no checks' : d.pct + '%'}"></i>`).join('');
+    const tile = (label, value, sub, extra = '', cls = '') => `<div class="sc-tile ${cls}"><span class="sc-l">${label}</span><b class="sc-v">${value}</b><span class="sc-s">${sub}</span>${extra}</div>`;
+    return `<section class="panel scorecard"><div class="panel-head"><h2>Scorecard</h2><span class="muted" style="font-size:12.5px">Last 30 days</span></div><div class="sc-grid">
+      ${tile('Buyability · 7 days', `<span class="${tone(b.week.pct)}">${pctTxt(b.week.pct)}</span>`, `How often customers could buy. Today ${pctTxt(b.day.pct)} · 30 days ${pctTxt(b.month.pct)}`, `<div class="sc-bars" aria-label="Buyability by day, last 14 days">${bars}</div>`, 'lead')}
+      ${tile('Time to fix', durTxt(t.medianMinutes), t.open ? `<span class="t-fail">${plural(t.open, 'problem')} still open</span>` : t.incidents ? `Typical, across ${plural(t.incidents, 'incident')}` : 'No buying problems in 30 days')}
+      ${tile('Revenue at risk', r.amount != null ? moneyTxt(r.amount, r.currency) : `${r.hours} h`, r.amount != null ? `${r.hours} h when customers couldn’t buy` : r.hours ? `when customers couldn’t buy · <a href="#/s/${s.id}/settings">add daily sales</a> to see the amount` : `No lost buying time · <a href="#/s/${s.id}/settings">add daily sales</a>`)}
+      ${tile('Product accuracy', c ? pctTxt(c.pct) : '–', c ? (c.withIssues ? `${c.withIssues} of ${c.products} products need fixing` : `All ${c.products} products look right`) : 'After the first full check')}
+      ${tile('Changes checked', String(pb.checked), pb.checked ? (pb.caught ? `${plural(pb.caught, 'risky change')} caught before publishing` : 'All safe to publish') : `<a href="#/s/${s.id}/publish">Check a design before publishing</a>`)}
+    </div></section>`;
+  }
 
   // Test suite
   function suiteRows(groups, disabled, { shopify = true, aiEnabled = false } = {}) {
@@ -923,6 +942,9 @@
       <div class="form-section"><div><h3>Store details</h3><p class="explain">The name is how this store appears in Tharam and in alerts.</p></div>
         <div class="controls"><div class="field"><label for="nm">Store name</label><input id="nm" name="name" value="${esc(s.name || '')}" required maxlength="80"></div>
         <div class="field"><label for="ad">Store address</label><input id="ad" value="${esc(s.url)}" readonly><p class="hint">To test a different address, add it as a new store.</p></div></div></div>
+      <div class="form-section"><div><h3>Sales <span class="muted" style="font-weight:400">(optional)</span></h3><p class="explain">Your average sales per day. We use it only to show how much revenue was at risk while customers couldn’t buy.</p></div>
+        <div class="controls"><div class="inline-row"><div class="field" style="flex:1;margin:0"><label for="ds">Average daily sales</label><input id="ds" name="dailySales" type="number" min="0" step="1" inputmode="numeric" value="${esc(s.config.dailySales ?? '')}" placeholder="e.g. 50000"></div>
+          <div class="field" style="width:120px;margin:0"><label for="cur">Currency</label><select id="cur" name="currency">${['', 'INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'].map((c) => `<option value="${c}" ${c === (s.config.currency || '') ? 'selected' : ''}>${c || 'Store’s'}</option>`).join('')}</select></div></div></div></div>
       <div class="form-section"><div><h3>Storefront password</h3><p class="explain">Only needed while your store is password protected (for example before launch). We use it to open the store for testing and never show it again.</p></div>
         <div class="controls"><div class="field"><label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="off" placeholder="${s.has_password ? 'Saved. Type to replace' : 'Not set'}"></div>
         ${s.has_password ? '<label class="toggle-line"><span class="switch"><input type="checkbox" name="clearpw"><span></span></span><span class="tl-text"><b>Remove saved password</b><span>Use this once your store is public.</span></span></label>' : ''}</div></div>
@@ -933,7 +955,7 @@
     const mark = savebar($('.main-inner', ctx.main), {
       onSave: async () => {
         const fd = new FormData(form);
-        const body = { name: fd.get('name') };
+        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null } };
         if (fd.get('clearpw')) body.password = '';
         else if (fd.get('password')) body.password = fd.get('password');
         await api(`/api/stores/${s.id}`, { method: 'PATCH', body });
@@ -1327,10 +1349,10 @@
     if (!ctx.alive()) return;
     if (!d.stores.length) return PAGES.home(ctx);
     ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>All stores</h1><div class="meta">${d.stores.length} of 5 stores in the beta</div></div><div class="actions"><a class="btn" href="#/add">${icon('add', 16)}Add a store</a></div></div>
-      <div class="table-wrap"><table class="data"><thead><tr><th>Store</th><th>Status</th><th class="num">Health</th><th>Last test</th><th>Next test</th><th aria-label="Open"></th></tr></thead><tbody>
+      <div class="table-wrap"><table class="data"><thead><tr><th>Store</th><th>Status</th><th class="num">Buyability, 7 days</th><th class="num">Health</th><th>Last test</th><th>Next test</th><th aria-label="Open"></th></tr></thead><tbody>
       ${d.stores.map((s) => { const st = storeStatus(s); return `<tr class="link" data-href="#/s/${s.id}" tabindex="0"><td><div class="cell-main">${esc(s.name || host(s.url))}</div><div class="cell-sub">${esc(host(s.url))}${s.platform ? ` · ${esc(s.platform)}` : ''}</div></td>
         <td><span class="status-inline"><span class="dot ${esc(st.key)}"></span>${esc(st.label)}</span>${s.failing.length ? `<div class="cell-sub">${s.failing.length} open problem${s.failing.length > 1 ? 's' : ''}</div>` : ''}</td>
-        <td class="num">${s.last_score ?? '–'}</td><td>${s.last_run_at ? time(s.last_run_at) : '<span class="muted">Not yet</span>'}</td><td class="cell-sub">${s.active_run_id ? 'Running now' : s.monitoring && s.last_run_at ? esc(inMin(s.next_run_in)) : s.monitoring ? 'After first check' : 'Paused'}</td><td class="go">${icon('right', 16)}</td></tr>`; }).join('')}
+        <td class="num"><b>${s.buyability_week == null ? '–' : s.buyability_week + '%'}</b></td><td class="num">${s.last_score ?? '–'}</td><td>${s.last_run_at ? time(s.last_run_at) : '<span class="muted">Not yet</span>'}</td><td class="cell-sub">${s.active_run_id ? 'Running now' : s.monitoring && s.last_run_at ? esc(inMin(s.next_run_in)) : s.monitoring ? 'After first check' : 'Paused'}</td><td class="go">${icon('right', 16)}</td></tr>`; }).join('')}
       </tbody></table></div>
       ${d.alerts.length ? `<section class="panel" style="margin-top:20px"><h2>Latest alerts across stores</h2><ul class="list" style="margin-top:10px">${d.alerts.slice(0, 8).map((a) => `<li><a class="row" href="#/s/${a.store_id}/alerts"><span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span><span class="t">${esc(a.store_name || host(a.store_url))}</span><span class="d">${esc(a.message || a.check_id)}</span></span><span class="r">${time(a.created_at)}</span></a></li>`).join('')}</ul></section>` : ''}</div>`;
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
