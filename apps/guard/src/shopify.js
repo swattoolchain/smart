@@ -209,13 +209,12 @@ async function ensureShopOnce(shop, idToken, { startRun, isPublic } = {}) {
   }
   let url = (info.primaryDomain?.url || `https://${shop}`).replace(/\/$/, '');
   if (isPublic) { try { await isPublic(new URL(url).origin); } catch { url = `https://${shop}`; } }
-  const firstTime = !row.store_id; // never start more than the one setup check per shop
   const m = marketOf(info.billingAddress?.countryCodeV2);
-  const cfg = { markets: m ? [m] : [], currency: info.currencyCode || null };
+  // New shops start with the welcome flow; nothing is tested until the owner starts the first check.
+  const cfg = { markets: m ? [m] : [], currency: info.currencyCode || null, onboarded: false, toured: false };
   const storeId = Number(q.insertStore.run(userId, url, String(info.name || shop).slice(0, 80), null, info.contactEmail || info.email || null, null, JSON.stringify(cfg), 'Shopify', 1).lastInsertRowid);
   Q.link.run(userId, storeId, shop);
   audit('shopify', userId, 'note', { text: `Installed from Shopify (${shop})` });
-  if (firstTime && startRun) startRun({ storeId, origin: url, kind: 'full', trigger: 'setup' });
   return { userId, storeId, created: true };
 }
 

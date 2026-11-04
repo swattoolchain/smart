@@ -20,7 +20,7 @@ const runRow = db.prepare("SELECT * FROM runs WHERE id = ? AND store_id = ? AND 
 
 /** Lists finished reports for the picker. */
 export function reportList(storeId) {
-  return doneRuns.all(storeId).map((r) => ({ id: r.id, kind: r.kind, created_at: r.created_at, score: r.score, verdict: r.verdict }));
+  return doneRuns.all(storeId).map((r) => ({ id: r.id, seq: r.seq, kind: r.kind, created_at: r.created_at, score: r.score, verdict: r.verdict }));
 }
 
 /** Picks the report and the one to compare it with. base: prev | day | week | none | <run id> */

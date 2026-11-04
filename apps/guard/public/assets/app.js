@@ -315,6 +315,7 @@
       <div class="rail-label">Workspace</div>
       ${item('#/stores', 'stores', 'All stores', active.page === 'stores')}
       ${item('#/add', 'add', 'Add a store', active.page === 'add')}
+      ${item('#/guide', 'book', 'How to use Tharam', active.page === 'guide')}
       ${S.admin ? item('#/admin', 'founder', 'Founder console', active.page === 'admin') : ''}`;
     const slot = $('#switch-slot');
     if (!cur) { slot.innerHTML = ''; }
@@ -349,6 +350,7 @@
     if ((m = /^\/account(?:\/(password|billing))?$/.exec(h))) return { page: 'account', a: m[1] || null };
     if (h === '/stores') return { page: 'stores' };
     if (h === '/add') return { page: 'add' };
+    if (h === '/guide') return { page: 'guide' };
     if ((m = /^\/admin(?:\/([a-z]+))?(?:\/(\d+))?$/.exec(h))) return { page: 'admin', a: m[1] || null, b: m[2] ? Number(m[2]) : null };
     return { page: 'home' };
   }
@@ -369,6 +371,9 @@
       if (!alive()) return;
       if (r.store) {
         if (!S.stores.some((s) => s.id === r.store)) { location.hash = '#/stores'; return; }
+        // A store that hasn't been through the welcome flow starts there.
+        const st = S.stores.find((x) => x.id === r.store);
+        if (st.config.onboarded === false && r.module !== 'welcome') { location.replace(`#/s/${st.id}/welcome`); return; }
         S.storeId = r.store;
         try { localStorage.setItem('tg.store', String(r.store)); } catch {}
       } else if (!S.stores.some((s) => s.id === S.storeId)) {
@@ -458,7 +463,7 @@
   function runButtons(s) {
     if (s.active_run_id) return `<a class="btn secondary" href="#/s/${s.id}/runs/${s.active_run_id}"><span class="pulse" aria-hidden="true"></span>View running test</a>`;
     if (s.blocked) return `<button class="btn" type="button" disabled title="${esc(s.blocked)}">${icon('play', 16)}Run validations</button>`;
-    return `<a class="btn" href="#/s/${s.id}/run">${icon('play', 16)}Run validations</a>`;
+    return `<a class="btn" data-tour="run" href="#/s/${s.id}/run">${icon('play', 16)}Run validations</a>`;
   }
   function bindRunButtons() {} // Stop buttons are handled by one listener below.
   const kindLabel = (r) => (r.trigger === 'manual' ? 'Validation run' : r.trigger === 'release' ? 'Publish check' : KIND[r.kind] || 'Run');
@@ -589,7 +594,7 @@
     }
     if (res) {
       const cats = (res.categories || []).filter((c) => c.tested && c.weight > 0);
-      body += `<section class="panel hero">
+      body += `<section class="panel hero" data-tour="hero">
         <div class="dial" style="--v:${res.score ?? 0};--c:${{ healthy: 'var(--pass)', warning: 'var(--warn)', critical: 'var(--fail)', locked: 'var(--warn)', blocked: 'var(--warn)' }[res.verdict] || 'var(--skip)'}"><div><span><b>${res.score ?? '–'}</b><small>health</small></span></div></div>
         <div><span class="pill ${esc(res.verdict)}">${esc(VERDICT[res.verdict] || res.verdict)}</span><h2>${esc(res.summary)}</h2>
           <p class="when">${esc(KIND[lastDone.kind])} ${time(lastDone.finished_at || lastDone.created_at)} · <a href="#/s/${s.id}/reports/${lastDone.id}">Open report</a></p></div>
@@ -603,7 +608,7 @@
     if (sc && (res || done.length)) body += scorecardPanel(sc, s);
     if (res || done.length) {
       body += `<div class="grid-2">
-        <section class="panel"><div class="panel-head"><h2>What needs fixing</h2>${lastDone ? `<a href="#/s/${s.id}/reports/${lastDone.id}">Full report ${icon('right', 14)}</a>` : ''}</div>
+        <section class="panel" data-tour="fix"><div class="panel-head"><h2>What needs fixing</h2>${lastDone ? `<a href="#/s/${s.id}/reports/${lastDone.id}">Full report ${icon('right', 14)}</a>` : ''}</div>
           ${problems.length ? `<ul class="list">${problems.slice(0, 6).map((c) => `<li><a class="row" href="#/s/${s.id}/reports/${lastDone.id}" data-focus="${esc(c.id)}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.detail)}</span></span><span></span></a></li>`).join('')}</ul>${problems.length > 6 ? `<p class="muted" style="margin:10px 4px 0">and ${problems.length - 6} more in the report</p>` : ''}`
             : `<p class="muted" style="margin:0">Nothing to fix in the latest check.</p>`}
         </section>
@@ -635,6 +640,8 @@
         location.hash = `#/s/${s.id}/runs/${r.runId}`;
       } catch (ex) { done(); f.querySelector('.error-msg').textContent = ex.message; }
     });
+    // The first time a store has results, show the owner around once.
+    if (res && !active && s.config.toured === false && !S.touring) { startTour(s); return; }
     if (active || s.active_run_id) poll(S.stopping.size ? 1500 : 3000); // also refresh once if the run ended between loads
     else if (s.monitoring && s.last_run_at) poll(60000);
   };
@@ -761,7 +768,7 @@
     const tone = (v) => (v == null ? '' : v >= 99 ? 'good' : v >= 95 ? 'mid' : 'bad');
     const bars = b.daily.slice(-14).map((d) => `<i class="${d.pct == null ? 'none' : tone(d.pct)}" style="--h:${d.pct ?? 8}" title="${esc(d.day)}: ${d.pct == null ? 'no checks' : d.pct + '%'}"></i>`).join('');
     const tile = (label, value, sub, extra = '', cls = '') => `<div class="sc-tile ${cls}"><span class="sc-l">${label}</span><b class="sc-v">${value}</b><span class="sc-s">${sub}</span>${extra}</div>`;
-    return `<section class="panel scorecard"><div class="panel-head"><h2>Scorecard</h2><span class="muted" style="font-size:12.5px">Last 30 days</span></div><div class="sc-grid ${sc.rules?.markets.length ? 'six' : ''}">
+    return `<section class="panel scorecard" data-tour="scorecard"><div class="panel-head"><h2>Scorecard</h2><span class="muted" style="font-size:12.5px">Last 30 days</span></div><div class="sc-grid ${sc.rules?.markets.length ? 'six' : ''}">
       ${tile('Buyability · 7 days', `<span class="${tone(b.week.pct)}">${pctTxt(b.week.pct)}</span>`, `How often customers could buy. Today ${pctTxt(b.day.pct)} · 30 days ${pctTxt(b.month.pct)}`, `<div class="sc-bars" aria-label="Buyability by day, last 14 days">${bars}</div>`, 'lead')}
       ${tile('Time to fix', durTxt(t.medianMinutes), t.open ? `<span class="t-fail">${plural(t.open, 'problem')} still open</span>` : t.incidents ? `Typical, across ${plural(t.incidents, 'incident')}` : 'No buying problems in 30 days')}
       ${tile('Revenue at risk', r.amount != null ? moneyTxt(r.amount, r.currency) : `${r.hours} h`, r.amount != null ? `${r.hours} h when customers couldn’t buy` : r.hours ? `when customers couldn’t buy · <a href="#/s/${s.id}/settings">add daily sales</a> to see the amount` : `No lost buying time · <a href="#/s/${s.id}/settings">add daily sales</a>`)}
@@ -903,7 +910,7 @@
     const base = `#/s/${s.id}/runs/${runId}`;
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (!ctx.alive()) return;
-    const title = `${kindLabel(run)} #${run.id}`;
+    const title = `${kindLabel(run)}${run.seq ? ` #${run.seq}` : ''}`;
     const crumb = `<a href="#/s/${s.id}/runs">Runs</a> / ${esc(title)}`;
     const meta = `<p class="lede-sm">${esc(TRIGGER[run.trigger] || 'Scheduled')} · started ${esc(exact(run.created_at))}${run.finished_at ? ` · took ${duration(run.created_at, run.finished_at)}` : ''}</p>`;
     if (run.status === 'queued' || run.status === 'running') {
@@ -1520,7 +1527,7 @@
     const r = await api(`/api/stores/${s.id}/releases/${rid}`);
     if (!ctx.alive()) return;
     const sum = r.summary;
-    const crumb = `<a href="#/s/${s.id}/publish">Safe to publish</a> / Check #${r.id}`;
+    const crumb = `<a href="#/s/${s.id}/publish">Safe to publish</a> / Check${r.seq ? ` #${r.seq}` : ''}`;
     const title = r.environment?.name || sum?.theme?.draft?.name || r.label || 'Draft theme';
     const meta = `${[r.environment && sum?.theme?.draft?.name, r.label && (r.environment || sum?.theme?.draft?.name) ? r.label : null].filter(Boolean).map((x) => `<span>${esc(x)}</span><span class="sep"></span>`).join('')}<span>Started ${esc(exact(r.created_at))}${r.trigger && r.trigger !== 'manual' ? ` · ${esc(BY[r.trigger])}` : ''}</span>${r.finished_at ? `<span class="sep"></span><span>took ${duration(r.created_at, r.finished_at)}</span>` : ''}`;
     const preview = `<a class="icon-btn bordered" href="${esc(r.preview_url)}" target="_blank" rel="noopener" data-tip="Open what was checked" aria-label="Open what was checked">${icon('external', 17)}</a>`;
@@ -1603,6 +1610,196 @@
 
   // ---------- Workspace pages ----------
   const PAGES = {};
+
+  // ---------- First-time onboarding: welcome, your store, alerts, first check ----------
+  const ONB_STEPS = ['Welcome', 'Your store', 'Alerts and schedule', 'First check'];
+  STORE_PAGES.welcome = async (ctx, s) => {
+    S.catalog = S.catalog || (await api('/api/catalog'));
+    if (!ctx.alive()) return;
+    const o = (S.onb = S.onb?.store === s.id ? S.onb : { store: s.id, step: 0, found: null, markets: [...s.config.markets], testProduct: s.config.testProduct || '', email: s.alert_email || S.me.email, journeyIntervalMin: s.config.journeyIntervalMin, fullIntervalMin: s.config.fullIntervalMin, dailySales: s.config.dailySales || '', currency: s.config.currency || '' });
+    const name = esc(s.name || host(s.url));
+    const stepper = `<ol class="onb-steps">${ONB_STEPS.map((t, i) => `<li class="${i < o.step ? 'done' : i === o.step ? 'now' : ''}"><span>${i < o.step ? icon('check', 13) : i + 1}</span>${esc(t)}</li>`).join('')}</ol>`;
+    const wrap = (inner, actions) => { ctx.main.innerHTML = `<div class="main-inner onb">${stepper}<section class="panel onb-card">${inner}</section>${actions ? `<div class="onb-actions">${actions}</div>` : ''}</div>`; };
+    const go = (n) => { o.step = n; render({ silent: true }); };
+
+    if (o.step === 0) {
+      wrap(`<div class="onb-hero"><span class="onb-mark">${icon('shield', 26)}</span><div><h1>Welcome to Tharam</h1><p class="lede-sm">Let’s make sure customers can always buy from <b>${name}</b>. Setup takes about two minutes.</p></div></div>
+        <div class="onb-three">
+          <div><span>${icon('play', 18)}</span><b>We shop your store like a customer</b><p>Every few hours, on a phone and a computer: search, pick a size, add to cart and go to checkout.</p></div>
+          <div><span>${icon('alerts', 18)}</span><b>We tell you when something breaks</b><p>One email when buying stops working, with what broke and how to fix it. One more when it’s fixed.</p></div>
+          <div><span>${icon('publish', 18)}</span><b>We check changes before customers see them</b><p>New themes, price imports and discount codes, checked before they cost you sales.</p></div></div>
+        <ul class="onb-promises"><li>${icon('check', 14)}No orders are ever placed</li><li>${icon('check', 14)}Your theme is never changed</li><li>${icon('check', 14)}We only read your store, never edit it</li></ul>`,
+        `<span></span><button class="btn" id="n">Set up my store ${icon('arrow', 16)}</button>`);
+      $('#n').onclick = () => go(1);
+      return;
+    }
+
+    if (o.step === 1) {
+      const f = o.found;
+      const looking = !f;
+      const locked = f?.locked && !f.unlocked;
+      wrap(`<h2>Your store</h2><p class="sub">We looked at ${name} the way a shopper would.</p>
+        ${looking ? `<div class="onb-looking"><span class="spinner"></span>Looking at your store…</div>` : f.error ? `<div class="notice warn-n"><p>${esc(f.error)}</p></div>` : `
+        <dl class="found"><div><dt>Store</dt><dd>${esc(host(s.url))}</dd></div><div><dt>Platform</dt><dd>${esc(f.platform?.label || 'Shopify')}</dd></div><div><dt>Products</dt><dd>${locked ? 'After the password' : f.productCount ? `${f.productCount >= 50 ? '50+' : f.productCount} found` : '–'}</dd></div></dl>
+        ${f.locked ? `<div class="onb-block ${locked ? 'need' : 'ok'}"><h3>${locked ? `${icon('lock', 16)} Your store has a password` : `${icon('check', 16)} Password works`}</h3>
+          ${locked ? `<p>Shoppers (and our test browser) need it to see your store. Find it in Shopify under <b>Online Store → Preferences → Password protection</b>.</p>
+          <form id="pwf" class="inline-row" novalidate><input name="password" type="password" autocomplete="off" placeholder="Storefront password" aria-label="Storefront password" required><button class="btn secondary" type="submit">Check password</button></form><p class="error-msg" id="pw-err" role="alert"></p>` : '<p>We’ll use it only to open your store for testing, and never show it again.</p>'}</div>` : ''}
+        <div class="onb-block"><h3>Where do you sell?</h3><p>We add checks for the rules in these countries, like legal pages, cookie consent and accessibility.</p>
+          <div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${o.markets.includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div></div>
+        ${f.catalog?.length ? `<div class="onb-block"><h3>Product used in tests</h3><p>Each test adds one to a fresh cart and goes to checkout, then empties the cart. Pick something usually in stock.</p>
+          <select id="tp"><option value="">Choose automatically (recommended)</option>${f.catalog.map((p) => `<option value="${esc(p.handle)}" ${p.handle === o.testProduct ? 'selected' : ''}>${esc(p.title)}${p.variants > 1 ? ` (${p.variants} variants)` : ''}</option>`).join('')}</select></div>` : ''}`}`,
+        `<button class="btn ghost" id="b">Back</button><button class="btn" id="n" ${looking || locked ? 'disabled' : ''}>Continue ${icon('arrow', 16)}</button>`);
+      $('#b').onclick = () => go(0);
+      if (looking) {
+        api(`/api/stores/${s.id}/discover`, { method: 'POST' }).then((d) => { o.found = d.reachable === false ? { error: d.error } : d; if (o.found.locked && !o.found.wrongPassword && s.has_password) o.found.unlocked = true; }).catch((e) => { o.found = { error: e.message }; }).finally(() => { if (ctx.alive()) render({ silent: true }); });
+        return;
+      }
+      $$('input[name=market]', ctx.main).forEach((i) => (i.onchange = () => { o.markets = $$('input[name=market]:checked', ctx.main).map((x) => x.value); }));
+      $('#tp')?.addEventListener('change', (e) => (o.testProduct = e.target.value));
+      $('#pwf')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pw = e.target.password.value;
+        if (!pw) { $('#pw-err').textContent = 'Enter the storefront password.'; return; }
+        const done = busy(e.target.querySelector('button'), 'Checking');
+        try {
+          await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { password: pw } });
+          const d = await api(`/api/stores/${s.id}/discover`, { method: 'POST' });
+          if (d.wrongPassword || (d.locked && !d.productCount)) { done(); $('#pw-err').textContent = 'That password didn’t open your store. Check it and try again.'; return; }
+          o.found = { ...d, locked: true, unlocked: true };
+          await loadStores();
+          render({ silent: true });
+        } catch (ex) { done(); $('#pw-err').textContent = ex.message; }
+      });
+      $('#n').onclick = async (e) => {
+        const done = busy(e.currentTarget, 'Saving');
+        try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { markets: o.markets, testProduct: o.testProduct || null } } }); await loadStores(); go(2); }
+        catch (ex) { done(); toast(ex.message, 'error'); }
+      };
+      return;
+    }
+
+    if (o.step === 2) {
+      const radios = (nm, map, val) => `<div class="seg" role="radiogroup">${Object.entries(map).map(([k, l]) => `<label ${belowPlan(nm, k) ? 'class="na" title="Not included in your plan"' : ''}><input type="radio" name="${nm}" value="${k}" ${Number(k) === Number(val) ? 'checked' : ''} ${belowPlan(nm, k) ? 'disabled' : ''}><span>${esc(l)}</span></label>`).join('')}</div>`;
+      wrap(`<h2>Alerts and schedule</h2><p class="sub">Where we tell you about problems, and how often we check. You can change all of this later.</p>
+        <form id="af" novalidate>
+        <div class="onb-block"><h3>Send alerts to</h3><input id="ae" name="email" type="email" value="${esc(o.email)}" required autocomplete="email"><p class="hint">One email when something breaks, one when it’s fixed. Never the same problem twice.</p></div>
+        <div class="onb-block"><h3>Shopping checks</h3><p>We search, add to cart and open checkout.</p>${radios('journeyIntervalMin', EVERY, o.journeyIntervalMin)}</div>
+        <div class="onb-block"><h3>Full check</h3><p>Everything else: every product and price, speed, Google, design and the rules where you sell.</p>${radios('fullIntervalMin', FULL_EVERY, o.fullIntervalMin)}</div>
+        <div class="onb-block"><h3>Average daily sales <span class="muted" style="font-weight:400">(optional)</span></h3><p>Lets us show how much money was at risk when customers couldn’t buy. Only you see it.</p>
+          <div class="inline-row"><input name="dailySales" type="number" min="0" inputmode="numeric" value="${esc(o.dailySales)}" placeholder="e.g. 50000" style="max-width:200px"><span class="muted">${esc(o.currency || '')}</span></div></div>
+        <p class="error-msg" id="af-err" role="alert"></p></form>`,
+        `<button class="btn ghost" id="b">Back</button><button class="btn" id="n">Continue ${icon('arrow', 16)}</button>`);
+      const f = $('#af');
+      const save = () => { const fd = new FormData(f); o.email = String(fd.get('email') || '').trim(); o.journeyIntervalMin = Number(fd.get('journeyIntervalMin')) || o.journeyIntervalMin; o.fullIntervalMin = Number(fd.get('fullIntervalMin')) || o.fullIntervalMin; o.dailySales = fd.get('dailySales'); };
+      $('#b').onclick = () => { save(); go(1); };
+      $('#n').onclick = async (e) => {
+        save();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(o.email)) { $('#af-err').textContent = 'Enter a valid email for alerts.'; return; }
+        const done = busy(e.currentTarget, 'Saving');
+        try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { alertEmail: o.email, monitoring: true, config: { journeyIntervalMin: o.journeyIntervalMin, fullIntervalMin: o.fullIntervalMin, dailySales: o.dailySales || null } } }); await loadStores(); go(3); }
+        catch (ex) { done(); $('#af-err').textContent = ex.message; }
+      };
+      return;
+    }
+
+    // Step 3: what the first check will do, then start it.
+    const g = S.catalog.groups.filter((x) => !s.config.disabled.includes(x.key) && groupAllowed(x) && inMarket(x, s.config.markets) && (!x.ai || S.catalog.aiEnabled));
+    const has = (k) => g.some((x) => x.key === k);
+    const items = [
+      ['Shop your store on a phone and a computer', 'Search, product page, size, add to cart, cart and checkout. We stop before payment.'],
+      has('speed') && ['Measure speed and how Google sees you', 'Load time on phones, page titles, broken links and accessibility.'],
+      has('catalog') && ['Check every product', 'Prices of zero, fake discounts, unfinished descriptions and missing photos.'],
+      s.config.markets.length && g.some((x) => x.markets) && ['Check the rules where you sell', S.catalog.groups.filter((x) => x.markets && g.includes(x)).map((x) => x.label).join(' · ')],
+      has('visual') && ['Save today’s look', 'Screenshots we compare against, so you hear about unexpected design changes.'],
+    ].filter(Boolean);
+    wrap(`<h2>Your first check</h2><p class="sub">It takes ${estimate(g.map((x) => x.key))}. You can watch it happen.</p>
+      <ul class="onb-plan">${items.map(([t, d]) => `<li><span>${icon('check', 14)}</span><div><b>${esc(t)}</b><p>${esc(d)}</p></div></li>`).join('')}</ul>
+      <div class="onb-after"><b>After that</b><p>Shopping checks ${esc((EVERY[s.config.journeyIntervalMin] || '').toLowerCase())}, a full check ${esc((FULL_EVERY[s.config.fullIntervalMin] || '').toLowerCase())}, and alerts to ${esc(s.alert_email || o.email)}.</p></div>`,
+      `<button class="btn ghost" id="b">Back</button><button class="btn" id="n">${icon('play', 16)}Start my first check</button>`);
+    $('#b').onclick = () => go(2);
+    $('#n').onclick = async (e) => {
+      const done = busy(e.currentTarget, 'Starting');
+      try {
+        await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { onboarded: true } } });
+        const r = await api(`/api/stores/${s.id}/run`, { method: 'POST', body: {} });
+        S.onb = null;
+        await loadStores();
+        location.hash = `#/s/${s.id}/runs/${r.runId}`;
+      } catch (ex) { done(); toast(ex.message, 'error'); }
+    };
+  };
+
+  // ---------- The first-report tour ----------
+  function startTour(s) {
+    S.touring = true;
+    const steps = [
+      { el: '[data-tour=hero]', title: 'Your store at a glance', text: '“Customers can buy” is what matters most. The number is your store’s health: problems that cost sales lower it. Open the report for every detail and screenshot.' },
+      { el: '[data-tour=scorecard]', title: 'Your scorecard', text: 'How often customers could buy, how fast problems got fixed, and how much money was at risk. It builds up with every check.' },
+      { el: '[data-tour=fix]', title: 'What needs fixing', text: 'Each problem says what’s wrong and exactly how to fix it, most important first. Click one to see it in the report.' },
+      { el: '[data-tour=run]', title: 'Check any time', text: 'We check on our own, but you can run a check now: a quick shopping test, your full suite, or a sale readiness check before a big sale.' },
+      { title: 'Before you change your design', text: `Use <b>Safe to publish</b> in the ${EMB ? 'Tharam menu in Shopify’s sidebar' : 'menu on the left'}. Pick your draft theme and we tell you if anything would break, before your customers see it.` },
+      { title: 'You’re all set', text: `We’ll keep checking ${esc(s.name || host(s.url))} and email you only when something breaks or is fixed. The guide in ${EMB ? 'the Tharam menu' : 'the menu'} explains everything else.` },
+    ];
+    let i = 0;
+    const layer = document.createElement('div');
+    layer.className = 'tour';
+    document.body.appendChild(layer);
+    const finish = async () => {
+      layer.remove(); window.removeEventListener('resize', draw); S.touring = false;
+      await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { toured: true } } }).catch(() => {});
+      await loadStores().catch(() => {});
+    };
+    function draw() {
+      const st = steps[i];
+      const target = st.el && document.querySelector(st.el);
+      if (target) target.scrollIntoView({ block: 'center', behavior: 'instant' });
+      const r = target?.getBoundingClientRect();
+      const hole = r ? `<div class="tour-hole" style="top:${r.top - 6}px;left:${r.left - 6}px;width:${r.width + 12}px;height:${r.height + 12}px"></div>` : '<div class="tour-dim"></div>';
+      const below = r && r.bottom + 220 < window.innerHeight;
+      const pos = r ? `top:${below ? r.bottom + 14 : Math.max(12, r.top - 14)}px;left:${Math.min(Math.max(12, r.left), window.innerWidth - 372)}px;${below ? '' : 'transform:translateY(-100%);'}` : 'top:50%;left:50%;transform:translate(-50%,-50%);';
+      layer.innerHTML = `${hole}<div class="tour-pop" role="dialog" aria-label="${esc(st.title)}" style="${pos}">
+        <p class="tour-k">${i + 1} of ${steps.length}</p><h3>${esc(st.title)}</h3><p>${st.text}</p>
+        <div class="tour-actions"><button type="button" class="btn ghost small" data-t="skip">${i === steps.length - 1 ? '' : 'Skip tour'}</button><span>${i ? '<button type="button" class="btn secondary small" data-t="back">Back</button>' : ''}<button type="button" class="btn small" data-t="next">${i === steps.length - 1 ? 'Done' : 'Next'}</button></span></div></div>`;
+      layer.querySelector('[data-t=next]').focus();
+      layer.querySelector('[data-t=next]').onclick = () => { if (i === steps.length - 1) return finish(); i++; draw(); };
+      layer.querySelector('[data-t=back]')?.addEventListener('click', () => { i--; draw(); });
+      layer.querySelector('[data-t=skip]').onclick = finish;
+    }
+    window.addEventListener('resize', draw);
+    setTimeout(draw, 150);
+  }
+
+  // ---------- How to use Tharam ----------
+  PAGES.guide = async (ctx) => {
+    const s = S.stores.find((x) => x.id === S.storeId) || S.stores[0];
+    const base = s ? `#/s/${s.id}` : '#/';
+    const menu = EMB ? 'the Tharam menu in Shopify’s sidebar' : 'the menu on the left';
+    const card = (ic, t, d, links) => `<section class="panel guide-card"><span class="g-ic">${icon(ic, 20)}</span><div><h2>${esc(t)}</h2><p>${d}</p>${links ? `<p class="g-links">${links}</p>` : ''}</div></section>`;
+    ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><div class="crumbs">Help</div><h1>How to use Tharam</h1><div class="meta">Everything is in ${esc(menu)}.</div></div>
+        ${s ? '<div class="actions"><button type="button" class="btn secondary" id="resetup">Go through setup again</button><button type="button" class="btn secondary" id="replay">Show me around again</button></div>' : ''}</div>
+      <div class="guide-grid">
+      ${card('monitoring', 'Every day: nothing to do', 'We shop your store like a customer on our own schedule and email you only when something breaks or is fixed. Open <b>Overview</b> any time to see whether customers can buy, your scorecard and what needs fixing.', s ? `<a href="${base}">Overview</a> · <a href="${base}/monitoring">Change how often</a>` : '')}
+      ${card('alerts', 'When you get an alert', 'The email says what broke, the likely cause and how to fix it, with a link to the report and screenshots. Fix it, and we’ll confirm on the next check, or click Run validations to check straight away.', s ? `<a href="${base}/alerts">Alerts and where they go</a>` : '')}
+      ${card('play', 'Check right now', '<b>Run validations</b> on the Overview: choose a quick shopping test, your full suite, a sale readiness check, or pick checks yourself. Watch it live, and stop it any time.', s ? `<a href="${base}/run">Run validations</a>` : '')}
+      ${card('publish', 'Before you change your design', 'Duplicate your live theme in Shopify, make your changes there, then open <b>Safe to publish</b> and click Check this theme. We test it next to your live theme on phone, tablet and computer, and tell you if anything would break.', s ? `<a href="${base}/publish">Safe to publish</a>` : '')}
+      ${card('catalog', 'Products, prices and discount codes', 'Every full check looks at every product for wrong prices, fake discounts, unfinished text and missing photos. When you change products in Shopify, we check them within minutes. Your active discount codes are tested too.', s ? `<a href="${base}/catalog">Products</a> · <a href="${base}/suite/codes">Discount codes</a>` : '')}
+      ${card('reports', 'Reports', 'Every check is saved with screenshots. Compare any two to see what broke, what got fixed and what changed. Print or save any report as a PDF to share.', s ? `<a href="${base}/reports">Reports</a>` : '')}
+      ${card('suite', 'Choose what we check', '<b>Test suite</b> switches checks on or off, sets the product used in tests, and holds your sale discount codes. <b>Settings</b> has where you sell, your daily sales and the storefront password.', s ? `<a href="${base}/suite">Test suite</a> · <a href="${base}/settings">Settings</a>` : '')}
+      ${card('shield', 'What we never do', 'We never place orders, never change your theme, products or settings, and never see your customers’ details. We only read your store.', '')}
+      </div>
+      <p class="muted center" style="margin-top:20px">Questions? Write to <a href="mailto:hello@tharam.store">hello@tharam.store</a>. A person reads every email.</p></div>`;
+    $('#resetup')?.addEventListener('click', async () => {
+      await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { onboarded: false, toured: false } } });
+      S.onb = null;
+      await loadStores();
+      location.hash = `${base}/welcome`;
+    });
+    $('#replay')?.addEventListener('click', async () => {
+      await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { toured: false } } });
+      await loadStores();
+      location.hash = base;
+    });
+  };
 
   PAGES.home = async (ctx) => {
     ctx.main.innerHTML = `<div class="main-inner welcome">
@@ -2152,7 +2349,7 @@
     const submit = async (runNow, btn) => {
       const done = busy(btn, runNow ? 'Saving and starting' : 'Saving');
       try {
-        const r = await api('/api/stores', { method: 'POST', body: { url: w.url, name: host(w.url), password: w.password || undefined, alertEmail: w.alertEmail, slack: w.slack || undefined, monitoring: w.monitoring, runNow, platform: f.platform?.label, config: { disabled: w.disabled, markets: w.markets || [], testProduct: w.testProduct || null, journeyIntervalMin: w.journeyIntervalMin, fullIntervalMin: w.fullIntervalMin } } });
+        const r = await api('/api/stores', { method: 'POST', body: { url: w.url, name: host(w.url), password: w.password || undefined, alertEmail: w.alertEmail, slack: w.slack || undefined, monitoring: w.monitoring, runNow, platform: f.platform?.label, config: { toured: false, disabled: w.disabled, markets: w.markets || [], testProduct: w.testProduct || null, journeyIntervalMin: w.journeyIntervalMin, fullIntervalMin: w.fullIntervalMin } } });
         S.wizard = null;
         toast(runNow ? 'Store added. First check started.' : 'Store added');
         location.hash = `#/s/${r.id}`;
@@ -2173,9 +2370,8 @@
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
         const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
-        location.replace(sec === 'plan' ? '#/account/billing' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
+        location.replace(sec === 'plan' ? '#/account/billing' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
-      if (sess.created) setTimeout(() => toast('Welcome to Tharam. Your first check has started.'), 600);
     } catch (e) {
       $('#emb-loading').innerHTML = `<p><b>We couldn’t open Tharam.</b></p><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Try again</button>`;
       return;

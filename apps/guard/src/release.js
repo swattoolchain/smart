@@ -57,7 +57,7 @@ export function cleanEnvironment(store, input = {}, base = {}) {
  * are tested side by side with the same suite. Returns the check's id.
  */
 export function startRelease(store, { url, label, env = null, trigger = 'manual' }) {
-  const info = q.insertRelease.run(store.id, url, label || null, env?.id || null, trigger);
+  const info = q.insertRelease.run(store.id, url, label || null, env?.id || null, trigger, store.id);
   const id = Number(info.lastInsertRowid);
   const disabled = [...new Set([...effectiveDisabled(storeConfig(store)), ...SKIP])];
   const common = { storeId: store.id, origin: store.url, kind: 'full', password: store.storefront_password, trigger: 'release', disabled, captureOnly: true, release: id };

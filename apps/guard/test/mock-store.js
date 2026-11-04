@@ -13,6 +13,7 @@ const DRAFT_BREAK = new Set([...BREAK, ...(process.env.MOCK_DRAFT_BREAK ?? 'them
 let B = BREAK; // the breakages for the request being handled
 let DRAFT = false;
 const carts = new Map();
+let PW_POSTS = 0; // how many times the password form was submitted
 
 const EXTRA = (process.env.MOCK_EXTRA || '');
 const DE = EXTRA.includes('de');
@@ -92,15 +93,17 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
   }
-  if (B.has('password') && !/unlocked=1/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
+  if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
+  if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });
     return res.end();
   }
   if (p === '/password') {
     if (req.method === 'POST') {
+      PW_POSTS++;
       const body = await readBody(req);
       if (/password=letmein/.test(body)) {
-        res.writeHead(302, { Location: '/', 'Set-Cookie': 'unlocked=1; Path=/' });
+        res.writeHead(302, { Location: '/', 'Set-Cookie': 'storefront_digest=ok; Path=/; HttpOnly' });
         return res.end();
       }
     }

@@ -111,6 +111,11 @@ ensureColumn('stores', 'platform', 'TEXT');
 ensureColumn('runs', 'trigger', 'TEXT');
 ensureColumn('alerts', 'title', 'TEXT');
 ensureColumn('releases', 'environment_id', 'INTEGER');
+// Numbers people see (#1, #2, ...) count per store, never across all customers.
+ensureColumn('runs', 'seq', 'INTEGER');
+ensureColumn('releases', 'seq', 'INTEGER');
+db.exec(`UPDATE runs SET seq = (SELECT COUNT(*) FROM runs r2 WHERE r2.store_id = runs.store_id AND r2.id <= runs.id AND (r2.trigger IS NULL OR r2.trigger != 'release')) WHERE seq IS NULL AND store_id IS NOT NULL AND (trigger IS NULL OR trigger != 'release');
+UPDATE releases SET seq = (SELECT COUNT(*) FROM releases r2 WHERE r2.store_id = releases.store_id AND r2.id <= releases.id) WHERE seq IS NULL;`);
 ensureColumn('releases', 'trigger', "TEXT NOT NULL DEFAULT 'manual'");
 
 export const q = {
@@ -133,10 +138,10 @@ export const q = {
   ),
   deleteStore: db.prepare('DELETE FROM stores WHERE id = ? AND user_id = ?'),
   monitoredStores: db.prepare('SELECT * FROM stores WHERE monitoring = 1'),
-  insertRun: db.prepare('INSERT INTO runs (store_id, url, kind, requester_ip, trigger) VALUES (?, ?, ?, ?, ?)'),
+  insertRun: { run: (storeId, url, kind, ip, trigger) => db.prepare(`INSERT INTO runs (store_id, url, kind, requester_ip, trigger, seq) VALUES (?, ?, ?, ?, ?, CASE WHEN ? IS NULL OR ? = 'release' THEN NULL ELSE (SELECT COALESCE(MAX(seq), 0) + 1 FROM runs WHERE store_id = ? AND (trigger IS NULL OR trigger != 'release')) END)`).run(storeId, url, kind, ip, trigger, storeId, trigger, storeId) },
   runById: db.prepare('SELECT * FROM runs WHERE id = ?'),
   runsByStore: db.prepare(
-    "SELECT id, kind, status, score, verdict, trigger, error, created_at, finished_at, json_array_length(result_json, '$.checks') AS checks FROM runs WHERE store_id = ? AND (trigger IS NULL OR trigger != 'release') ORDER BY id DESC LIMIT ?"
+    "SELECT id, seq, kind, status, score, verdict, trigger, error, created_at, finished_at, json_array_length(result_json, '$.checks') AS checks FROM runs WHERE store_id = ? AND (trigger IS NULL OR trigger != 'release') ORDER BY id DESC LIMIT ?"
   ),
   setRunRunning: db.prepare("UPDATE runs SET status = 'running' WHERE id = ?"),
   finishRun: db.prepare(
@@ -164,7 +169,7 @@ export const q = {
   ),
   insertAlert: db.prepare('INSERT INTO alerts (store_id, check_id, state, message, title) VALUES (?, ?, ?, ?, ?)'),
   alertsByStore: db.prepare('SELECT * FROM alerts WHERE store_id = ? ORDER BY id DESC LIMIT 30'),
-  insertRelease: db.prepare('INSERT INTO releases (store_id, preview_url, label, environment_id, trigger) VALUES (?, ?, ?, ?, ?)'),
+  insertRelease: db.prepare('INSERT INTO releases (store_id, preview_url, label, environment_id, trigger, seq) VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM releases WHERE store_id = ?))'),
   envsByStore: db.prepare('SELECT * FROM environments WHERE store_id = ? ORDER BY id'),
   envById: db.prepare('SELECT * FROM environments WHERE id = ?'),
   envByToken: db.prepare('SELECT * FROM environments WHERE token = ?'),

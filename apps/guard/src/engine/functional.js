@@ -82,6 +82,16 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
     home = await gotoStore(page, origin + '/', { password });
     await settle(page, 800);
     const status = home.res ? home.res.status() : 0;
+    // The password page itself asked our browser to verify (Shopify protects it against password guessing).
+    if (home.blockedByChallenge) {
+      rec.add(check('fn.blocked', 'functional', 'Test browser allowed in', 'skip', {
+        severity: 'critical',
+        detail: 'Shopify’s protection on your store’s password page asked our test browser to verify itself, so we couldn’t unlock the store this time. Your store is fine.',
+        evidence: { screenshot: await shot(page, 'blocked'), vendor: 'Shopify bot protection' },
+        fix: 'This happens on password-protected stores after several logins in a short time. We now unlock once and reuse it, so the next check usually gets through. If it keeps happening, remove the password when your store launches, or write to hello@tharam.store.',
+      }));
+      return { blocked: true, vendor: 'Shopify bot protection', pageErrors };
+    }
     if (home.locked) {
       rec.add(
         check('fn.home', 'functional', 'Store is reachable', 'warn', {
@@ -101,7 +111,10 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
           detail: `${challenge.vendor} showed our test browser a verification page, so we could not test your store. This usually means your store is fine; it just doesn't recognise Tharam yet.`,
           evidence: { screenshot: await shot(page, 'blocked'), vendor: challenge.vendor },
           fix:
-            challenge.vendor === 'Cloudflare'
+            // Shopify stores sit behind Shopify's own Cloudflare: the merchant can't change it, so don't send them there.
+            challenge.vendor === 'Cloudflare' && info?.isShopify
+              ? 'This is Shopify’s own protection, not something you set up, and your store is fine. It usually clears by itself: we try again on the next check. If it keeps happening, write to hello@tharam.store and we’ll route your checks through a verified connection.'
+              : challenge.vendor === 'Cloudflare'
               ? 'In Cloudflare, go to Security → WAF → Custom rules and add a rule: if User Agent contains "TharamStoreGuard", then Skip (all remaining custom rules, Bot Fight Mode and Super Bot Fight Mode). Then run the check again.'
               : challenge.vendor === 'Shopify bot protection'
                 ? 'Shopify sometimes verifies new automated visitors. Run the check again in a few minutes. If it keeps happening, write to hello@tharam.store and we will route your tests through a verified connection.'

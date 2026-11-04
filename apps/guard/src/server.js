@@ -165,6 +165,7 @@ app.get('/api/runs/:id', (req, res) => {
   const ahead = run.status === 'queued' ? db.prepare("SELECT COUNT(*) AS n FROM runs WHERE status IN ('queued') AND id < ?").get(run.id).n : 0;
   res.json({
     id: run.id,
+    seq: run.seq,
     url: run.url,
     kind: run.kind,
     status: run.status,
@@ -346,7 +347,7 @@ function storeView(s) {
   return {
     ...publicStore(s),
     blocked: blockReason(ent, s.id),
-    config: { disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, ...iv },
+    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
@@ -478,7 +479,7 @@ const releaseView = (r) => {
   const sum = r.summary_json ? JSON.parse(r.summary_json) : null;
   const run = (id) => { const x = id && q.runById.get(id); return x ? { id: x.id, status: x.status, score: x.score, error: x.error, live: x.status === 'queued' || x.status === 'running' ? liveView(x.id) : null, created_at: x.created_at, finished_at: x.finished_at } : null; };
   const env = r.environment_id ? q.envById.get(r.environment_id) : null;
-  return { id: r.id, preview_url: r.preview_url, label: r.label, status: r.status, verdict: r.verdict, trigger: r.trigger, environment: env ? { id: env.id, name: env.name, kind: env.kind } : null, created_at: r.created_at, finished_at: r.finished_at, summary: sum, runs: { live: run(r.live_run_id), draft: run(r.draft_run_id) } };
+  return { id: r.id, seq: r.seq, preview_url: r.preview_url, label: r.label, status: r.status, verdict: r.verdict, trigger: r.trigger, environment: env ? { id: env.id, name: env.name, kind: env.kind } : null, created_at: r.created_at, finished_at: r.finished_at, summary: sum, runs: { live: run(r.live_run_id), draft: run(r.draft_run_id) } };
 };
 app.get('/api/stores/:id/releases', requireUser, (req, res) => {
   const s = ownStore(req, res);

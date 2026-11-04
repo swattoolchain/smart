@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { chromium } from 'playwright';
 import { config } from '../config.js';
 
@@ -146,22 +147,61 @@ export async function assertPublicTarget(origin) {
 }
 
 /** Opens a page and gets past a Shopify storefront password page when a password is provided. */
-export async function gotoStore(page, url, { password, timeout = 30000 } = {}) {
-  const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
-  if (/\/password(\?|$)/.test(new URL(page.url()).pathname + new URL(page.url()).search)) {
-    if (!password) return { res, locked: true };
-    const input = page.locator('input[type="password"]').first();
-    await input.fill(password, { timeout: 5000 });
-    await Promise.all([
-      page.waitForLoadState('domcontentloaded').catch(() => {}),
-      input.press('Enter'),
-    ]);
-    await page.waitForTimeout(1500);
-    if (/\/password/.test(page.url())) return { res, locked: true, wrongPassword: true };
-    const again = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
-    return { res: again, locked: false };
+// Unlocked storefront sessions, shared by every browser in a run and reused by later runs, so a
+// password-protected store sees one password login every few hours instead of several per test.
+// Repeated password logins from a server are what trigger Shopify's bot protection.
+const unlocked = new Map(); // origin -> { key, cookies, at }
+const UNLOCK_TTL = 6 * 3600e3;
+const pwKey = (password) => crypto.createHash('sha256').update(String(password)).digest('hex').slice(0, 16);
+const onPasswordPage = (page) => { try { return /\/password(\?|$)/.test(new URL(page.url()).pathname + new URL(page.url()).search); } catch { return false; } };
+
+/** Unlocks a password-protected Shopify storefront for this browser context. Returns 'ok', 'wrong' or 'blocked'. */
+async function unlock(page, origin, password) {
+  const ctx = page.context();
+  // 1. A recent unlock for this store and password: reuse its cookies.
+  const hit = unlocked.get(origin);
+  if (hit && hit.key === pwKey(password) && Date.now() - hit.at < UNLOCK_TTL) {
+    await ctx.addCookies(hit.cookies).catch(() => {});
+    return 'reused';
   }
-  return { res, locked: false };
+  // 2. Submit the password form directly, the way the page itself would.
+  const r = await ctx.request.post(`${origin}/password`, {
+    form: { form_type: 'storefront_password', utf8: '✓', password: String(password) }, maxRedirects: 0, timeout: 20000,
+  }).catch(() => null);
+  let cookies = (await ctx.cookies(origin)).filter((c) => /storefront_digest|_shopify|secure_customer_sig|cart/.test(c.name));
+  if (!cookies.some((c) => c.name === 'storefront_digest')) {
+    // 3. Fall back to typing it into the page, and let an automatic bot check finish if one appears.
+    if (!onPasswordPage(page)) await page.goto(`${origin}/password`, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+    const input = page.locator('input[type="password"]').first();
+    if (await input.count().catch(() => 0)) {
+      await input.fill(String(password), { timeout: 5000 }).catch(() => {});
+      await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), input.press('Enter').catch(() => {})]);
+      await page.waitForTimeout(1500);
+    }
+    const c = await settleChallenge(page, null, 15000);
+    if (c.blocked) return 'blocked';
+    cookies = (await ctx.cookies(origin)).filter((x) => /storefront_digest|_shopify|secure_customer_sig|cart/.test(x.name));
+    if (!cookies.some((x) => x.name === 'storefront_digest')) return onPasswordPage(page) ? 'wrong' : 'blocked';
+  }
+  unlocked.set(origin, { key: pwKey(password), cookies: cookies.filter((c) => c.name === 'storefront_digest'), at: Date.now() });
+  return 'ok';
+}
+
+export async function gotoStore(page, url, { password, timeout = 30000 } = {}) {
+  const origin = new URL(url).origin;
+  // Known password: unlock before the first visit, so the password page (and its bot checks) are skipped.
+  const cached = password && unlocked.get(origin);
+  if (cached && cached.key === pwKey(password) && Date.now() - cached.at < UNLOCK_TTL) await page.context().addCookies(cached.cookies).catch(() => {});
+  const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+  if (!onPasswordPage(page)) return { res, locked: false };
+  if (!password) return { res, locked: true };
+  unlocked.delete(origin); // the cached session (if any) no longer works
+  const how = await unlock(page, origin, password);
+  if (how === 'wrong') return { res, locked: true, wrongPassword: true };
+  if (how === 'blocked') return { res, locked: true, blockedByChallenge: true };
+  const again = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+  if (onPasswordPage(page)) { unlocked.delete(origin); return { res: again, locked: true, wrongPassword: true }; }
+  return { res: again, locked: false };
 }
 
 export async function settle(page, ms = 1200) {
