@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import { config } from './config.js';
 import { q } from './db.js';
-import { groupOf } from './engine/catalog.js';
+import { groupOf, effectiveDisabled } from './engine/catalog.js';
 
 let transport = null;
 function mailer() {
@@ -62,7 +62,7 @@ export async function handleAlerts(storeId, runId, result) {
   const ran = new Set((result.checks || []).map((c) => c.id));
   const skipped = new Set(result.skippedGroups || []);
   let suiteOff = new Set();
-  try { suiteOff = new Set(JSON.parse(store.config_json || '{}').disabled || []); } catch {}
+  try { suiteOff = new Set(effectiveDisabled(JSON.parse(store.config_json || '{}'))); } catch {}
   for (const row of q.failingChecks.all(storeId)) {
     if (ran.has(row.check_id)) continue;
     const g = groupOf(row.check_id);

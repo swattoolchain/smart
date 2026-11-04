@@ -5,6 +5,7 @@ import { handleAlerts } from './alerts.js';
 import { storeConfig } from './scheduler.js';
 import { live } from './live.js';
 import { settleRelease } from './release.js';
+import { effectiveDisabled } from './engine/catalog.js';
 
 const waiting = [];
 const running = new Map(); // runId -> AbortController
@@ -14,7 +15,7 @@ let active = 0;
 export function enqueue(job) {
   // Resolve what this run will test now, so a queued run can already show its plan.
   const store = job.storeId ? q.storeById.get(job.storeId) : null;
-  const disabled = job.disabled || (store ? storeConfig(store).disabled || [] : []);
+  const disabled = effectiveDisabled(store ? storeConfig(store) : {}, job.disabled);
   live.set(job.runId, { phase: 'queued', kind: job.kind, disabled, rec: null });
   waiting.push(job);
   pump();
@@ -75,7 +76,7 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     if (store && !ownPassword) password = store.storefront_password || password;
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
-      runScan({ runId, origin, kind, password, storeId, disabled: disabled || cfg.disabled || [], testProduct: cfg.testProduct || null, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
+      runScan({ runId, origin, kind, password, storeId, disabled: effectiveDisabled(cfg, disabled), testProduct: cfg.testProduct || null, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.

@@ -7,7 +7,7 @@ import { config } from './config.js';
 import { db, q } from './db.js';
 import { normalizeStoreUrl, assertPublicTarget, newContext, gotoStore, settleChallenge } from './engine/browser.js';
 import { discover } from './engine/discover.js';
-import { GROUPS, INTERVALS, FULL_INTERVALS, normalizeConfig } from './engine/catalog.js';
+import { GROUPS, INTERVALS, FULL_INTERVALS, MARKETS, normalizeConfig } from './engine/catalog.js';
 import { startRun, startScheduler, storeConfig, intervals, nextRunIn } from './scheduler.js';
 import { queueDepth, cancelRun } from './queue.js';
 import { liveView } from './live.js';
@@ -204,7 +204,7 @@ app.post('/api/account/password', requireUser, async (req, res) => {
 
 // ---------- Test suite catalog ----------
 app.get('/api/catalog', (req, res) => {
-  res.json({ groups: GROUPS, intervals: INTERVALS, fullIntervals: FULL_INTERVALS, aiEnabled: aiEnabled(), defaults: { journeyIntervalMin: config.journeyIntervalMin, fullIntervalMin: config.fullScanIntervalMin } });
+  res.json({ groups: GROUPS, markets: MARKETS, intervals: INTERVALS, fullIntervals: FULL_INTERVALS, aiEnabled: aiEnabled(), defaults: { journeyIntervalMin: config.journeyIntervalMin, fullIntervalMin: config.fullScanIntervalMin } });
 });
 
 // Looks at a store before it is added: platform, products, collections, password lock.
@@ -266,7 +266,7 @@ function storeView(s) {
   const active = q.activeRunForStore.get(s.id);
   return {
     ...publicStore(s),
-    config: { disabled: cfg.disabled || [], testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, ...iv },
+    config: { disabled: cfg.disabled || [], markets: cfg.markets || [], testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,

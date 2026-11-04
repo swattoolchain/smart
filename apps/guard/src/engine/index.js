@@ -10,6 +10,7 @@ import { runVisual } from './visual.js';
 import { scoreChecks, summarize } from './score.js';
 import { groupOf } from './catalog.js';
 import { runCatalog } from './catalog-check.js';
+import { runRegional } from './regional.js';
 import { reviewScreens } from './visual-ai.js';
 import { aiEnabled } from '../ai.js';
 
@@ -93,6 +94,10 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind !== 'journeys') {
         phase('quality');
         metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;
+      }
+      if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
+        phase('regional');
+        await runRegional({ page, rec, origin, info, password, on, preview });
       }
       if (kind === 'full' && storeId && on('visual')) {
         phase('visual');

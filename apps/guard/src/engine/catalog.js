@@ -37,7 +37,38 @@ export const GROUPS = [
     checks: ['ai.copy'] },
   { key: 'visual', label: 'Visual changes', run: 'full', area: 'Regression',
     description: 'Screenshots of key pages on desktop and mobile compared with the look you approved.', checks: ['nf.visual'] },
+  // Regional packs run only for stores that sell in those markets (Store settings → Where you sell).
+  { key: 'law.de', label: 'Germany and Austria legal pack', run: 'full', area: 'Laws where you sell', markets: ['DE', 'AT'],
+    description: 'Impressum, right of withdrawal, the new “Vertrag widerrufen” button, privacy policy and terms, VAT and shipping next to prices, unit prices (Grundpreis), and outdated EU dispute (ODR) links.',
+    checks: ['de.'] },
+  { key: 'law.cookies', label: 'Cookie consent (EU and UK)', run: 'full', area: 'Laws where you sell', markets: ['DE', 'AT', 'EU', 'UK'],
+    description: 'Visits as a first-time shopper from Germany: a consent banner appears, and no ad or tracking tags (Meta, TikTok, Google and others) fire before the shopper agrees.',
+    checks: ['eu.'] },
+  { key: 'access.law', label: 'Accessibility law readiness (ADA, European Accessibility Act)', run: 'full', area: 'Laws where you sell', markets: ['US', 'DE', 'AT', 'EU', 'UK'],
+    description: 'What accessibility lawsuits and regulators look for: Add to cart works with a keyboard and shows focus, zoom is allowed, page language is set, the cart page passes WCAG 2.1 AA, an accessibility statement exists, and no overlay widget is relied on.',
+    checks: ['ax.'] },
+  { key: 'law.us', label: 'US privacy choices', run: 'full', area: 'Laws where you sell', markets: ['US'],
+    description: 'The “Do not sell or share my personal information” link that California and other US state privacy laws ask for.',
+    checks: ['us.'] },
 ];
+
+/** Where a store can sell, for regional packs. */
+export const MARKETS = [
+  { code: 'US', label: 'United States' }, { code: 'DE', label: 'Germany' }, { code: 'AT', label: 'Austria' },
+  { code: 'EU', label: 'Other EU countries' }, { code: 'UK', label: 'United Kingdom' }, { code: 'IN', label: 'India' },
+  { code: 'SG', label: 'Singapore' }, { code: 'AU', label: 'Australia' }, { code: 'CA', label: 'Canada' }, { code: 'AE', label: 'United Arab Emirates' },
+];
+
+/**
+ * Groups that are off for a run: the store's own choices (or a hand-picked selection), plus regional packs
+ * for markets the store doesn't sell in. A hand-picked selection may include any regional pack.
+ */
+export function effectiveDisabled(cfg = {}, picked = null) {
+  if (picked) return picked;
+  const markets = cfg.markets || [];
+  const off = GROUPS.filter((g) => g.markets && !g.markets.some((m) => markets.includes(m))).map((g) => g.key);
+  return [...new Set([...(cfg.disabled || []), ...off])];
+}
 
 export function groupOf(checkId) {
   for (const g of GROUPS) for (const c of g.checks) if (c.endsWith('.') ? checkId.startsWith(c) : checkId === c) return g.key;
@@ -53,6 +84,7 @@ export function normalizeConfig(input = {}, base = {}) {
   if (input.testProduct !== undefined) cfg.testProduct = input.testProduct ? String(input.testProduct).slice(0, 200) : null;
   if (input.journeyIntervalMin !== undefined && INTERVALS.includes(Number(input.journeyIntervalMin))) cfg.journeyIntervalMin = Number(input.journeyIntervalMin);
   if (input.dailySales !== undefined) { const n = Number(input.dailySales); cfg.dailySales = Number.isFinite(n) && n > 0 ? Math.round(n) : null; }
+  if (Array.isArray(input.markets)) cfg.markets = [...new Set(input.markets.map(String).filter((m) => MARKETS.some((x) => x.code === m)))];
   if (input.currency !== undefined) cfg.currency = /^[A-Z]{3}$/.test(String(input.currency)) ? String(input.currency) : null;
   if (input.fullIntervalMin !== undefined && FULL_INTERVALS.includes(Number(input.fullIntervalMin))) cfg.fullIntervalMin = Number(input.fullIntervalMin);
   return cfg;

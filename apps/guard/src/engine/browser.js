@@ -35,7 +35,7 @@ export async function getBrowser() {
   return browserPromise;
 }
 
-export async function newContext({ mobile = false, tablet = false } = {}) {
+export async function newContext({ mobile = false, tablet = false, locale = 'en-US', timezoneId = 'Asia/Kolkata' } = {}) {
   const browser = await getBrowser();
   const ctx = await browser.newContext({
     userAgent: mobile
@@ -47,17 +47,17 @@ export async function newContext({ mobile = false, tablet = false } = {}) {
     deviceScaleFactor: 1,
     isMobile: mobile || tablet,
     hasTouch: mobile || tablet,
-    locale: 'en-US',
-    timezoneId: 'Asia/Kolkata',
-    extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
+    locale,
+    timezoneId,
+    extraHTTPHeaders: { 'Accept-Language': locale === 'en-US' ? 'en-US,en;q=0.9' : `${locale},${locale.slice(0, 2)};q=0.9,en;q=0.8` },
     ignoreHTTPSErrors: false,
   });
   // Remove the automation fingerprints that bot protection looks for first.
-  await ctx.addInitScript(() => {
+  await ctx.addInitScript((langs) => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    Object.defineProperty(navigator, 'languages', { get: () => langs });
     if (!window.chrome) window.chrome = { runtime: {} };
-  });
+  }, [locale, locale.slice(0, 2)]);
   return ctx;
 }
 

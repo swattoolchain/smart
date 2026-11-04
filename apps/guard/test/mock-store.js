@@ -15,6 +15,8 @@ let DRAFT = false;
 const carts = new Map();
 
 const EXTRA = (process.env.MOCK_EXTRA || '');
+const DE = EXTRA.includes('de');
+const TRACK = EXTRA.includes('track');
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -52,7 +54,7 @@ ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
-<main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">Privacy</a> <a href="/policies/refund-policy">Refunds</a></footer></body></html>`;
+<main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
 }
 function send(res, status, body, type = 'text/html; charset=utf-8') {
   res.writeHead(status, { 'Content-Type': type });
@@ -123,7 +125,7 @@ const server = http.createServer(async (req, res) => {
         `<h1>${prod.title}</h1><div class="price">₹${v.price}</div>
 <form method="post" action="/cart/add"><input type="hidden" name="id" value="${v.id}">
 <select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>
-<button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>
+<button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>${DE ? '<p class="tax-note">inkl. MwSt., zzgl. <a href="/policies/shipping-policy">Versandkosten</a></p>' : ''}
 <span id="cart-count">0</span>${breakAtc}`
       )
     );
@@ -158,13 +160,15 @@ const server = http.createServer(async (req, res) => {
   }
   if (p.startsWith('/checkouts/')) return send(res, 200, layout('Checkout', '<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>'));
   if (p.startsWith('/policies/')) {
-    if (p.endsWith('terms-of-service') || p.endsWith('shipping-policy')) return send(res, 404, layout('Not found', '<h1>404</h1>'));
+    if (!DE && (p.endsWith('terms-of-service') || p.endsWith('shipping-policy'))) return send(res, 404, layout('Not found', '<h1>404</h1>'));
+    if (DE && p.endsWith('refund-policy')) return send(res, 200, layout('Widerrufsbelehrung', '<h1>Widerrufsbelehrung</h1><p>Sie haben das Recht, binnen 14 Tagen ohne Angabe von Gründen diesen Vertrag zu widerrufen.</p>'));
     return send(res, 200, layout('Policy', '<h1>Policy</h1>'));
   }
   if (p.startsWith('/img/')) {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
     return send(res, 200, png, 'image/png');
   }
+  if (DE && p === '/pages/impressum') return send(res, 200, layout('Impressum', '<h1>Impressum</h1><p>Kaveri Handlooms GmbH, Hauptstraße 1, 10115 Berlin. E-Mail: hallo@kaveri.example</p>'));
   if (p === '/pages/about') return send(res, 200, layout('About', '<h1>About us</h1>'));
   return send(res, 404, layout('Not found', '<h1>404</h1>'));
 });

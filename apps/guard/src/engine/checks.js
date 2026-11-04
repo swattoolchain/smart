@@ -7,6 +7,7 @@ export const CATEGORIES = {
   accessibility: { label: 'Accessibility', weight: 10 },
   reliability: { label: 'Errors & visuals', weight: 12 },
   trust: { label: 'Catalog & products', weight: 10 },
+  compliance: { label: 'Legal and compliance', weight: 8 },
 };
 
 export function check(id, category, title, status, { severity = 'major', detail = '', evidence = null, fix = '' } = {}) {

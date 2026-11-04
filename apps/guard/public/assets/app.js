@@ -416,11 +416,12 @@
     { key: 'open', label: 'Open your store', sub: 'On a desktop and a phone-sized screen' },
     { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js'] },
     { key: 'quality', label: 'Measure speed, SEO and accessibility', groups: ['speed', 'seo', 'a11y', 'links', 'policies'], full: true },
+    { key: 'regional', label: 'Check the laws where you sell', groups: ['law.de', 'law.cookies', 'access.law', 'law.us'], full: true },
     { key: 'visual', label: 'Compare screenshots with the approved look', groups: ['visual'], full: true },
     { key: 'catalog', label: 'Check every product', groups: ['catalog', 'ai.copy'], full: true },
     { key: 'ai', label: 'AI review of how pages look', groups: ['ai.visual'], full: true },
   ];
-  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14 };
+  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1 };
   const estimate = (keys) => {
     const sec = 8 + keys.reduce((n, k) => n + (EST[k] || 5), 0);
     return sec < 60 ? 'under a minute' : `about ${Math.ceil(sec / 60)} minutes`;
@@ -588,7 +589,7 @@
     const usable = groups.filter((g) => !availability(g, s));
     const keys = (list) => list.map((g) => g.key);
     const same = (a, b) => a.length === b.length && a.every((k) => b.includes(k));
-    const suite = keys(usable.filter((g) => g.locked || !s.config.disabled.includes(g.key)));
+    const suite = keys(usable.filter((g) => g.locked || (!s.config.disabled.includes(g.key) && inMarket(g, s.config.markets))));
     const PRESETS = [
       { key: 'quick', title: 'Quick journey', desc: 'Can customers find a product, add it to the cart and reach checkout?', keys: keys(usable.filter((g) => g.run === 'journeys')) },
       { key: 'suite', title: 'Your test suite', desc: 'Everything switched on for scheduled full checks of this store.', keys: suite, tag: 'Recommended' },
@@ -607,7 +608,7 @@
           const na = availability(g, s);
           return `<label class="pick-row ${na ? 'na' : ''}"><input type="checkbox" name="g" value="${esc(g.key)}" ${g.locked ? 'checked disabled' : na ? 'disabled' : ''}>
             <span class="pr-text"><b>${esc(g.label)}</b><span>${esc(g.description.replace(/ Always on: this is the heart of every test\.$/, ''))}</span></span>
-            <span class="pr-tags">${g.locked ? '<span class="tag">Always included</span>' : ''}${g.ai ? '<span class="tag ai">AI</span>' : ''}${na ? `<span class="tag">${esc(na)}</span>` : ''}${!g.locked && !na && s.config.disabled.includes(g.key) ? '<span class="tag">Off in your suite</span>' : ''}</span></label>`;
+            <span class="pr-tags">${g.locked ? '<span class="tag">Always included</span>' : ''}${g.ai ? '<span class="tag ai">AI</span>' : ''}${na ? `<span class="tag">${esc(na)}</span>` : ''}${!g.locked && !na && !inMarket(g, s.config.markets) ? '<span class="tag">Not where you sell</span>' : !g.locked && !na && s.config.disabled.includes(g.key) ? '<span class="tag">Off in your suite</span>' : ''}</span></label>`;
         }).join('')}</div></section>`;
     }).join('');
 
@@ -702,15 +703,18 @@
   }
 
   // Test suite
-  function suiteRows(groups, disabled, { shopify = true, aiEnabled = false } = {}) {
+  const marketNames = (codes) => codes.map((c) => S.catalog.markets.find((m) => m.code === c)?.label || c);
+  const inMarket = (g, markets) => !g.markets || g.markets.some((m) => (markets || []).includes(m));
+  function suiteRows(groups, disabled, { shopify = true, aiEnabled = false, markets = null, storeId = null } = {}) {
     const list = groups.filter((g) => !g.ai || aiEnabled);
     const areas = [...new Set(list.map((g) => g.area))];
     return areas.map((area) => `<section class="suite-area"><h3>${esc(area)}</h3><div class="rows">${list.filter((g) => g.area === area).map((g) => {
       const journeyOnly = g.key.startsWith('journey.') && !g.locked && !shopify;
-      const on = g.locked || (!disabled.includes(g.key) && !journeyOnly);
+      const outside = markets && !inMarket(g, markets);
+      const on = g.locked || (!disabled.includes(g.key) && !journeyOnly && !outside);
       return `<label class="check-row ${on ? '' : 'off'}">
-        <span class="switch"><input type="checkbox" name="g" value="${esc(g.key)}" ${on ? 'checked' : ''} ${g.locked || journeyOnly ? 'disabled' : ''} aria-label="${esc(g.label)}"><span></span></span>
-        <span><b>${esc(g.label)}</b><p>${esc(g.description)}</p>${journeyOnly ? '<p class="unavailable">Available for Shopify stores. Other platforms are coming.</p>' : ''}</span>
+        <span class="switch"><input type="checkbox" name="g" value="${esc(g.key)}" ${on ? 'checked' : ''} ${g.locked || journeyOnly || outside ? 'disabled' : ''} aria-label="${esc(g.label)}"><span></span></span>
+        <span><b>${esc(g.label)}</b><p>${esc(g.description)}</p>${journeyOnly ? '<p class="unavailable">Available for Shopify stores. Other platforms are coming.</p>' : ''}${g.markets ? `<p class="${outside ? 'unavailable' : 'muted'}" style="font-size:12.5px">For stores selling in ${esc(marketNames(g.markets).join(', '))}.${outside ? (storeId ? ` <a href="#/s/${storeId}/settings">Add where you sell</a> to turn it on.` : ' Choose one of these countries above to turn it on.') : ''}</p>` : ''}</span>
         <span class="when">${g.locked ? 'Always on' : g.run === 'journeys' ? 'Every test' : 'Full check'}</span></label>`;
     }).join('')}</div></section>`).join('');
   }
@@ -741,7 +745,7 @@
     const shopify = !s.platform || /shopify/i.test(s.platform);
     const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product']], tab);
     if (!tab) {
-      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled })}</form></div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id })}</form></div>`;
       const form = $('#suite');
       const mark = savebar(form.parentElement, {
         onSave: async () => { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { disabled: readDisabled(form) } } }); await loadStores(); },
@@ -971,10 +975,15 @@
 
   // Store settings
   STORE_PAGES.settings = async (ctx, s) => {
+    S.catalog = S.catalog || (await api('/api/catalog'));
+    if (!ctx.alive()) return;
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Store settings')}<form class="settings-card" id="set">
       <div class="form-section"><div><h3>Store details</h3><p class="explain">The name is how this store appears in Tharam and in alerts.</p></div>
         <div class="controls"><div class="field"><label for="nm">Store name</label><input id="nm" name="name" value="${esc(s.name || '')}" required maxlength="80"></div>
         <div class="field"><label for="ad">Store address</label><input id="ad" value="${esc(s.url)}" readonly><p class="hint">To test a different address, add it as a new store.</p></div></div></div>
+      <div class="form-section"><div><h3>Where you sell</h3><p class="explain">We add the checks for the laws in these countries, such as the German legal notice, EU cookie consent and US accessibility. Checks only; not legal advice.</p></div>
+        <div class="controls"><div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${s.config.markets.includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div>
+          <p class="hint" id="mk-hint"></p></div></div>
       <div class="form-section"><div><h3>Sales <span class="muted" style="font-weight:400">(optional)</span></h3><p class="explain">Your average sales per day. We use it only to show how much revenue was at risk while customers couldn’t buy.</p></div>
         <div class="controls"><div class="inline-row"><div class="field" style="flex:1;margin:0"><label for="ds">Average daily sales</label><input id="ds" name="dailySales" type="number" min="0" step="1" inputmode="numeric" value="${esc(s.config.dailySales ?? '')}" placeholder="e.g. 50000"></div>
           <div class="field" style="width:120px;margin:0"><label for="cur">Currency</label><select id="cur" name="currency">${['', 'INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'].map((c) => `<option value="${c}" ${c === (s.config.currency || '') ? 'selected' : ''}>${c || 'Store’s'}</option>`).join('')}</select></div></div></div></div>
@@ -988,7 +997,7 @@
     const mark = savebar($('.main-inner', ctx.main), {
       onSave: async () => {
         const fd = new FormData(form);
-        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null } };
+        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null, markets: fd.getAll('market') } };
         if (fd.get('clearpw')) body.password = '';
         else if (fd.get('password')) body.password = fd.get('password');
         await api(`/api/stores/${s.id}`, { method: 'PATCH', body });
@@ -999,6 +1008,13 @@
     });
     form.addEventListener('input', mark);
     form.addEventListener('change', mark);
+    const packs = () => {
+      const sel = $$('input[name=market]:checked', form).map((i) => i.value);
+      const on = S.catalog.groups.filter((g) => g.markets?.some((m) => sel.includes(m))).map((g) => g.label);
+      $('#mk-hint').innerHTML = on.length ? `Adds to your full check: ${on.map(esc).join(' · ')}. <a href="#/s/${s.id}/suite">Test suite</a>` : sel.length ? 'No extra legal checks for these countries yet. Your other checks still run.' : '';
+    };
+    $$('input[name=market]', form).forEach((i) => i.addEventListener('change', packs));
+    packs();
     $('#del').onclick = async () => {
       if (!(await confirmDialog({ title: `Remove ${s.name || host(s.url)}?`, body: 'Monitoring stops and all runs, screenshots and alerts for this store are deleted. This can\'t be undone.', confirm: 'Remove store', danger: true }))) return;
       await api(`/api/stores/${s.id}`, { method: 'DELETE' });
@@ -1608,6 +1624,9 @@
           w.url = d.origin;
           w.testProduct = '';
           w.disabled = d.isShopify || d.blocked ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key);
+          // A first guess at where they sell, from the store's domain. The owner confirms it on the next step.
+          const tld = host(d.origin).split('.').pop();
+          w.markets = w.markets || ({ de: ['DE'], at: ['AT'], uk: ['UK'], in: ['IN'], sg: ['SG'], au: ['AU'], ca: ['CA'], ae: ['AE'], us: ['US'], fr: ['EU'], es: ['EU'], it: ['EU'], nl: ['EU'], be: ['EU'], ie: ['EU'] }[tld] || []);
           w.step = 2;
           wizardStep(ctx);
         } catch (ex) { done(); $('#looking').innerHTML = ''; $('#w-err').textContent = ex.message; }
@@ -1624,11 +1643,18 @@
         ${shopify || f.blocked ? '' : `<div class="notice info"><p>${esc(f.platform?.label || 'This platform')} is detected. Add to cart and checkout tests run on Shopify today; speed, SEO, accessibility, links and errors are fully tested.</p></div>`}
         <form id="w2">
         ${shopify && f.catalog?.length ? `<div class="field" style="margin-bottom:28px"><label for="wtp">Product used in tests</label><select id="wtp"><option value="">Choose automatically (recommended)</option>${f.catalog.map((p) => `<option value="${esc(p.handle)}" ${p.handle === w.testProduct ? 'selected' : ''}>${esc(p.title)}${p.variants > 1 ? ` (${p.variants} variants)` : ''}</option>`).join('')}</select><p class="hint">Each test adds one to a fresh cart, opens checkout, then empties the cart. No orders are created.</p></div>` : ''}
-        ${suiteRows(S.catalog.groups, w.disabled, { shopify, aiEnabled: S.catalog.aiEnabled })}
+        <div class="field" style="margin-bottom:24px"><label>Where do you sell?</label><div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${(w.markets || []).includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div>
+          <p class="hint">We add checks for the laws in these countries. You can change this later in Store settings.</p></div>
+        <div id="w-suite">${suiteRows(S.catalog.groups, w.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: w.markets || [] })}</div>
         <div class="wiz-actions"><button class="btn secondary" type="button" id="back">Back</button><div class="right"><button class="btn" type="submit">Continue</button></div></div></form>`);
       const form = $('#w2');
       form.addEventListener('change', (e) => e.target.name === 'g' && e.target.closest('.check-row')?.classList.toggle('off', !e.target.checked));
-      const save = () => { w.disabled = readDisabled(form).concat(shopify ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key)); w.testProduct = $('#wtp')?.value || ''; };
+      $$('input[name=market]', form).forEach((i) => (i.onchange = () => {
+        w.disabled = readDisabled($('#w-suite'));
+        w.markets = $$('input[name=market]:checked', form).map((x) => x.value);
+        $('#w-suite').innerHTML = suiteRows(S.catalog.groups, w.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: w.markets });
+      }));
+      const save = () => { w.markets = $$('input[name=market]:checked', form).map((x) => x.value); w.disabled = readDisabled(form).concat(shopify ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key)); w.testProduct = $('#wtp')?.value || ''; };
       $('#back').onclick = () => { save(); w.step = 1; wizardStep(ctx); };
       form.onsubmit = (e) => { e.preventDefault(); save(); w.step = 3; wizardStep(ctx); };
       return;
@@ -1680,7 +1706,7 @@
     const submit = async (runNow, btn) => {
       const done = busy(btn, runNow ? 'Saving and starting' : 'Saving');
       try {
-        const r = await api('/api/stores', { method: 'POST', body: { url: w.url, name: host(w.url), password: w.password || undefined, alertEmail: w.alertEmail, slack: w.slack || undefined, monitoring: w.monitoring, runNow, platform: f.platform?.label, config: { disabled: w.disabled, testProduct: w.testProduct || null, journeyIntervalMin: w.journeyIntervalMin, fullIntervalMin: w.fullIntervalMin } } });
+        const r = await api('/api/stores', { method: 'POST', body: { url: w.url, name: host(w.url), password: w.password || undefined, alertEmail: w.alertEmail, slack: w.slack || undefined, monitoring: w.monitoring, runNow, platform: f.platform?.label, config: { disabled: w.disabled, markets: w.markets || [], testProduct: w.testProduct || null, journeyIntervalMin: w.journeyIntervalMin, fullIntervalMin: w.fullIntervalMin } } });
         S.wizard = null;
         toast(runNow ? 'Store added. First check started.' : 'Store added');
         location.hash = `#/s/${r.id}`;

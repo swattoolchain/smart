@@ -6,6 +6,7 @@ import { q } from './db.js';
 import { comparePair } from './compare.js';
 import { startRun, storeConfig } from './scheduler.js';
 import { config } from './config.js';
+import { effectiveDisabled } from './engine/catalog.js';
 import { sendMail, sendSlack } from './alerts.js';
 
 const SKIP = ['catalog', 'ai.copy', 'ai.visual']; // the catalog is the same for both themes
@@ -57,7 +58,7 @@ export function cleanEnvironment(store, input = {}, base = {}) {
 export function startRelease(store, { url, label, env = null, trigger = 'manual' }) {
   const info = q.insertRelease.run(store.id, url, label || null, env?.id || null, trigger);
   const id = Number(info.lastInsertRowid);
-  const disabled = [...new Set([...(storeConfig(store).disabled || []), ...SKIP])];
+  const disabled = [...new Set([...effectiveDisabled(storeConfig(store)), ...SKIP])];
   const common = { storeId: store.id, origin: store.url, kind: 'full', password: store.storefront_password, trigger: 'release', disabled, captureOnly: true, release: id };
   const liveId = startRun({ ...common });
   const draftId = env?.kind === 'store'

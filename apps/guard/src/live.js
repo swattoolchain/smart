@@ -9,6 +9,7 @@ export const PHASES = [
   { key: 'open', label: 'Opening your store', run: ['journeys', 'full'] },
   { key: 'journey', label: 'Shopping like a customer', run: ['journeys', 'full'] },
   { key: 'quality', label: 'Speed, SEO, accessibility and links', run: ['full'], groups: ['speed', 'seo', 'a11y', 'links', 'policies'] },
+  { key: 'regional', label: 'Laws where you sell', run: ['full'], groups: ['law.de', 'law.cookies', 'access.law', 'law.us'] },
   { key: 'visual', label: 'Comparing screenshots', run: ['full'], groups: ['visual'] },
   { key: 'catalog', label: 'Checking every product', run: ['full'], groups: ['catalog'] },
   { key: 'ai', label: 'AI review', run: ['full'], groups: ['ai.visual'] },
