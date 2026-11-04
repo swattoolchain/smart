@@ -10,6 +10,19 @@ export const config = {
   publicDir: path.join(root, 'public'),
   sessionSecret: process.env.SESSION_SECRET || 'dev-only-change-me',
   chromePath: process.env.CHROME_PATH || undefined,
+  // Optional outbound proxy for the test browser, e.g. http://user:pass@proxy:port (helps with strict bot protection).
+  browserProxy: process.env.BROWSER_PROXY || '',
+  serverIp: process.env.SERVER_IP || '',
+  // AI review. Anthropic by default; any OpenAI-compatible API works via AI_PROVIDER=openai + AI_BASE_URL.
+  ai: {
+    provider: process.env.AI_PROVIDER || 'anthropic',
+    key: process.env.AI_API_KEY || process.env.ANTHROPIC_API_KEY || '',
+    baseUrl: process.env.AI_BASE_URL || '',
+    textModel: process.env.AI_TEXT_MODEL || 'claude-haiku-5-5',
+    visionModel: process.env.AI_VISION_MODEL || 'claude-haiku-5-5',
+    explainModel: process.env.AI_EXPLAIN_MODEL || 'claude-sonnet-5-5',
+    visionCapable: process.env.AI_VISION !== '0',
+  },
   concurrency: Number(process.env.RUN_CONCURRENCY || 2),
   smtp: {
     host: process.env.SMTP_HOST || '',

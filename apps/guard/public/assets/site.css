@@ -155,7 +155,7 @@ footer.foot a { color: var(--muted); }
 .dial small { color: var(--muted); font-size: 0.78rem; }
 .verdict { display: inline-block; font-weight: 600; font-size: 0.9rem; padding: 4px 10px; border-radius: 999px; margin-bottom: 8px; }
 .v-healthy { background: var(--pass-bg); color: var(--pass); }
-.v-warning, .v-locked { background: var(--warn-bg); color: var(--warn); }
+.v-warning, .v-locked, .v-blocked { background: var(--warn-bg); color: var(--warn); }
 .v-critical { background: var(--fail-bg); color: var(--fail); }
 .report-head h1 { font-size: clamp(1.5rem, 3.4vw, 2.2rem); margin-bottom: 6px; }
 .report-head p { margin: 0; color: var(--ink-soft); }

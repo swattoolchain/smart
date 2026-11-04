@@ -26,7 +26,7 @@ export async function sendMail({ to, subject, text, html }) {
   return true;
 }
 
-async function sendSlack(webhook, text) {
+export async function sendSlack(webhook, text) {
   if (!webhook || !/^https:\/\/hooks\.slack\.com\//.test(webhook)) return false;
   const r = await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
   return r.ok;

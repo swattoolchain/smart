@@ -10,13 +10,14 @@ const PORT = Number(process.env.MOCK_PORT || 4100);
 const BREAK = new Set((process.env.MOCK_BREAK || '').split(',').filter(Boolean));
 const carts = new Map();
 
+const EXTRA = (process.env.MOCK_EXTRA || '');
 const products = [
-  { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', images: [{ src: '/img/k.png' }], variants: [
-    { id: 101, title: 'Small', price: '1499.00', available: true },
-    { id: 102, title: 'Medium', price: '1499.00', available: true },
-    { id: 103, title: 'Large', price: '1599.00', available: false } ] },
-  { id: 2, title: 'Handwoven Silk Saree', handle: 'silk-saree', body_html: '<p>Traditional handwoven silk saree with zari border.</p>', images: [{ src: '/img/s.png' }], variants: [{ id: 201, title: 'Default Title', price: '8999.00', available: true }] },
-  { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', price: '0.00', available: true }] },
+  { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
+    { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
+    { id: 102, title: 'Medium', sku: 'KUR-M', price: '1499.00', available: true },
+    { id: 103, title: 'Large', sku: 'KUR-L', price: '1599.00', available: true } ] },
+  { id: 2, title: 'Handwoven Silk Saree', handle: 'silk-saree', product_type: 'Saree', vendor: 'Tharam', tags: 'silk', body_html: EXTRA.includes('placeholder') ? '<p>Lorem ipsum dolor sit amet, TBD description here.</p>' : '<p>Traditional handwoven silk saree with zari border and intricate detailing.</p>', images: [{ src: '/img/s.png' }], variants: [{ id: 201, title: 'Default Title', sku: 'SAR-1', price: '8999.00', available: true }] },
+  { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: '0.00', available: true }] },
 ];
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
 
@@ -46,7 +47,7 @@ ${BREAK.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : '
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
 <script>window.Shopify={shop:'mock.myshopify.com'};</script>
 ${BREAK.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}
-</head><body><header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${BREAK.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
+${BREAK.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${BREAK.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${BREAK.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
 <main id="MainContent">${body}</main><footer><a href="/policies/privacy-policy">Privacy</a> <a href="/policies/refund-policy">Refunds</a></footer></body></html>`;
 }
 function send(res, status, body, type = 'text/html; charset=utf-8') {
@@ -65,6 +66,10 @@ async function readBody(req) {
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://localhost:${PORT}`);
   const p = u.pathname;
+  if (BREAK.has('cloudflare')) {
+    res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
+    return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
+  }
   if (BREAK.has('password') && !/unlocked=1/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });
     return res.end();
@@ -79,6 +84,9 @@ const server = http.createServer(async (req, res) => {
     }
     return send(res, 200, layout('Opening soon', '<form method="post" action="/password"><input type="password" name="password"><button>Enter</button></form>'));
   }
+  if (p === '/sitemap.xml') return send(res, 200, '<?xml version="1.0"?><urlset><sitemap><loc>http://localhost:'+PORT+'/sitemap_products_1.xml</loc></sitemap></urlset>', 'application/xml');
+  if (p === '/sitemap_products_1.xml') return send(res, 200, '<?xml version="1.0"?><urlset>'+products.map(x=>'<url><loc>http://localhost:'+PORT+'/products/'+x.handle+'</loc></url>').join('')+'</urlset>', 'application/xml');
+  if (p.startsWith('/collections/') && p.endsWith('/products.json')) return send(res, 200, { products: products.slice(0,2) }, 'application/json');
   if (p === '/products.json') return send(res, 200, { products }, 'application/json');
   if (p === '/collections.json') return send(res, 200, { collections: [{ title: 'Festive', handle: 'festive', products_count: 3 }] }, 'application/json');
   if (p === '/') return send(res, 200, layout('Mock Store – Handmade in India', `<h1>Handmade in India</h1><img src="/img/hero.png" width="800" height="400" alt="Artisans at work">${products.map(productCard).join('')}`));

@@ -31,6 +31,24 @@ Products and collections are discovered automatically from `/products.json` and 
 | `src/alerts.js` | Email (SMTP) and Slack alerts |
 | `public/` | tharam.store website, report page, dashboard |
 
+
+## Catalog checksum mode and AI review
+
+Every full check on a monitored Shopify store also:
+- **Reads the whole catalog** from `/products.json`, fingerprints each product, and logs what changed since any earlier check (price, sale started/ended, stock, description edits with the exact text, products added/removed).
+- **Validates every product**: zero or missing prices, fake discounts (compare-at ≤ price), price drops over 50%, placeholder text (lorem ipsum, `{{ }}`, undefined, TBD), raw HTML, empty or duplicate descriptions, ALL-CAPS titles, missing images, duplicate SKUs, and whether product counts match the sitemap and collections.
+
+With an AI key set (`AI_API_KEY`, Anthropic by default), two more checks run on full checks:
+- **AI visual review** looks at each page on desktop and mobile and reports what a shopper would notice (overlaps, cut-off text, broken images, popups over the buy button).
+- **AI copy review** checks product titles and descriptions for spelling, grammar and contradictions. Only new or edited products are sent, and every answer is cached by content hash, so cost stays near zero.
+- **Explain this change** (on-demand in Reports) uses AI to describe what changed between two screenshots and whether it looks intentional or like a bug.
+
+AI is provider-agnostic: set `AI_PROVIDER=openai`, `AI_BASE_URL` and model names for any OpenAI-compatible API (text-only providers skip the vision checks).
+
+## Reports
+
+Every finished check is a report. In the Reports section you pick any report and compare it with the previous one, the same time a day or a week before, or any specific earlier report. The comparison shows what newly broke, what was fixed, every validation area's pass/fail with before/after, speed and page-weight trends, journey step timings, catalog changes, AI findings, and desktop/tablet/mobile screenshots with a pixel difference. Save as PDF prints a clean copy.
+
 ## Local development
 
 ```bash

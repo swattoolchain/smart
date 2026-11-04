@@ -5,8 +5,8 @@ export const CATEGORIES = {
   performance: { label: 'Speed', weight: 15 },
   seo: { label: 'SEO', weight: 10 },
   accessibility: { label: 'Accessibility', weight: 10 },
-  reliability: { label: 'Errors & links', weight: 10 },
-  trust: { label: 'Catalog & trust', weight: 5 },
+  reliability: { label: 'Errors & visuals', weight: 12 },
+  trust: { label: 'Catalog & products', weight: 10 },
 };
 
 export function check(id, category, title, status, { severity = 'major', detail = '', evidence = null, fix = '' } = {}) {

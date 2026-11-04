@@ -8,6 +8,10 @@ import { runFunctional } from './functional.js';
 import { runNonFunctional, jsErrorCheck } from './nonfunctional.js';
 import { runVisual } from './visual.js';
 import { scoreChecks, summarize } from './score.js';
+import { groupOf } from './catalog.js';
+import { runCatalog } from './catalog-check.js';
+import { reviewScreens } from './visual-ai.js';
+import { aiEnabled } from '../ai.js';
 
 async function isLocked(ctx, origin) {
   try {
@@ -24,7 +28,8 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null }) {
+  const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
   const runDir = path.join(config.dataDir, 'shots', `run-${runId}`);
@@ -49,7 +54,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId 
       await gotoStore(page, origin + '/', { password }).catch(() => {});
       await gotoStore(mobilePage, origin + '/', { password }).catch(() => {});
     }
-    info = await discover(ctx.request, origin);
+    info = await discover(ctx.request, origin, { testProduct });
     const lockedEarly = /\/password/.test(page.url());
     if (!info.isShopify && !lockedEarly && !(await isLocked(ctx, origin))) {
       rec.add(
@@ -59,17 +64,28 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId 
         })
       );
     }
-    const fn = await runFunctional({ page, rec, origin, info, password, shot });
-    if (!fn.locked && !fn.down) {
-      jsErrorCheck(rec, fn.pageErrors || []);
+    let metrics = {};
+    let catalog = null;
+    let ai = null;
+    const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
+    if (!fn.locked && !fn.down && !fn.blocked) {
+      if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (kind !== 'journeys') {
-        await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60 });
+        metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;
       }
-      if (kind === 'full' && storeId) {
+      if (kind === 'full' && storeId && on('visual')) {
         await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`) });
+      }
+      if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
+        catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on });
+      }
+      if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
+        ai = await reviewScreens({ runDir, origin, rec });
       }
     }
     // A home screenshot gives every report a visual anchor.
+    // Drop anything from a switched-off group (some sections share page visits).
+    rec.checks = rec.checks.filter((c) => { const g = groupOf(c.id); return !g || on(g); });
     const cover = await shot(mobilePage.url() === 'about:blank' ? page : mobilePage, 'cover');
     const { score, verdict, categories } = scoreChecks(rec.checks);
     return {
@@ -78,6 +94,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId 
       startedAt: new Date(started).toISOString(),
       durationMs: Date.now() - started,
       isShopify: info.isShopify,
+      metrics,
+      catalog,
+      ai,
+      testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,
+      notes: info.notes,
       platform: info.platform,
       discovered: { products: info.products.map((p) => ({ title: p.title, handle: p.handle })), collections: info.collections, sampleSize: info.sampleSize },
       checks: rec.checks,

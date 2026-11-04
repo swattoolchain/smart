@@ -5,11 +5,12 @@ let browserPromise = null;
 
 export async function getBrowser() {
   if (!browserPromise) {
-    browserPromise = chromium
-      .launch({
+    const opts = {
         headless: true,
         executablePath: config.chromePath,
+        proxy: config.browserProxy ? { server: config.browserProxy } : undefined,
         args: [
+          '--disable-blink-features=AutomationControlled',
           '--disable-dev-shm-usage',
           '--no-sandbox',
           '--disable-background-networking',
@@ -18,7 +19,10 @@ export async function getBrowser() {
           '--no-first-run',
           '--disable-default-apps',
         ],
-      })
+      };
+    // Full Chromium in new headless mode looks like a normal browser to bot protection;
+    // fall back to the default headless build if it isn't installed.
+    browserPromise = (config.chromePath ? chromium.launch(opts) : chromium.launch({ ...opts, channel: 'chromium' }).catch(() => chromium.launch(opts)))
       .then((b) => {
         b.on('disconnected', () => (browserPromise = null));
         return b;
@@ -31,19 +35,68 @@ export async function getBrowser() {
   return browserPromise;
 }
 
-export async function newContext({ mobile = false } = {}) {
+export async function newContext({ mobile = false, tablet = false } = {}) {
   const browser = await getBrowser();
-  return browser.newContext({
+  const ctx = await browser.newContext({
     userAgent: mobile
       ? config.userAgent.replace('Windows NT 10.0; Win64; x64', 'Linux; Android 14; Pixel 8') + ' Mobile'
-      : config.userAgent,
-    viewport: mobile ? { width: 390, height: 844 } : { width: 1366, height: 900 },
+      : tablet
+        ? config.userAgent.replace('Windows NT 10.0; Win64; x64', 'Linux; Android 14; Pixel Tablet')
+        : config.userAgent,
+    viewport: mobile ? { width: 390, height: 844 } : tablet ? { width: 820, height: 1180 } : { width: 1366, height: 900 },
     deviceScaleFactor: 1,
-    isMobile: mobile,
-    hasTouch: mobile,
+    isMobile: mobile || tablet,
+    hasTouch: mobile || tablet,
     locale: 'en-US',
+    timezoneId: 'Asia/Kolkata',
+    extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
     ignoreHTTPSErrors: false,
   });
+  // Remove the automation fingerprints that bot protection looks for first.
+  await ctx.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    if (!window.chrome) window.chrome = { runtime: {} };
+  });
+  return ctx;
+}
+
+/** Waits for an automatic (JavaScript) challenge to clear before declaring the page blocked. */
+export async function settleChallenge(page, res, waitMs = 12000) {
+  let c = await detectChallenge(page, res);
+  const until = Date.now() + waitMs;
+  while (c.blocked && Date.now() < until) {
+    await page.waitForTimeout(2000);
+    c = await detectChallenge(page, null);
+  }
+  return c;
+}
+
+/**
+ * Recognises bot-protection pages (Cloudflare, Shopify's verification, Akamai, PerimeterX, DataDome, Incapsula),
+ * so a blocked test is reported as "blocked", never as "your store is broken".
+ */
+export async function detectChallenge(page, res) {
+  try {
+    const status = res ? res.status() : 0;
+    const headers = res ? res.headers() : {};
+    const url = page.url();
+    const title = (await page.title().catch(() => '')) || '';
+    const body = ((await page.evaluate(() => document.body?.innerText?.slice(0, 2000) || '').catch(() => '')) || '').toLowerCase();
+    const cf = !!headers['cf-ray'] || /cloudflare/i.test(headers.server || '');
+    if (/just a moment|attention required|checking your browser|verify you are human/i.test(title) || /cf_chl_opt|cf-chl-widget|id="challenge-form"/.test(await page.content().catch(() => '')))
+      return { blocked: true, vendor: 'Cloudflare' };
+    if (/\/challenge|checkpoint/.test(new URL(url).pathname) || /your connection needs to be verified|verify your connection/.test(body))
+      return { blocked: true, vendor: 'Shopify bot protection' };
+    if (/access denied/i.test(title) && /reference #|akamai/.test(body)) return { blocked: true, vendor: 'Akamai' };
+    if (/px-captcha|perimeterx|human verification/.test(body)) return { blocked: true, vendor: 'PerimeterX' };
+    if (/datadome/.test(body) || headers['x-datadome']) return { blocked: true, vendor: 'DataDome' };
+    if (/incapsula incident/.test(body)) return { blocked: true, vendor: 'Imperva' };
+    if ((status === 403 || status === 429 || status === 503) && cf) return { blocked: true, vendor: 'Cloudflare' };
+    return { blocked: false };
+  } catch {
+    return { blocked: false };
+  }
 }
 
 /** Normalises a user-entered store address into an origin like https://shop.com */

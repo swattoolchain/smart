@@ -5,11 +5,16 @@ import cookieSession from 'cookie-session';
 import bcrypt from 'bcryptjs';
 import { config } from './config.js';
 import { db, q } from './db.js';
-import { normalizeStoreUrl, assertPublicTarget } from './engine/browser.js';
-import { startRun, startScheduler } from './scheduler.js';
+import { normalizeStoreUrl, assertPublicTarget, newContext, gotoStore, settleChallenge } from './engine/browser.js';
+import { discover } from './engine/discover.js';
+import { GROUPS, INTERVALS, FULL_INTERVALS, normalizeConfig } from './engine/catalog.js';
+import { startRun, startScheduler, storeConfig, intervals, nextRunIn } from './scheduler.js';
 import { queueDepth } from './queue.js';
 import { approveBaseline } from './engine/visual.js';
-import { sendMail } from './alerts.js';
+import { sendMail, sendSlack } from './alerts.js';
+import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
+import { aiEnabled, explainDiff } from './ai.js';
+import { catalogReport } from './catalog-report.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -50,9 +55,10 @@ function ownStore(req, res) {
   return s;
 }
 function publicStore(s) {
-  const { storefront_password, ...rest } = s;
+  const { storefront_password, config_json, ...rest } = s;
   return { ...rest, has_password: !!storefront_password };
 }
+const isAdmin = (u) => !!config.adminEmail && u.email === config.adminEmail.toLowerCase();
 
 // ---------- Public free scan ----------
 app.post('/api/scan', async (req, res) => {
@@ -67,7 +73,7 @@ app.post('/api/scan', async (req, res) => {
   if (cached) return res.json({ runId: cached.id, cached: true });
   if (q.recentFreeRunsByIp.get(ip(req)).n >= config.freeScansPerIpPerHour)
     return res.status(429).json({ error: 'You have reached the free scan limit for this hour. Create a free account to keep monitoring.' });
-  const runId = startRun({ origin, kind: 'free', ip: ip(req) });
+  const runId = startRun({ origin, kind: 'free', ip: ip(req), trigger: 'free' });
   res.json({ runId });
 });
 
@@ -126,23 +132,24 @@ app.post('/api/auth/signup', async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
   const info = q.insertUser.run(e, hash, String(name || '').slice(0, 80));
   req.session.uid = Number(info.lastInsertRowid);
+  // Signing up from a free-check report ("Start monitoring") adds that store with recommended settings.
   let store = null;
   if (storeUrl) {
     try {
       const origin = normalizeStoreUrl(storeUrl);
       await assertPublicTarget(origin);
-      const s = q.insertStore.run(req.session.uid, origin, new URL(origin).host, null, e, null);
+      const s = q.insertStore.run(req.session.uid, origin, new URL(origin).host, null, e, null, '{}', null, 1);
       store = Number(s.lastInsertRowid);
-      startRun({ storeId: store, origin, kind: 'full' });
+      startRun({ storeId: store, origin, kind: 'full', trigger: 'setup' });
     } catch {
-      /* store can be added later */
+      /* the store can be added later */
     }
   }
   if (config.adminEmail) sendMail({ to: config.adminEmail, subject: `New signup: ${e}`, text: `${e}\n${storeUrl || ''}` }).catch(() => {});
   sendMail({
     to: e,
     subject: 'Welcome to Tharam Store Guard',
-    text: `Hi${name ? ' ' + name : ''},\n\nStore Guard is now watching your store. We test your shopping journey, speed, SEO and more on a schedule, and alert you only when something breaks or recovers.\n\nDashboard: ${config.baseUrl}/app\n\nReply to this email any time; it reaches the founder directly.\n\n— Tharam`,
+    text: `Hi${name ? ' ' + name : ''},\n\nThanks for joining the Store Guard beta. Add your store at ${config.baseUrl}/app, choose what to test and how often, and we'll alert you only when something breaks or recovers.\n\nReply to this email any time; it reaches the founder directly.\n\nTharam`,
   }).catch(() => {});
   res.json({ ok: true, storeId: store });
 });
@@ -170,16 +177,104 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', requireUser, (req, res) => {
-  res.json({ user: req.user, admin: !!config.adminEmail && req.user.email === config.adminEmail.toLowerCase() });
+  res.json({ user: req.user, admin: isAdmin(req.user) });
+});
+
+app.patch('/api/account', requireUser, (req, res) => {
+  q.updateUserName.run(String(req.body?.name ?? '').slice(0, 80), req.user.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/account/password', requireUser, async (req, res) => {
+  const { current, next } = req.body || {};
+  const u = q.userByEmail.get(req.user.email);
+  if (!(await bcrypt.compare(String(current || ''), u.password_hash))) return res.status(400).json({ error: 'Current password is incorrect' });
+  if (typeof next !== 'string' || next.length < 8) return res.status(400).json({ error: 'Use a new password of at least 8 characters' });
+  q.updatePassword.run(await bcrypt.hash(next, 10), u.id);
+  res.json({ ok: true });
+});
+
+// ---------- Test suite catalog ----------
+app.get('/api/catalog', (req, res) => {
+  res.json({ groups: GROUPS, intervals: INTERVALS, fullIntervals: FULL_INTERVALS, aiEnabled: aiEnabled(), defaults: { journeyIntervalMin: config.journeyIntervalMin, fullIntervalMin: config.fullScanIntervalMin } });
+});
+
+// Looks at a store before it is added: platform, products, collections, password lock.
+const discoverCounts = new Map();
+async function discoverStore(origin, password) {
+  const ctx = await newContext();
+  try {
+    const page = await ctx.newPage();
+    const nav = await gotoStore(page, origin + '/', { password }).catch((e) => ({ error: e }));
+    if (nav.error) return { reachable: false, error: `We couldn't open ${new URL(origin).host}. Check the address and that the store is online.` };
+    const status = nav.res ? nav.res.status() : 0;
+    const locked = !!nav.locked;
+    const challenge = locked ? { blocked: false } : await settleChallenge(page, nav.res);
+    const info = await discover(ctx.request, origin);
+    return {
+      blocked: challenge.blocked,
+      blockedBy: challenge.vendor || null,
+      reachable: challenge.blocked || (status > 0 && status < 400),
+      status,
+      locked,
+      wrongPassword: !!nav.wrongPassword,
+      platform: info.platform,
+      isShopify: info.isShopify,
+      productCount: info.sampleSize,
+      catalog: info.catalog,
+      suggested: info.products[0] ? info.products[0].handle : null,
+      collections: info.collections,
+    };
+  } finally {
+    await ctx.close().catch(() => {});
+  }
+}
+
+app.post('/api/discover', requireUser, async (req, res) => {
+  const k = req.user.id;
+  const c = discoverCounts.get(k) || { n: 0, t: Date.now() };
+  if (Date.now() - c.t > 3600 * 1000) Object.assign(c, { n: 0, t: Date.now() });
+  if (++c.n > 30) return res.status(429).json({ error: 'Too many lookups this hour. Try again later.' });
+  discoverCounts.set(k, c);
+  let origin;
+  try {
+    origin = normalizeStoreUrl(req.body?.url);
+    await assertPublicTarget(origin);
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  if (q.storesByUser.all(req.user.id).some((s) => s.url === origin)) return res.status(409).json({ error: 'This store is already in your account.' });
+  try {
+    res.json({ origin, ...(await discoverStore(origin, req.body?.password || null)) });
+  } catch (e) {
+    res.status(502).json({ error: 'We could not look at this store right now. Try again in a minute.' });
+  }
 });
 
 // ---------- Stores ----------
+function storeView(s) {
+  const cfg = storeConfig(s);
+  const iv = intervals(s);
+  const active = q.activeRunForStore.get(s.id);
+  return {
+    ...publicStore(s),
+    config: { disabled: cfg.disabled || [], testProduct: cfg.testProduct || null, ...iv },
+    next_run_in: s.last_run_at ? nextRunIn(s) : null,
+    active_run_id: active ? active.id : null,
+    failing: q.failingChecks.all(s.id),
+  };
+}
+
 app.get('/api/stores', requireUser, (req, res) => {
-  res.json({ stores: q.storesByUser.all(req.user.id).map(publicStore), queue: queueDepth() });
+  res.json({ stores: q.storesByUser.all(req.user.id).map(storeView), queue: queueDepth() });
+});
+
+app.get('/api/overview', requireUser, (req, res) => {
+  res.json({ stores: q.storesByUser.all(req.user.id).map(storeView), alerts: q.recentAlertsForUser.all(req.user.id) });
 });
 
 app.post('/api/stores', requireUser, async (req, res) => {
-  const { url, password, alertEmail, slack } = req.body || {};
+  const { url, name, password, alertEmail, slack, runNow, monitoring = true, platform } = req.body || {};
   let origin;
   try {
     origin = normalizeStoreUrl(url);
@@ -187,12 +282,25 @@ app.post('/api/stores', requireUser, async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }
-  if (q.storesByUser.all(req.user.id).length >= 5) return res.status(400).json({ error: 'The beta allows up to 5 stores per account.' });
+  const mine = q.storesByUser.all(req.user.id);
+  if (mine.length >= 5) return res.status(400).json({ error: 'The beta allows up to 5 stores per account.' });
+  if (mine.some((s) => s.url === origin)) return res.status(409).json({ error: 'This store is already in your account.' });
   if (alertEmail && !isEmail(alertEmail)) return res.status(400).json({ error: 'Alert email is not valid' });
-  const info = q.insertStore.run(req.user.id, origin, new URL(origin).host, password || null, alertEmail || req.user.email, slack || null);
+  if (slack && !/^https:\/\/hooks\.slack\.com\//.test(slack)) return res.status(400).json({ error: 'Slack webhook must start with https://hooks.slack.com/' });
+  const cfg = normalizeConfig(req.body?.config || {});
+  const info = q.insertStore.run(
+    req.user.id, origin, String(name || new URL(origin).host).slice(0, 80), password || null,
+    alertEmail || req.user.email, slack || null, JSON.stringify(cfg), platform ? String(platform).slice(0, 60) : null, monitoring ? 1 : 0
+  );
   const id = Number(info.lastInsertRowid);
-  const runId = startRun({ storeId: id, origin, kind: 'full', password });
+  const runId = runNow ? startRun({ storeId: id, origin, kind: 'full', password, trigger: 'setup' }) : null;
   res.json({ id, runId });
+});
+
+app.get('/api/stores/:id', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json({ store: storeView(s) });
 });
 
 app.patch('/api/stores/:id', requireUser, (req, res) => {
@@ -201,19 +309,24 @@ app.patch('/api/stores/:id', requireUser, (req, res) => {
   const b = req.body || {};
   if (b.alertEmail && !isEmail(b.alertEmail)) return res.status(400).json({ error: 'Alert email is not valid' });
   if (b.slack && !/^https:\/\/hooks\.slack\.com\//.test(b.slack)) return res.status(400).json({ error: 'Slack webhook must start with https://hooks.slack.com/' });
+  if (b.name !== undefined && !String(b.name).trim()) return res.status(400).json({ error: 'Give the store a name' });
   q.updateStoreSettings.run(
-    b.name ?? s.name,
+    b.name === undefined ? s.name : String(b.name).trim().slice(0, 80),
     b.password === undefined ? s.storefront_password : b.password || null,
-    b.alertEmail ?? s.alert_email,
+    b.alertEmail === undefined ? s.alert_email : b.alertEmail || q.userById.get(s.user_id).email,
     b.slack === undefined ? s.slack_webhook : b.slack || null,
     b.monitoring === undefined ? s.monitoring : b.monitoring ? 1 : 0,
     s.id
   );
-  res.json({ ok: true });
+  if (b.config) q.updateStoreConfig.run(JSON.stringify(normalizeConfig(b.config, storeConfig(s))), s.id);
+  res.json({ ok: true, store: storeView(q.storeById.get(s.id)) });
 });
 
 app.delete('/api/stores/:id', requireUser, (req, res) => {
-  q.deleteStore.run(Number(req.params.id), req.user.id);
+  const s = ownStore(req, res);
+  if (!s) return;
+  q.deleteStore.run(s.id, req.user.id);
+  fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
   res.json({ ok: true });
 });
 
@@ -222,13 +335,113 @@ app.post('/api/stores/:id/run', requireUser, (req, res) => {
   if (!s) return;
   if (q.activeRunForStore.get(s.id)) return res.status(409).json({ error: 'A test is already running for this store.' });
   const kind = req.body?.kind === 'journeys' ? 'journeys' : 'full';
-  res.json({ runId: startRun({ storeId: s.id, origin: s.url, kind, password: s.storefront_password }) });
+  res.json({ runId: startRun({ storeId: s.id, origin: s.url, kind, password: s.storefront_password, trigger: 'manual' }) });
+});
+
+app.post('/api/stores/:id/discover', requireUser, async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  try {
+    res.json(await discoverStore(s.url, s.storefront_password));
+  } catch {
+    res.status(502).json({ error: 'We could not look at this store right now. Try again in a minute.' });
+  }
 });
 
 app.get('/api/stores/:id/runs', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
-  res.json({ store: publicStore(s), runs: q.runsByStore.all(s.id, 50), alerts: q.alertsByStore.all(s.id) });
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 300);
+  res.json({ store: storeView(s), runs: q.runsByStore.all(s.id, limit), alerts: q.alertsByStore.all(s.id) });
+});
+
+app.post('/api/stores/:id/test-alert', requireUser, async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const name = s.name || new URL(s.url).host;
+  const text = `This is a test alert for ${name} from Tharam Store Guard. Real alerts look like this, with what broke, how to fix it, and a link to the report.\n\n${config.baseUrl}/app#/s/${s.id}`;
+  const [mail, slack] = await Promise.all([
+    sendMail({ to: s.alert_email, subject: `Test alert for ${name}`, text }).catch(() => false),
+    s.slack_webhook ? sendSlack(s.slack_webhook, `*Test alert for ${name}*\n${text}`).catch(() => false) : Promise.resolve(null),
+  ]);
+  res.json({ email: mail, slack, emailConfigured: !!config.smtp.host });
+});
+
+app.get('/api/stores/:id/visual', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const run = db
+    .prepare("SELECT id, result_json, finished_at FROM runs WHERE store_id = ? AND kind = 'full' AND status = 'done' ORDER BY id DESC LIMIT 1")
+    .get(s.id);
+  const baseDir = path.join(config.dataDir, 'baselines', `store-${s.id}`);
+  const keys = SHOT_KEYS;
+  const result = run ? JSON.parse(run.result_json) : null;
+  const visual = result?.checks?.find((c) => c.id === 'nf.visual')?.evidence?.visual || [];
+  const shotDir = run ? path.join(config.dataDir, 'shots', `run-${run.id}`) : null;
+  res.json({
+    runId: run?.id || null,
+    checkedAt: run?.finished_at || null,
+    shots: keys
+      .map((k) => {
+        const v = visual.find((x) => x.key === k) || {};
+        const base = path.join(baseDir, `${k}.png`);
+        return {
+          key: k,
+          status: v.status || null,
+          ratio: v.ratio ?? null,
+          current: shotDir && fs.existsSync(path.join(shotDir, `${k}.png`)) ? `/shots/run-${run.id}/${k}.png` : null,
+          diff: shotDir && fs.existsSync(path.join(shotDir, `${k}-diff.png`)) ? `/shots/run-${run.id}/${k}-diff.png` : null,
+          baseline: fs.existsSync(base) ? `/baselines/${s.id}/${k}.png?v=${Math.round(fs.statSync(base).mtimeMs)}` : null,
+        };
+      })
+      .filter((x) => x.current || x.baseline),
+  });
+});
+
+app.get('/baselines/:sid/:file', requireUser, (req, res) => {
+  const s = q.storeById.get(Number(req.params.sid));
+  if (!s || s.user_id !== req.user.id || !/^(home|product)-(desktop|tablet|mobile)\.png$/.test(req.params.file)) return res.status(404).end();
+  res.sendFile(path.join(config.dataDir, 'baselines', `store-${s.id}`, req.params.file));
+});
+
+app.get('/api/stores/:id/reports', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json({ reports: reportList(s.id) });
+});
+
+app.get('/api/stores/:id/compare', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const c = buildComparison(s.id, req.query.run ? Number(req.query.run) : null, String(req.query.base || 'prev'));
+  if (!c) return res.status(404).json({ error: 'No finished reports yet' });
+  res.json(c);
+});
+
+app.get('/api/stores/:id/catalog', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const data = catalogReport(s.id, req.query.run ? Number(req.query.run) : null, String(req.query.base || 'prev'));
+  if (!data) return res.status(404).json({ error: 'No catalog snapshot yet. Run a full check first.' });
+  res.json(data);
+});
+
+app.post('/api/stores/:id/explain-change', requireUser, async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (!aiEnabled()) return res.status(400).json({ error: 'AI review is not set up on this server.' });
+  const { runId, baseRunId, key } = req.body || {};
+  if (!SHOT_KEYS.includes(key)) return res.status(400).json({ error: 'Unknown screenshot' });
+  const own = (id) => q.runById.get(Number(id))?.store_id === s.id;
+  const a = path.join(config.dataDir, 'shots', `run-${Number(runId)}`, `${key}.png`);
+  const b = path.join(config.dataDir, 'shots', `run-${Number(baseRunId)}`, `${key}.png`);
+  if (!own(runId) || !own(baseRunId) || !fs.existsSync(a) || !fs.existsSync(b)) return res.status(404).json({ error: 'Screenshots not found' });
+  try {
+    const [page, device] = key.split('-');
+    res.json(await explainDiff(b, a, { page: page === 'home' ? 'homepage' : 'product page', device }));
+  } catch (e) {
+    res.status(502).json({ error: 'AI could not compare these screenshots right now.' });
+  }
 });
 
 app.post('/api/stores/:id/approve-visual', requireUser, (req, res) => {
@@ -242,7 +455,7 @@ app.post('/api/stores/:id/approve-visual', requireUser, (req, res) => {
 
 // ---------- Founder view ----------
 app.get('/api/admin/overview', requireUser, (req, res) => {
-  if (!config.adminEmail || req.user.email !== config.adminEmail.toLowerCase()) return res.status(403).json({ error: 'Forbidden' });
+  if (!isAdmin(req.user)) return res.status(403).json({ error: 'Forbidden' });
   res.json({
     users: db.prepare('SELECT COUNT(*) AS n FROM users').get().n,
     stores: db.prepare('SELECT COUNT(*) AS n FROM stores').get().n,

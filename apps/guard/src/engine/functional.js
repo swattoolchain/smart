@@ -1,5 +1,5 @@
 import { check, shortErr } from './checks.js';
-import { gotoStore, settle } from './browser.js';
+import { gotoStore, settle, settleChallenge } from './browser.js';
 import { searchTermFrom } from './discover.js';
 
 const ATC_SELECTORS = [
@@ -70,7 +70,7 @@ async function dismissOverlays(page) {
   }
 }
 
-export async function runFunctional({ page, rec, origin, info, password, shotDir, shot }) {
+export async function runFunctional({ page, rec, origin, info, password, shot, on = () => true }) {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push({ url: page.url(), message: shortErr(e) }));
 
@@ -92,6 +92,23 @@ export async function runFunctional({ page, rec, origin, info, password, shotDir
         })
       );
       return { locked: true, pageErrors };
+    }
+    const challenge = await settleChallenge(page, home.res);
+    if (challenge.blocked) {
+      rec.add(
+        check('fn.blocked', 'functional', 'Test browser allowed in', 'skip', {
+          severity: 'critical',
+          detail: `${challenge.vendor} showed our test browser a verification page, so we could not test your store. This usually means your store is fine; it just doesn't recognise Tharam yet.`,
+          evidence: { screenshot: await shot(page, 'blocked'), vendor: challenge.vendor },
+          fix:
+            challenge.vendor === 'Cloudflare'
+              ? 'In Cloudflare, go to Security → WAF → Custom rules and add a rule: if User Agent contains "TharamStoreGuard", then Skip (all remaining custom rules, Bot Fight Mode and Super Bot Fight Mode). Then run the check again.'
+              : challenge.vendor === 'Shopify bot protection'
+                ? 'Shopify sometimes verifies new automated visitors. Run the check again in a few minutes. If it keeps happening, write to hello@tharam.store and we will route your tests through a verified connection.'
+                : `Ask whoever manages ${challenge.vendor} to allow visitors whose User Agent contains "TharamStoreGuard", then run the check again.`,
+        })
+      );
+      return { blocked: true, vendor: challenge.vendor, pageErrors };
     }
     if (status >= 400 || status === 0) {
       rec.add(
@@ -128,8 +145,8 @@ export async function runFunctional({ page, rec, origin, info, password, shotDir
   // Collection, search, product and cart steps rely on Shopify's storefront conventions.
   if (!info.isShopify) return { pageErrors };
 
-  rec.step('Open a collection');
-  try {
+  if (on('journey.collection')) try {
+    rec.step('Open a collection');
     const res = await page.goto(collUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await settle(page, 600);
     const links = await page.locator('a[href*="/products/"]').count();
@@ -162,7 +179,7 @@ export async function runFunctional({ page, rec, origin, info, password, shotDir
 
   // 3. Search
   const term = searchTermFrom(info.products);
-  if (term) {
+  if (term && on('journey.search')) {
     rec.step(`Search for "${term}"`);
     try {
       await page.goto(`${origin}/search?q=${encodeURIComponent(term)}&type=product`, {
@@ -229,7 +246,7 @@ export async function runFunctional({ page, rec, origin, info, password, shotDir
     }
 
     // Variant selection: the form's variant id should follow the ?variant= parameter.
-    if (product.variants.length >= 2) {
+    if (product.variants.length >= 2 && on('journey.variant')) {
       const v2 = product.variants[1];
       await page.goto(`${origin}/products/${product.handle}?variant=${v2.id}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await settle(page, 600);
@@ -340,7 +357,8 @@ export async function runFunctional({ page, rec, origin, info, password, shotDir
   }
 
   // 5. Cart page and checkout reach (stops before any payment details)
-  if (atcOk) {
+  if (atcOk && !on('journey.checkout')) await clearCart(page);
+  if (atcOk && on('journey.checkout')) {
     rec.step('Open cart');
     try {
       await page.goto(`${origin}/cart`, { waitUntil: 'domcontentloaded', timeout: 30000 });

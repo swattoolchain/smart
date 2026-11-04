@@ -3,18 +3,18 @@ import path from 'node:path';
 import { PNG } from 'pngjs';
 import pixelmatch from 'pixelmatch';
 import { check, shortErr } from './checks.js';
-import { gotoStore, settle } from './browser.js';
+import { gotoStore, settle, newContext } from './browser.js';
 
 /**
  * Visual regression: compares viewport screenshots against the store's approved baseline.
  * The first run becomes the baseline. Differences above the threshold are reported as warnings.
  */
 export async function runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir, threshold = 0.12 }) {
-  const shots = [{ key: 'home-desktop', p: page, url: origin + '/' }, { key: 'home-mobile', p: mobilePage, url: origin + '/' }];
-  if (info.products[0]) {
-    shots.push({ key: 'product-desktop', p: page, url: `${origin}/products/${info.products[0].handle}` });
-    shots.push({ key: 'product-mobile', p: mobilePage, url: `${origin}/products/${info.products[0].handle}` });
-  }
+  const tctx = await newContext({ tablet: true });
+  const tabletPage = await tctx.newPage();
+  const devices = [['desktop', page], ['tablet', tabletPage], ['mobile', mobilePage]];
+  const shots = devices.map(([d, p]) => ({ key: `home-${d}`, p, url: origin + '/' }));
+  if (info.products[0]) for (const [d, p] of devices) shots.push({ key: `product-${d}`, p, url: `${origin}/products/${info.products[0].handle}` });
   fs.mkdirSync(baselineDir, { recursive: true });
   const results = [];
   for (const s of shots) {
@@ -46,6 +46,7 @@ export async function runVisual({ page, mobilePage, rec, origin, info, password,
       results.push({ key: s.key, status: 'error', error: shortErr(e) });
     }
   }
+  await tctx.close().catch(() => {});
   const changed = results.filter((r) => r.status === 'changed');
   const isBaseline = results.every((r) => r.status === 'baseline' || r.status === 'error');
   rec.add(
@@ -67,7 +68,7 @@ export function approveBaseline(runDir, baselineDir) {
   fs.mkdirSync(baselineDir, { recursive: true });
   let n = 0;
   for (const f of fs.readdirSync(runDir)) {
-    if (/^(home|product)-(desktop|mobile)\.png$/.test(f)) {
+    if (/^(home|product)-(desktop|tablet|mobile)\.png$/.test(f)) {
       fs.copyFileSync(path.join(runDir, f), path.join(baselineDir, f));
       n++;
     }

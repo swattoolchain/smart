@@ -75,6 +75,15 @@ CREATE TABLE IF NOT EXISTS check_state (
 );
 `);
 
+// Lightweight migrations for columns added after launch.
+function ensureColumn(table, col, type) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+}
+ensureColumn('stores', 'config_json', "TEXT NOT NULL DEFAULT '{}'");
+ensureColumn('stores', 'platform', 'TEXT');
+ensureColumn('runs', 'trigger', 'TEXT');
+
 export const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   userById: db.prepare('SELECT id, email, name, plan, created_at FROM users WHERE id = ?'),
@@ -82,17 +91,23 @@ export const q = {
   storesByUser: db.prepare('SELECT * FROM stores WHERE user_id = ? ORDER BY id'),
   storeById: db.prepare('SELECT * FROM stores WHERE id = ?'),
   insertStore: db.prepare(
-    'INSERT INTO stores (user_id, url, name, storefront_password, alert_email, slack_webhook) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO stores (user_id, url, name, storefront_password, alert_email, slack_webhook, config_json, platform, monitoring) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
+  updateStoreConfig: db.prepare('UPDATE stores SET config_json = ? WHERE id = ?'),
+  updateStorePlatform: db.prepare('UPDATE stores SET platform = ? WHERE id = ?'),
+  updatePassword: db.prepare('UPDATE users SET password_hash = ? WHERE id = ?'),
+  updateUserName: db.prepare('UPDATE users SET name = ? WHERE id = ?'),
+  failingChecks: db.prepare("SELECT check_id, since FROM check_state WHERE store_id = ? AND status = 'failing'"),
+  recentAlertsForUser: db.prepare('SELECT a.*, s.name AS store_name, s.url AS store_url FROM alerts a JOIN stores s ON s.id = a.store_id WHERE s.user_id = ? ORDER BY a.id DESC LIMIT 20'),
   updateStoreSettings: db.prepare(
     'UPDATE stores SET name = ?, storefront_password = ?, alert_email = ?, slack_webhook = ?, monitoring = ? WHERE id = ?'
   ),
   deleteStore: db.prepare('DELETE FROM stores WHERE id = ? AND user_id = ?'),
   monitoredStores: db.prepare('SELECT * FROM stores WHERE monitoring = 1'),
-  insertRun: db.prepare('INSERT INTO runs (store_id, url, kind, requester_ip) VALUES (?, ?, ?, ?)'),
+  insertRun: db.prepare('INSERT INTO runs (store_id, url, kind, requester_ip, trigger) VALUES (?, ?, ?, ?, ?)'),
   runById: db.prepare('SELECT * FROM runs WHERE id = ?'),
   runsByStore: db.prepare(
-    'SELECT id, kind, status, score, verdict, created_at, finished_at FROM runs WHERE store_id = ? ORDER BY id DESC LIMIT ?'
+    'SELECT id, kind, status, score, verdict, trigger, error, created_at, finished_at FROM runs WHERE store_id = ? ORDER BY id DESC LIMIT ?'
   ),
   setRunRunning: db.prepare("UPDATE runs SET status = 'running' WHERE id = ?"),
   finishRun: db.prepare(

@@ -79,13 +79,13 @@ function fmtBytes(b) {
   return b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`;
 }
 
-export async function runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit = 40 }) {
+export async function runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit = 40, on = () => true }) {
   const metrics = {};
   const targets = [{ key: 'home', label: 'Homepage', url: origin + '/' }];
   if (info.products[0]) targets.push({ key: 'product', label: 'Product page', url: `${origin}/products/${info.products[0].handle}` });
 
   // Speed, measured on a phone-sized viewport (most Shopify traffic is mobile).
-  for (const t of targets) {
+  for (const t of on('speed') ? targets : []) {
     try {
       await gotoStore(mobilePage, t.url, { password });
       await settle(mobilePage, 1500);
@@ -142,7 +142,7 @@ export async function runNonFunctional({ page, mobilePage, rec, origin, info, pa
   }
 
   // SEO on the homepage and product page.
-  for (const t of targets) {
+  for (const t of on('seo') || on('a11y') ? targets : []) {
     try {
       await gotoStore(page, t.url, { password });
       await settle(page, 600);
@@ -189,7 +189,7 @@ export async function runNonFunctional({ page, mobilePage, rec, origin, info, pa
   }
 
   // Accessibility (WCAG A/AA rules from axe-core) on homepage and product page.
-  for (const t of targets) {
+  for (const t of on('a11y') ? targets : []) {
     try {
       await gotoStore(page, t.url, { password });
       await settle(page, 600);
@@ -210,7 +210,7 @@ export async function runNonFunctional({ page, mobilePage, rec, origin, info, pa
   }
 
   // Broken links from the homepage (same-origin only, gentle concurrency).
-  try {
+  if (on('links')) try {
     await gotoStore(page, origin + '/', { password });
     await settle(page, 500);
     const hrefs = await page.$$eval('a[href]', (as) => as.map((a) => a.href));
@@ -264,7 +264,7 @@ export async function runNonFunctional({ page, mobilePage, rec, origin, info, pa
     ['shipping-policy', 'Shipping policy'],
   ];
   const missing = [];
-  for (const [slug, label] of policies) {
+  for (const [slug, label] of on('policies') ? policies : []) {
     const s = await page.request
       .get(`${origin}/policies/${slug}`, { timeout: 15000 })
       .then((r) => r.status())
@@ -280,7 +280,7 @@ export async function runNonFunctional({ page, mobilePage, rec, origin, info, pa
   );
 
   // Catalog quality from the products feed.
-  if (info.quality && info.quality.sampled) {
+  if (on('catalog') && info.quality && info.quality.sampled) {
     const q = info.quality;
     const items = [];
     if (q.zeroPrice) items.push(`${q.zeroPrice} priced at 0`);

@@ -66,12 +66,13 @@ export async function detectPlatform(request, origin) {
   return { key: 'custom', label: 'Custom or headless store' };
 }
 
-export async function discover(request, origin) {
+export async function discover(request, origin, { testProduct = null } = {}) {
   const out = {
     origin,
     platform: await detectPlatform(request, origin),
     isShopify: false,
     products: [],
+    catalog: [],
     sampleSize: 0,
     collections: [],
     quality: null,
@@ -86,6 +87,10 @@ export async function discover(request, origin) {
         out.isShopify = true;
         out.sampleSize = json.products.length;
         out.products = pickProducts(json.products);
+        out.catalog = json.products
+          .filter((p) => (p.variants || []).some((v) => v.available !== false))
+          .slice(0, 50)
+          .map((p) => ({ title: p.title, handle: p.handle, variants: (p.variants || []).length }));
         out.quality = dataQuality(json.products);
       }
     } else {
@@ -121,6 +126,26 @@ export async function discover(request, origin) {
     }
   }
   if (out.isShopify) out.platform = { key: 'shopify', label: 'Shopify' };
+  // A merchant-chosen test product goes first (fetched directly if it wasn't in the first page of products).
+  if (out.isShopify && testProduct) {
+    const idx = out.products.findIndex((p) => p.handle === testProduct);
+    if (idx > 0) out.products.unshift(out.products.splice(idx, 1)[0]);
+    if (idx === -1) {
+      try {
+        const r = await request.get(`${origin}/products/${encodeURIComponent(testProduct)}.js`, { timeout: 15000 });
+        if (r.ok()) {
+          const p = await r.json();
+          const available = (p.variants || []).filter((v) => v.available !== false);
+          if (available.length)
+            out.products.unshift({ id: p.id, title: p.title, handle: p.handle, allVariants: p.variants.length,
+              variants: available.map((v) => ({ id: v.id, title: v.title, price: (Number(v.price) / 100).toFixed(2) })) });
+          else out.notes.push(`Chosen test product "${testProduct}" is sold out; used another product.`);
+        } else out.notes.push(`Chosen test product "${testProduct}" was not found; used another product.`);
+      } catch {
+        out.notes.push(`Chosen test product "${testProduct}" could not be loaded; used another product.`);
+      }
+    }
+  }
   return out;
 }
 

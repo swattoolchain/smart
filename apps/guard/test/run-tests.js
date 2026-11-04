@@ -12,6 +12,7 @@ const cases = [
   { break: 'search', expect: (r) => r.checks.find((c) => c.id === 'fn.search')?.status === 'fail' },
   { break: 'jserror', expect: (r) => r.checks.find((c) => c.id === 'nf.jserrors')?.status !== 'pass' },
   { break: 'password', expect: (r) => r.verdict === 'locked' },
+  { break: 'cloudflare', expect: (r) => r.verdict === 'blocked' && !r.checks.some((c) => c.status === 'fail') },
   { break: 'password', password: 'letmein', expect: (r) => r.checks.find((c) => c.id === 'fn.atc')?.status === 'pass' },
 ];
 
