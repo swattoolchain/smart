@@ -976,3 +976,4 @@ ui-nav-menu { display: none !important; }
 .act-feed .sev.ok { background: #e8f6ee; color: #1a8a4a; }
 @media (max-width: 1100px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dash-grid { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .kpis { gap: 8px; } .kpi { padding: 12px; } .kpi .k-v { font-size: 22px; } .panel.status { grid-template-columns: 1fr; } .st-score { display: none; } }
+.btn.link.danger { color: var(--fail, #c4262c); }

@@ -18,6 +18,7 @@ import { adminRoutes } from './admin.js';
 import * as shopify from './shopify.js';
 import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
 import { paymentRoutes, razorpayWebhook } from './payments.js';
+import { webAccessRoutes, sessionValid, sessionEpoch, emailTaken } from './web-access.js';
 import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './release.js';
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
@@ -75,6 +76,9 @@ function requireUser(req, res, next) {
   }
   const u = req.session?.uid && q.userById.get(req.session.uid);
   if (!u) return res.status(401).json({ error: 'Please log in' });
+  // Signed out everywhere, or the Shopify app was uninstalled: this browser session no longer counts.
+  const v = sessionValid(req, u.id);
+  if (!v.ok) { req.session = null; return res.status(401).json({ error: v.error || 'Please log in' }); }
   req.user = u;
   next();
 }
@@ -115,7 +119,7 @@ app.post('/api/scan', async (req, res) => {
 
 /** The signed-in user: a login cookie on the website, or a Shopify session token inside Shopify admin. */
 function currentUserId(req) {
-  if (req.session?.uid) return req.session.uid;
+  if (req.session?.uid) return sessionValid(req, req.session.uid).ok ? req.session.uid : null;
   const auth = req.get('authorization') || '';
   if (/^Bearer\s+ey/i.test(auth) && shopify.shopifyEnabled()) {
     try {
@@ -208,7 +212,7 @@ app.post('/api/auth/signup', async (req, res) => {
   if (!isEmail(email)) return res.status(400).json({ error: 'Enter a valid email' });
   if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: 'Use a password of at least 8 characters' });
   const e = email.toLowerCase();
-  if (q.userByEmail.get(e)) return res.status(409).json({ error: 'An account with this email already exists. Log in instead.' });
+  if (q.userByEmail.get(e) || emailTaken(e)) return res.status(409).json({ error: 'An account with this email already exists. Log in instead.' });
   // Founder accounts get console access by email, so they are created on the server (scripts/create-user.js), never by signing up.
   if (ADMINS.has(e)) return res.status(403).json({ error: 'This email can’t be used to sign up here.' });
   const hash = await bcrypt.hash(password, 10);
@@ -248,8 +252,12 @@ app.post('/api/auth/login', async (req, res) => {
     loginAttempts.set(key, a);
     return res.status(401).json({ error: 'Email or password is incorrect' });
   }
+  // Accounts created by a Shopify install have no password, and sign in from Shopify or with a link.
+  const v = sessionValid({ session: { ep: sessionEpoch(u.id) } }, u.id);
+  if (!v.ok) return res.status(401).json({ error: v.error || 'Email or password is incorrect' });
   loginAttempts.delete(key);
   req.session.uid = u.id;
+  req.session.ep = sessionEpoch(u.id);
   res.json({ ok: true });
 });
 
@@ -803,6 +811,7 @@ const appHtml = fs.readFileSync(path.join(config.publicDir, 'app.html'), 'utf8')
 app.get('/app', (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(appHtml));
 shopifyRoutes(app, { requireUser, appHtml });
 paymentRoutes(app, { requireUser });
+webAccessRoutes(app, { requireUser, isEmail, admins: ADMINS });
 app.get('/privacy', old('privacy.html', { path: '/privacy' }));
 app.get('/terms', old('terms.html', { path: '/terms' }));
 app.get('/bot', old('bot.html', { path: '/bot' }));

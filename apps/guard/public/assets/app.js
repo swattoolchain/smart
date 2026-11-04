@@ -178,8 +178,9 @@
   const icon = (k, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
 
   // ---------- Auth ----------
-  function authView(mode) {
+  function authView(mode, notice) {
     clearTimeout(S.timer);
+    if (mode === 'link') return linkView(notice);
     document.body.className = 'app';
     const point = (t, d) => `<li><span class="ab-check">${icon('check', 14)}</span><span><b>${t}</b>${d}</span></li>`;
     document.body.innerHTML = `<div class="auth">
@@ -199,11 +200,12 @@
           <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required></div>
           <div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${mode === 'signup' ? 'new-password' : 'current-password'}" minlength="8" required>${mode === 'signup' ? '<p class="hint">At least 8 characters</p>' : ''}</div>
           <button class="btn block" type="submit">${mode === 'signup' ? 'Create account' : 'Log in'}</button>
-          <p class="error-msg" id="auth-err" role="alert"></p>
+          <p class="error-msg" id="auth-err" role="alert">${esc(notice || '')}</p>
         </form>
+        ${mode === 'signup' ? '' : '<p class="switch-mode"><button type="button" data-m="link">Email me a sign-in link instead</button></p>'}
         <p class="switch-mode">${mode === 'signup' ? 'Already have an account? <button type="button" data-m="login">Log in</button>' : 'New to Tharam? <button type="button" data-m="signup">Create an account</button>'}</p>
       </div></main></div>`;
-    $('[data-m]').onclick = (e) => authView(e.target.dataset.m);
+    $$('[data-m]').forEach((b) => (b.onclick = (e) => authView(e.target.dataset.m)));
     $('#auth').onsubmit = async (e) => {
       e.preventDefault();
       const fd = Object.fromEntries(new FormData(e.target));
@@ -211,6 +213,34 @@
       try {
         await api(mode === 'signup' ? '/api/auth/signup' : '/api/auth/login', { method: 'POST', body: fd });
         boot();
+      } catch (ex) { $('#auth-err').textContent = ex.message; done(); }
+    };
+    $('#email').focus();
+  }
+
+  // Sign in with an emailed link: for stores that installed from Shopify, or anyone who prefers it.
+  function linkView(notice) {
+    authView('login');
+    const card = $('.auth-card');
+    card.innerHTML = `<h1>Email me a sign-in link</h1>
+      <p class="sub">We'll email a link that signs you in. It works once, for 30 minutes.</p>
+      <form id="lnk" novalidate>
+        <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required></div>
+        <button class="btn block" type="submit">Send the link</button>
+        <p class="error-msg" id="auth-err" role="alert">${esc(notice || '')}</p>
+      </form>
+      <p class="hint" style="margin-top:14px">Installed Tharam from Shopify? Open it from your Shopify admin, or use the email you added there under Account.</p>
+      <p class="switch-mode"><button type="button" data-m="login">Log in with a password</button></p>`;
+    $('[data-m]', card).onclick = () => authView('login');
+    $('#lnk').onsubmit = async (e) => {
+      e.preventDefault();
+      const email = new FormData(e.target).get('email');
+      const done = busy(e.target.querySelector('button'), 'Sending');
+      try {
+        await api('/api/auth/link', { method: 'POST', body: { email } });
+        card.innerHTML = `<h1>Check your email</h1><p class="sub">If <b>${esc(email)}</b> has a Tharam account, a sign-in link is on its way. It works once, for 30 minutes.</p>
+          <p class="switch-mode"><button type="button" data-m="link">Send another link</button> · <button type="button" data-m="login">Log in with a password</button></p>`;
+        $$('[data-m]', card).forEach((b) => (b.onclick = () => authView(b.dataset.m)));
       } catch (ex) { $('#auth-err').textContent = ex.message; done(); }
     };
     $('#email').focus();
@@ -314,7 +344,7 @@
       ${item(`${base}/settings`, 'settings', 'Store settings', at('settings'))}` : ''}
       <div class="rail-label">Workspace</div>
       ${item('#/stores', 'stores', 'All stores', active.page === 'stores')}
-      ${item('#/add', 'add', 'Add a store', active.page === 'add')}
+      ${S.license?.shopify ? '' : item('#/add', 'add', 'Add a store', active.page === 'add')}
       ${item('#/guide', 'book', 'How to use Tharam', active.page === 'guide')}
       ${S.admin ? item('#/admin', 'founder', 'Founder console', active.page === 'admin') : ''}`;
     const slot = $('#switch-slot');
@@ -329,7 +359,7 @@
         <div class="pop" id="sw-pop" role="listbox" hidden>
           <div class="pop-label">Your stores</div>
           ${S.stores.map((s) => `<a href="#/s/${s.id}" role="option" aria-selected="${s.id === cur.id}"><span class="dot ${esc(storeStatus(s).key)}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name || host(s.url))}</span><span class="opt-sub">${esc(storeStatus(s).label)}</span></a>`).join('')}
-          <hr><a href="#/stores">${icon('stores', 16)}All stores</a><a href="#/add">${icon('add', 16)}Add a store</a>
+          <hr><a href="#/stores">${icon('stores', 16)}All stores</a>${S.license?.shopify ? '' : `<a href="#/add">${icon('add', 16)}Add a store</a>`}
         </div></div>`;
       const sw = $('#sw-btn');
       sw.onclick = (e) => { e.stopPropagation(); const p = $('#sw-pop'); const open = p.hidden; closePops(); p.hidden = !open; sw.setAttribute('aria-expanded', String(open)); };
@@ -432,7 +462,7 @@
       <div class="up-actions"><a class="btn" href="#/account/billing">See plans</a></div></section>`;
   }
   const storesFull = () => !!S.license && (!S.license.usable || S.license.storesUsed >= S.license.maxStores);
-  const addStoreBtn = () => storesFull()
+  const addStoreBtn = () => S.license?.shopify ? '' : storesFull()
     ? `<a class="btn secondary" href="#/account/billing" title="${S.license.usable ? 'All stores on your plan are in use' : 'Your plan is not active'}">${icon('lock', 16)}Add a store</a>`
     : `<a class="btn" href="#/add">${icon('add', 16)}Add a store</a>`;
   function planBanner() {
@@ -1869,6 +1899,33 @@
     if (d.stores.some((s) => s.active_run_id)) poll(5000);
   };
 
+  // Browser access for a store that installed from Shopify. Optional: everything also works inside Shopify.
+  async function webAccessPanel(el) {
+    const d = await api('/api/account/web-access');
+    const draw = (sent) => {
+      el.innerHTML = `<div class="form-section"><div><h3>Use Tharam in a browser</h3><p class="explain">Everything works here in Shopify. If you'd also like Tharam in a browser, to share reports with your developer or check from your phone, add your email. You'll sign in at tharam.store with a link we email you; there's no password.</p></div>
+        <div class="controls">${d.email && !sent ? `<div class="field"><label>Signs in with</label><p style="margin:0"><b>${esc(d.email)}</b></p><p class="hint">Sign in at <a href="/app" target="_blank" rel="noopener">tharam.store/app</a> and choose "Email me a sign-in link".</p></div>
+          <div class="inline-row"><button type="button" class="btn secondary" id="wa-change">Change email</button><button type="button" class="btn link danger" id="wa-off">Turn off browser access</button></div>`
+        : sent ? `<div class="notice"><p><b>Check ${esc(sent)}.</b> We sent a link to confirm it. Open it within 30 minutes to finish; until then nothing changes.</p></div><div><button type="button" class="btn link" id="wa-change">Use a different email</button></div>`
+        : `<form id="wa-form" class="inline-row" novalidate><input name="email" type="email" placeholder="you@yourstore.com" aria-label="Email for browser sign-in" required><button class="btn" type="submit">Send confirmation link</button></form>`}
+          <p class="error-msg" id="wa-err" role="alert"></p></div></div>`;
+      $('#wa-change', el)?.addEventListener('click', () => { d.email = null; draw(); });
+      $('#wa-off', el)?.addEventListener('click', async (e) => {
+        const done = busy(e.currentTarget, 'Turning off');
+        try { await api('/api/account/web-access', { method: 'DELETE' }); d.email = null; toast('Browser access is off. Any browser that was signed in has been signed out.'); draw(); }
+        catch (ex) { done(); $('#wa-err', el).textContent = ex.message; }
+      });
+      $('#wa-form', el)?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = new FormData(e.currentTarget).get('email');
+        const done = busy(e.currentTarget.querySelector('button'), 'Sending');
+        try { const r = await api('/api/account/web-access', { method: 'POST', body: { email } }); draw(r.sentTo); }
+        catch (ex) { done(); $('#wa-err', el).textContent = ex.message; }
+      });
+    };
+    draw();
+  }
+
   PAGES.account = async (ctx) => {
     const tab = ['password', 'billing'].includes(ctx.r.a) ? ctx.r.a : null;
     const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing']] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password']], tab);
@@ -1890,9 +1947,11 @@
     ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="prof">
       <div class="form-section"><div><h3>Profile</h3><p class="explain">Your name appears in emails from us.</p></div>
         <div class="controls"><div class="field"><label for="pn">Name</label><input id="pn" name="name" value="${esc(S.me.name || '')}" autocomplete="name"></div>
-        <div class="field"><label for="pe">Email</label><input id="pe" value="${esc(S.me.email)}" readonly><p class="hint">To change your login email, write to hello@tharam.store.</p></div></div></div>
+        <div class="field"><label for="pe">Email</label><input id="pe" value="${esc(S.me.email)}" readonly><p class="hint">${S.license?.shopify ? 'Your account belongs to this Shopify store.' : 'To change your login email, write to hello@tharam.store.'}</p></div></div></div>
       <div class="form-section"><div><h3>Plan</h3><p class="explain">What your plan includes, when it renews, and your payments.</p></div>
-        <div class="controls"><div><span class="pill ${S.license?.usable ? 'healthy' : 'critical'}">${esc(S.license?.plan.name || '')}</span></div><p style="margin:0"><a href="#/account/billing">Plan and billing</a></p></div></div></form></div>`;
+        <div class="controls"><div><span class="pill ${S.license?.usable ? 'healthy' : 'critical'}">${esc(S.license?.plan.name || '')}</span></div><p style="margin:0"><a href="#/account/billing">Plan and billing</a></p></div></div></form>
+      ${S.license?.shopify ? '<section class="settings-card" id="webacc"></section>' : ''}</div>`;
+    if (S.license?.shopify) webAccessPanel($('#webacc'));
     const form = $('#prof');
     const mark = savebar($('.main-inner', ctx.main), {
       onSave: async () => { await api('/api/account', { method: 'PATCH', body: { name: new FormData(form).get('name') } }); S.me = (await api('/api/me')).user; },
@@ -2410,7 +2469,7 @@
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
         const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
-        location.replace(sec === 'plan' ? '#/account/billing' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
+        location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {
       $('#emb-loading').innerHTML = `<p><b>We couldn’t open Tharam.</b></p><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Try again</button>`;
@@ -2420,13 +2479,24 @@
     shell();
     render();
   }
+  // A sign-in link opened in a tab that already shows Tharam: start over so it is used.
+  window.addEventListener('hashchange', () => { if (!EMB && /^#\/signin\//.test(location.hash)) location.reload(); });
   async function boot() {
     if (EMB) return bootEmbedded();
+    const link = /^#\/signin\/([\w-]{40,60})$/.exec(location.hash);
+    if (link) {
+      history.replaceState(null, '', '/app#/');
+      try {
+        const r = await api('/api/auth/link/verify', { method: 'POST', body: { token: link[1] } });
+        if (r.confirmed) S.flash = 'Your email is confirmed. You can now sign in to Tharam in any browser.';
+      } catch (ex) { return authView('link', ex.message); }
+    }
     try { const r = await api('/api/me'); S.me = r.user; S.admin = r.admin; }
     catch { return authView(location.hash === '#signup' ? 'signup' : 'login'); }
     shell();
     if (location.hash === '#signup') location.replace('#/');
     render();
+    if (S.flash) { toast(S.flash); S.flash = null; }
   }
   boot();
 })();

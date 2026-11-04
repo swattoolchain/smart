@@ -117,10 +117,14 @@ ensureColumn('releases', 'seq', 'INTEGER');
 db.exec(`UPDATE runs SET seq = (SELECT COUNT(*) FROM runs r2 WHERE r2.store_id = runs.store_id AND r2.id <= runs.id AND (r2.trigger IS NULL OR r2.trigger != 'release')) WHERE seq IS NULL AND store_id IS NOT NULL AND (trigger IS NULL OR trigger != 'release');
 UPDATE releases SET seq = (SELECT COUNT(*) FROM releases r2 WHERE r2.store_id = releases.store_id AND r2.id <= releases.id) WHERE seq IS NULL;`);
 ensureColumn('releases', 'trigger', "TEXT NOT NULL DEFAULT 'manual'");
+// Browser access for accounts created by a Shopify install, and "sign out everywhere".
+ensureColumn('users', 'login_email', 'TEXT');
+ensureColumn('users', 'session_epoch', 'INTEGER NOT NULL DEFAULT 0');
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_login_email ON users(login_email) WHERE login_email IS NOT NULL');
 
 export const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
-  userById: db.prepare('SELECT id, email, name, plan, created_at FROM users WHERE id = ?'),
+  userById: db.prepare('SELECT id, email, name, plan, created_at, login_email FROM users WHERE id = ?'),
   insertUser: db.prepare('INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)'),
   storesByUser: db.prepare('SELECT * FROM stores WHERE user_id = ? ORDER BY id'),
   storeById: db.prepare('SELECT * FROM stores WHERE id = ?'),

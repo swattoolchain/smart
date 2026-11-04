@@ -22,6 +22,7 @@ export async function sendMail({ to, subject, text, html }) {
   const t = mailer();
   if (!t || !to) {
     console.log(`[mail skipped] to=${to} subject=${subject}`);
+    if (process.env.NODE_ENV !== 'production' && process.env.MAIL_DEBUG) console.log(text);
     return false;
   }
   await t.sendMail({ from: config.smtp.from, to, subject, text, html });
