@@ -8,7 +8,7 @@ import { db, q } from './db.js';
 import { normalizeStoreUrl, assertPublicTarget, newContext, gotoStore, settleChallenge } from './engine/browser.js';
 import { discover } from './engine/discover.js';
 import { GROUPS, INTERVALS, FULL_INTERVALS, MARKETS, normalizeConfig } from './engine/catalog.js';
-import { startRun, startScheduler, storeConfig, intervals, nextRunIn } from './scheduler.js';
+import { startRun, startScheduler, storeConfig, intervals, nextRunIn, saleActive } from './scheduler.js';
 import { queueDepth, cancelRun } from './queue.js';
 import { liveView } from './live.js';
 import { scorecard, weekBuyability } from './scorecard.js';
@@ -281,7 +281,7 @@ function storeView(s) {
   return {
     ...publicStore(s),
     blocked: blockReason(ent, s.id),
-    config: { disabled: cfg.disabled || [], markets: cfg.markets || [], testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, ...iv },
+    config: { disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
@@ -314,7 +314,8 @@ app.post('/api/stores', requireUser, async (req, res) => {
   if (mine.some((s) => s.url === origin)) return res.status(409).json({ error: 'This store is already in your account.' });
   if (alertEmail && !isEmail(alertEmail)) return res.status(400).json({ error: 'Alert email is not valid' });
   if (slack && !/^https:\/\/hooks\.slack\.com\//.test(slack)) return res.status(400).json({ error: 'Slack webhook must start with https://hooks.slack.com/' });
-  const cfg = normalizeConfig(req.body?.config || {});
+  let cfg;
+  try { cfg = normalizeConfig(req.body?.config || {}); } catch (e) { return res.status(400).json({ error: e.message }); }
   const info = q.insertStore.run(
     req.user.id, origin, String(name || new URL(origin).host).slice(0, 80), password || null,
     alertEmail || req.user.email, slack || null, JSON.stringify(cfg), platform ? String(platform).slice(0, 60) : null, monitoring ? 1 : 0
@@ -349,7 +350,11 @@ app.patch('/api/stores/:id', requireUser, (req, res) => {
     b.monitoring === undefined ? s.monitoring : b.monitoring ? 1 : 0,
     s.id
   );
-  if (b.config) q.updateStoreConfig.run(JSON.stringify(normalizeConfig(b.config, storeConfig(s))), s.id);
+  if (b.config) {
+    let next;
+    try { next = normalizeConfig(b.config, storeConfig(s)); } catch (e) { return res.status(400).json({ error: e.message }); }
+    q.updateStoreConfig.run(JSON.stringify(next), s.id);
+  }
   res.json({ ok: true, store: storeView(q.storeById.get(s.id)) });
 });
 

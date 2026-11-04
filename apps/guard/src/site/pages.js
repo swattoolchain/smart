@@ -381,10 +381,10 @@ export function saleReady() {
     ['Apps added for the sale', 'Countdown timers, popups and upsell apps are the usual cause of a broken Add to cart. We catch script errors and slow apps before the rush.'],
     ['Speed on phones', 'Sale pages get heavy. We measure load time and flag the apps that slow you down.'],
     ['Discount rules in the EU and UK', 'Selling in Europe? A discount must be measured against your lowest price in the last 30 days. We show you products where that doesn’t hold.', true],
-    ['Discount codes at checkout', 'Your sale code applied to a real cart, so you know it works before you email it to 50,000 customers.', true],
+    ['Discount codes that really work', 'Each of your sale codes applied to a real cart, every day: the price drops by the amount you expect, and we tell you if a code needs a minimum order. Before you email it to 50,000 customers.'],
   ];
   const during = [
-    ['Checks as often as every 30 minutes', 'Through the sale weekend, your store is shopped like a customer around the clock.'],
+    ['Sale mode: checks every 30 minutes', 'For your sale week, your store is shopped like a customer every 30 minutes, with a full check of prices and codes every 6 hours, whatever your plan.'],
     ['Alerts in minutes', 'Email and Slack the moment buying breaks, with the reason and how to fix it. One more when it’s fixed.'],
     ['Money at risk, in rupees, dollars or euros', 'How long customers couldn’t buy and what that cost, so you know what to fix first next year.'],
   ];
@@ -395,7 +395,7 @@ export function saleReady() {
   <section class="band white"><div class="wrap split"><div><p class="eyebrow">A simple plan</p><h2 class="h2">Three weeks out, one week out, sale day</h2></div>
     <ol class="steps-list"><li><b>Three weeks before:</b> run a full check. Fix wrong prices, slow apps and anything that breaks buying.</li>
       <li><b>One week before:</b> check your sale theme and banners with Safe to publish, on a phone.</li>
-      <li><b>Sale week:</b> turn checks up to every 30 minutes, and keep your phone handy for alerts.</li></ol></div></section>
+      <li><b>Sale week:</b> we switch on sale mode, checking every 30 minutes, and your phone gets an alert the moment buying breaks.</li></ol></div></section>
   ${faq([['Do you load test my store?', 'No. Shopify handles sale-day traffic for you. What actually breaks on sale day is usually an app, a price, a discount or a new banner, and that’s what we check.'], ['Will your tests place orders?', 'Never. Our checkout test stops before payment and empties the cart.'], ['Can you do this for us?', 'Yes. With the managed service, our team runs the checks, reviews your sale design and watches your store through the sale.']])}
   ${cta('Find out if your store is ready', 'Free check in about two minutes. Nothing to install, no orders placed.')}</main>`;
   return layout({ title: 'Black Friday sale readiness', description: 'Check your store is ready for Black Friday, Cyber Monday and festive sales: prices, sale designs, checkout, apps, speed and discount rules, before and during the sale.', path: '/sale-ready', body });

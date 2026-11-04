@@ -1,3 +1,4 @@
+import { cleanCodes } from './discount.js';
 /**
  * The test suite catalog: every check belongs to one group, and merchants switch groups on or off per store.
  * `run`: 'journeys' groups run on every scheduled journey test; 'full' groups run on the daily full check.
@@ -14,6 +15,8 @@ export const GROUPS = [
     description: 'Picking a different size or colour selects it in the product form.', checks: ['fn.variant'] },
   { key: 'journey.checkout', label: 'Cart and checkout', run: 'journeys', area: 'Shopping journey',
     description: 'The cart lists the item and checkout opens. Stops before payment, then empties the cart.', checks: ['fn.cart', 'fn.checkout'] },
+  { key: 'sale.discount', label: 'Discount codes', run: 'full', area: 'Shopping journey',
+    description: 'Your sale codes applied to a real cart: the price really drops, by the amount you expect. Nothing is bought; the cart is emptied. Add codes under Test suite → Discount codes.', checks: ['fn.discount.'] },
   { key: 'errors.js', label: 'JavaScript errors', run: 'journeys', area: 'Errors and links',
     description: 'Script errors that happen while shopping, usually from apps or custom code.', checks: ['nf.jserrors'] },
   { key: 'speed', label: 'Mobile speed', run: 'full', area: 'Speed',
@@ -80,6 +83,7 @@ export const FULL_INTERVALS = [720, 1440, 10080];
 
 export function normalizeConfig(input = {}, base = {}) {
   const cfg = { ...base };
+  if (input.discountCodes !== undefined) cfg.discountCodes = cleanCodes(input.discountCodes);
   if (Array.isArray(input.disabled)) cfg.disabled = input.disabled.filter((k) => GROUPS.some((g) => g.key === k && !g.locked));
   if (input.testProduct !== undefined) cfg.testProduct = input.testProduct ? String(input.testProduct).slice(0, 200) : null;
   if (input.journeyIntervalMin !== undefined && INTERVALS.includes(Number(input.journeyIntervalMin))) cfg.journeyIntervalMin = Number(input.journeyIntervalMin);

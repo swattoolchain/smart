@@ -64,7 +64,7 @@ export function adminRoutes(app, { requireUser, isAdmin }) {
     const ent = entitlements(u.id);
     res.json({
       user: u, license: { ...ent.license, state: ent.state, mrr: mrrOf(ent.license), price: priceOf(ent.license, ent.plan) }, view: licenseView(u.id),
-      stores: q.storesByUser.all(u.id).map((s) => ({ id: s.id, url: s.url, name: s.name, platform: s.platform, monitoring: s.monitoring, last_status: s.last_status, last_run_at: s.last_run_at, blocked: blockReason(ent, s.id) })),
+      stores: q.storesByUser.all(u.id).map((s) => { let c = {}; try { c = JSON.parse(s.config_json || '{}'); } catch {} return { id: s.id, url: s.url, name: s.name, platform: s.platform, monitoring: s.monitoring, last_status: s.last_status, last_run_at: s.last_run_at, blocked: blockReason(ent, s.id), saleUntil: c.saleUntil && new Date(c.saleUntil + 'T23:59:59Z') >= Date.now() ? c.saleUntil : null }; }),
       payments: db.prepare('SELECT * FROM payments WHERE user_id = ? ORDER BY id DESC').all(u.id),
       audit: db.prepare('SELECT * FROM audit WHERE user_id = ? ORDER BY id DESC LIMIT 200').all(u.id),
     });
@@ -84,6 +84,26 @@ export function adminRoutes(app, { requireUser, isAdmin }) {
     const p = db.prepare('SELECT * FROM payments WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(u.id);
     if (req.body?.sendReceipt !== false) sendReceipt(u, p, l).catch((e) => console.error('receipt failed', e));
     res.json({ ok: true, view: licenseView(u.id), payment: p });
+  });
+
+  // Sale mode for one store: checks every 30 minutes until the end of a chosen day, whatever the plan.
+  app.post('/api/admin/stores/:sid/sale', admin, (req, res) => {
+    const s = q.storeById.get(Number(req.params.sid));
+    if (!s) return res.status(404).json({ error: 'Store not found' });
+    const until = req.body?.until ? String(req.body.until).trim() : null;
+    if (until) {
+      const d = new Date(until + 'T23:59:59Z');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== until) return res.status(400).json({ error: 'Choose a valid end date' });
+      if (d.getTime() < Date.now()) return res.status(400).json({ error: 'The end date has passed' });
+      if (d.getTime() - Date.now() > 31 * 864e5) return res.status(400).json({ error: 'Sale mode can be on for up to 31 days at a time' });
+    }
+    let cfg = {};
+    try { cfg = JSON.parse(s.config_json || '{}'); } catch {}
+    const before = cfg.saleUntil || null;
+    if (until) cfg.saleUntil = until; else delete cfg.saleUntil;
+    q.updateStoreConfig.run(JSON.stringify(cfg), s.id);
+    audit(actor(req), s.user_id, 'store.sale', { store: s.url, before, after: until });
+    res.json({ ok: true, saleUntil: until });
   });
 
   app.post('/api/admin/customers/:uid/note', admin, (req, res) => {

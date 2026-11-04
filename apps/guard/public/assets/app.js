@@ -410,7 +410,8 @@
   const groupAllowed = (g) => { const f = featureOf(g.key); return !f || can(f); };
   const plansFor = (f) => S.catalog?.features?.find((x) => x.key === f)?.plans || 'a higher';
   const minorMoney = (minor, cur) => { try { return new Intl.NumberFormat(cur === 'INR' ? 'en-IN' : 'en-US', { style: 'currency', currency: cur, maximumFractionDigits: minor % 100 ? 2 : 0 }).format(minor / 100); } catch { return `${(minor / 100).toFixed(2)} ${cur}`; } };
-  const dateOnly = (sql) => new Date(sql.replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  // Plan and sale dates are calendar dates (stored as the end of that day, UTC): show that same date everywhere.
+  const dateOnly = (sql) => new Date(sql.replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
   /** A panel that explains a feature isn't in the plan, and how to get it. */
   function upsell(f, title, body) {
     return `<section class="panel upsell"><span class="up-ic">${icon('lock', 20)}</span><div><h2>${esc(title)}</h2><p>${esc(body)}</p>
@@ -441,7 +442,7 @@
   function storeHead(s, title, { actions = '', crumb = '', meta = '' } = {}) {
     const name = esc(s.name || host(s.url));
     return `<div class="page-head"><div><div class="crumbs">${crumb || `<a href="#/s/${s.id}">${name}</a>`}</div><h1>${esc(title)}</h1>${meta ? `<div class="meta">${meta}</div>` : ''}</div>
-      ${actions ? `<div class="actions">${actions}</div>` : ''}</div>${s.blocked ? `<div class="notice warn-n"><p>${icon('lock', 16)} ${esc(s.blocked)} <a href="#/account/billing">See your plan</a></p></div>` : ''}`;
+      ${actions ? `<div class="actions">${actions}</div>` : ''}</div>${s.blocked ? `<div class="notice warn-n"><p>${icon('lock', 16)} ${esc(s.blocked)} <a href="#/account/billing">See your plan</a></p></div>` : s.config?.saleUntil ? `<div class="notice sale-n"><p><b>Sale mode</b> is on until ${esc(dateOnly(s.config.saleUntil + ' 23:59:59'))}: shopping checks every 30 minutes and a full check every 6 hours${s.config.discountCodes?.length ? `, including your ${s.config.discountCodes.length === 1 ? 'discount code' : 'discount codes'}` : ''}.</p></div>` : ''}`;
   }
   const openStore = (s) => `<a class="icon-btn bordered" href="${esc(s.url)}" target="_blank" rel="noopener" data-tip="Open store" aria-label="Open store in a new tab">${icon('external', 17)}</a>`;
   // Every way of starting a test goes through the Run validations page, so nothing starts without a preview.
@@ -457,14 +458,14 @@
   // What a run does, in order. Mirrors src/live.js on the server.
   const PHASES = [
     { key: 'open', label: 'Open your store', sub: 'On a desktop and a phone-sized screen' },
-    { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js'] },
+    { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount'] },
     { key: 'quality', label: 'Measure speed, SEO and accessibility', groups: ['speed', 'seo', 'a11y', 'links', 'policies'], full: true },
     { key: 'regional', label: 'Check the laws where you sell', groups: ['law.de', 'law.cookies', 'access.law', 'law.us'], full: true },
     { key: 'visual', label: 'Compare screenshots with the approved look', groups: ['visual'], full: true },
     { key: 'catalog', label: 'Check every product', groups: ['catalog', 'ai.copy'], full: true },
     { key: 'ai', label: 'AI review of how pages look', groups: ['ai.visual'], full: true },
   ];
-  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1 };
+  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1 };
   const estimate = (keys) => {
     const sec = 8 + keys.reduce((n, k) => n + (EST[k] || 5), 0);
     return sec < 60 ? 'under a minute' : `about ${Math.ceil(sec / 60)} minutes`;
@@ -637,6 +638,7 @@
     const PRESETS = [
       { key: 'quick', title: 'Quick journey', desc: 'Can customers find a product, add it to the cart and reach checkout?', keys: keys(usable.filter((g) => g.run === 'journeys')) },
       { key: 'suite', title: 'Your test suite', desc: 'Everything switched on for scheduled full checks of this store.', keys: suite, tag: 'Recommended' },
+      { key: 'sale', title: 'Sale readiness', desc: 'Before Black Friday or a big sale: buying on a phone, every price, discount codes, speed, app errors and how the store looks.', keys: keys(usable.filter((g) => ['journey.core', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount', 'catalog', 'speed', 'visual', 'law.cookies'].includes(g.key) && (g.key !== 'law.cookies' || inMarket(g, s.config.markets)))) },
       { key: 'all', title: 'Everything', desc: 'Every validation available, including ones switched off in your suite.', keys: keys(usable) },
     ].filter((p, i, all) => p.key !== 'all' || !same(p.keys, all[1].keys));
     let sel = [...suite];
@@ -786,10 +788,10 @@
   STORE_PAGES.suite = async (ctx, s) => {
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (!ctx.alive()) return;
-    const tab = ctx.r.a === 'product' ? 'product' : null;
+    const tab = ['product', 'codes'].includes(ctx.r.a) ? ctx.r.a : null;
     const base = `#/s/${s.id}/suite`;
     const shopify = !s.platform || /shopify/i.test(s.platform);
-    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product']], tab);
+    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes']], tab);
     if (!tab) {
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id })}</form></div>`;
       const form = $('#suite');
@@ -798,6 +800,31 @@
         onDiscard: () => render(),
       });
       form.addEventListener('change', (e) => { e.target.closest('.check-row')?.classList.toggle('off', !e.target.checked); mark(); });
+      return;
+    }
+    if (tab === 'codes') {
+      const codes = s.config.discountCodes.length ? s.config.discountCodes : [{ code: '', percent: null }];
+      const row = (c, i) => `<div class="code-row"><div class="field"><label for="dc${i}">Code</label><input id="dc${i}" name="code" value="${esc(c.code)}" placeholder="e.g. BLACKFRIDAY20" maxlength="40" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="dp${i}">Expected discount <span class="muted" style="font-weight:400">(optional)</span></label><div class="suffix"><input id="dp${i}" name="percent" type="number" min="1" max="99" value="${c.percent ?? ''}" placeholder="e.g. 20"><span>% off</span></div></div>
+        <button type="button" class="icon-btn" data-rm aria-label="Remove code" data-tip="Remove">${icon('trash', 16)}</button></div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
+        <div class="form-section" style="border-top:0;padding-top:0"><div><h3>Sale and discount codes</h3><p class="explain">Each full check puts a product in a fresh cart, applies every code, and checks the price really drops, by the amount you expect. Nothing is bought, and the cart is emptied. Add your Black Friday code before you email it to customers.</p></div>
+          <div class="controls"><form id="codes">${codes.map(row).join('')}</form>
+            <div class="inline-row"><button type="button" class="btn secondary small" id="addc">${icon('add', 15)}Add a code</button><span class="muted" style="font-size:12.5px">Up to 5 codes.</span></div>
+            <p class="error-msg" id="dc-err" role="alert"></p>
+            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Discount codes are checked on Shopify stores for now.</p>' : ''}</div></div></div>`;
+      const form = $('#codes');
+      const mark = savebar($('.main-inner', ctx.main), {
+        onSave: async () => {
+          const list = $$('.code-row', form).map((r) => ({ code: r.querySelector('[name=code]').value.trim(), percent: r.querySelector('[name=percent]').value })).filter((x) => x.code);
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { discountCodes: list } } }); $('#dc-err').textContent = ''; } catch (ex) { $('#dc-err').textContent = ex.message; throw ex; }
+          await loadStores();
+        },
+        onDiscard: () => render(),
+      });
+      form.addEventListener('input', mark);
+      form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.code-row', form).length > 1) b.closest('.code-row').remove(); else b.closest('.code-row').querySelectorAll('input').forEach((i) => (i.value = '')); mark(); });
+      $('#addc').onclick = () => { if ($$('.code-row', form).length >= 5) return toast('Up to 5 codes', 'error'); form.insertAdjacentHTML('beforeend', row({ code: '', percent: null }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
       return;
     }
     ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
@@ -1651,13 +1678,14 @@
   const METHODS = { bank: 'Bank transfer', upi: 'UPI', card: 'Card', razorpay: 'Razorpay', stripe: 'Stripe', shopify: 'Shopify billing', cash: 'Cash', other: 'Other' };
   const CURS = ['USD', 'EUR', 'INR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'];
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(v) === String(cur ?? '') ? 'selected' : ''}>${esc(l)}</option>`;
-  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed' };
+  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed', 'store.sale': 'Sale mode' };
   function auditText(a) {
     const d = a.detail_json ? JSON.parse(a.detail_json) : {};
     if (a.action === 'note') return esc(d.text);
     if (a.action === 'payment.record') return `${minorMoney(d.amount, d.currency)} by ${esc(METHODS[d.method] || d.method)}${d.reference ? ` (${esc(d.reference)})` : ''} · ${d.periods} ${d.period}${d.periods > 1 ? 's' : ''} · expiry ${esc(d.expires_before || 'none')} → ${esc(d.expires_after)}`;
     if (a.action === 'license.update') return Object.entries(d).map(([k, v]) => `${esc(k.replace('_', ' '))}: ${esc(v.before ?? '–')} → <b>${esc(v.after ?? '–')}</b>`).join(' · ');
     if (a.action === 'license.create') return `${esc(d.plan)}, ${d.seats} store${d.seats === 1 ? '' : 's'}${d.expires_at ? `, until ${esc(d.expires_at)}` : ''}`;
+    if (a.action === 'store.sale') return `${esc(d.store)}: ${d.after ? `on until ${esc(d.after)}` : 'off'}`;
     if (a.action === 'setting.change') return `${esc(d.key)}: ${esc(d.before)} → <b>${esc(d.after)}</b>`;
     if (a.action.startsWith('plan.')) return esc(d.key);
     return '';
@@ -1746,7 +1774,8 @@
           <div class="field"><label>Grace days</label><input name="grace_days" type="number" min="0" max="90" value="${L.grace_days ?? ''}" placeholder="Default"></div></div>
           <div class="field"><label>Private notes</label><textarea name="notes" rows="2">${esc(L.notes || '')}</textarea></div>
           <p class="error-msg" id="lic-err" role="alert"></p><div><button class="btn" type="submit">Save licence</button></div></div></div></form>
-      <section class="panel"><h2>Stores</h2>${d.stores.length ? `<div class="table-wrap flat"><table class="data"><thead><tr><th>Store</th><th>Status</th><th>Last test</th><th>Plan</th></tr></thead><tbody>${d.stores.map((x) => `<tr><td><span class="cell-main">${esc(x.name || host(x.url))}</span><div class="cell-sub">${esc(x.url)}${x.platform ? ` · ${esc(x.platform)}` : ''}</div></td><td>${esc(VERDICT[x.last_status] || 'Not tested')}${x.monitoring ? '' : ' · paused'}</td><td>${x.last_run_at ? time(x.last_run_at) : '–'}</td><td class="cell-sub">${x.blocked ? `<span class="t-fail">${esc(x.blocked)}</span>` : 'Covered'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No stores yet.</p>'}</section>
+      <section class="panel"><h2>Stores</h2>${d.stores.length ? `<div class="table-wrap flat"><table class="data"><thead><tr><th>Store</th><th>Status</th><th>Last test</th><th>Plan</th><th>Sale mode</th></tr></thead><tbody>${d.stores.map((x) => `<tr><td><span class="cell-main">${esc(x.name || host(x.url))}</span><div class="cell-sub">${esc(x.url)}${x.platform ? ` · ${esc(x.platform)}` : ''}</div></td><td>${esc(VERDICT[x.last_status] || 'Not tested')}${x.monitoring ? '' : ' · paused'}</td><td>${x.last_run_at ? time(x.last_run_at) : '–'}</td><td class="cell-sub">${x.blocked ? `<span class="t-fail">${esc(x.blocked)}</span>` : 'Covered'}</td>
+        <td>${x.saleUntil ? `<span class="pill running">Until ${esc(dateOnly(x.saleUntil + ' 23:59:59'))}</span> ` : ''}<button type="button" class="btn small secondary" data-sale="${x.id}" data-until="${esc(x.saleUntil || '')}">${x.saleUntil ? 'Change' : 'Turn on'}</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No stores yet.</p>'}</section>
       <section class="panel"><h2>Payments</h2>${d.payments.length ? `<div class="table-wrap flat"><table class="data"><thead><tr><th>Recorded</th><th class="num">Amount</th><th>Method</th><th>Covers</th><th>By</th></tr></thead><tbody>${d.payments.map((p) => `<tr><td>${esc(dateOnly(p.created_at))}</td><td class="num"><b>${minorMoney(p.amount, p.currency)}</b></td><td>${esc(METHODS[p.method] || p.method)}${p.reference ? `<div class="cell-sub">${esc(p.reference)}</div>` : ''}</td><td class="cell-sub">${esc(dateOnly(p.covers_from))} → ${esc(dateOnly(p.covers_to))}</td><td class="cell-sub">${esc(p.recorded_by)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No payments yet.</p>'}</section>
       <section class="panel"><div class="panel-head"><h2>History</h2><button class="btn small secondary" id="note">Add note</button></div>
         <ul class="list">${d.audit.map((a) => `<li><div class="row"><span class="sev ${a.action === 'payment.record' ? 'ok' : a.action === 'note' ? '' : 'warn'}">${esc(ACTION[a.action] || a.action)}</span><span><span class="d">${auditText(a)}</span><span class="d muted">${esc(a.actor)}</span></span><span class="r">${time(a.created_at)}</span></div></li>`).join('')}</ul></section></div>`;
@@ -1767,6 +1796,15 @@
     };
     $('#pause')?.addEventListener('click', () => setStatus('suspended', `Pause ${d.user.email}?`, 'Their checks and alerts stop at once. They can still log in and see reports.', 'Pause account'));
     $('#resume')?.addEventListener('click', () => setStatus('active', 'Turn this account back on?', L.expires_at && new Date(L.expires_at.replace(' ', 'T') + 'Z') < Date.now() ? 'Their paid-until date has passed, so they will still show as expired. Record a payment or set a new date too.' : 'Checks and alerts start again.', 'Turn back on'));
+    $$('[data-sale]', ctx.main).forEach((b) => (b.onclick = async () => {
+      const cur = b.dataset.until;
+      const ok = await formDialog({ title: 'Sale mode', wide: false, submit: 'Save',
+        body: `<p>Shopping checks every 30 minutes and a full check every 6 hours, whatever the plan, until the end of the chosen day. Up to 31 days.</p>
+          <div class="field"><label for="su">Until</label><input id="su" name="until" type="date" value="${esc(cur)}" min="${new Date().toISOString().slice(0, 10)}"></div>
+          ${cur ? '<label class="check-line"><input type="checkbox" name="off"><span>Turn sale mode off now</span></label>' : ''}`,
+        onSubmit: (f) => api(`/api/admin/stores/${b.dataset.sale}/sale`, { method: 'POST', body: { until: f.off?.checked ? null : f.until.value || null } }) });
+      if (ok) { toast(ok.saleUntil ? `Sale mode on until ${dateOnly(ok.saleUntil + ' 23:59:59')}` : 'Sale mode off'); render({ silent: true }); }
+    }));
     $('#note').onclick = async () => {
       if (await formDialog({ title: 'Add a note', body: '<div class="field"><label for="nt">Note</label><textarea id="nt" name="text" rows="4" maxlength="1000" required></textarea></div>', submit: 'Add note', onSubmit: (f) => api(`/api/admin/customers/${uid}/note`, { method: 'POST', body: { text: f.text.value } }) })) render({ silent: true });
     };

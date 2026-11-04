@@ -21,14 +21,21 @@ export function storeConfig(store) {
   }
 }
 
+/** Sale mode is on until the end of cfg.saleUntil (a YYYY-MM-DD date, UTC). */
+export const saleActive = (cfg) => !!cfg.saleUntil && /^\d{4}-\d{2}-\d{2}$/.test(cfg.saleUntil) && Date.now() <= new Date(cfg.saleUntil + 'T23:59:59Z').getTime();
+
 export function intervals(store) {
   const cfg = storeConfig(store);
   // The plan sets how often a store may be checked; a saved setting can't go below it (e.g. after a downgrade).
   const lim = entitlements(store.user_id).limits;
-  return {
+  const iv = {
     journeyIntervalMin: Math.max(cfg.journeyIntervalMin || config.journeyIntervalMin, lim.journeyMinInterval),
     fullIntervalMin: Math.max(cfg.fullIntervalMin || config.fullScanIntervalMin, lim.fullMinInterval),
   };
+  // Sale mode (switched on by Tharam for a sale period): shopping checks every 30 minutes and a full check
+  // every 6 hours, whatever the plan, until the end of the chosen day.
+  if (saleActive(cfg)) return { journeyIntervalMin: Math.min(iv.journeyIntervalMin, 30), fullIntervalMin: Math.min(iv.fullIntervalMin, 360), sale: true };
+  return iv;
 }
 
 /** When the next scheduled test will run, in minutes from now (null if monitoring is paused). */

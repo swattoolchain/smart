@@ -37,10 +37,22 @@ function cartFor(req, res) {
   }
   return carts.get(id);
 }
+// Discount codes, like Shopify's: BF20 takes 20% off; MIN5000 needs a cart of ₹5,000 or more; anything else is unknown.
+// MOCK_BREAK=discount makes BF20 stop working (e.g. it expired or a discount app broke it).
+const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
 function cartJson(items) {
+  const original = items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0);
+  const code = items.discount;
+  const rule = code && !(B.has('discount') && code === 'BF20') ? CODES[code] : null;
+  const applicable = !!rule && original >= rule.min;
+  const off = applicable ? Math.round((original * rule.pct) / 100) : 0;
   return {
     item_count: items.reduce((s, i) => s + i.quantity, 0),
-    total_price: items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0),
+    original_total_price: original,
+    total_discount: off,
+    total_price: original - off,
+    discount_codes: code ? [{ code, applicable }] : [],
+    cart_level_discount_applications: off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : [],
     currency: 'INR',
     items,
   };
@@ -109,6 +121,9 @@ const server = http.createServer(async (req, res) => {
     const hits = B.has('search') ? [] : products.filter((x) => x.title.toLowerCase().includes(qq));
     return send(res, 200, layout('Search', `<h1>Search</h1>${hits.map(productCard).join('') || '<p>No results</p>'}`));
   }
+  // Shopify's product JSON (prices in cents), used by themes and by our checks.
+  { const m = /^\/products\/([\w-]+)\.js$/.exec(p); if (m) { const pr = products.find((x) => x.handle === m[1]); if (!pr) return send(res, 404, { status: 404 }, 'application/json');
+    return send(res, 200, { id: pr.id, title: pr.title, handle: pr.handle, variants: pr.variants.map((v) => ({ id: v.id, title: v.title, available: v.available, price: Math.round(Number(v.price) * 100) })) }, 'application/json'); } }
   if (p.startsWith('/products/')) {
     const prod = products.find((x) => x.handle === p.split('/')[2]);
     if (!prod) return send(res, 404, layout('Not found', '<h1>404</h1>'));
@@ -141,8 +156,20 @@ const server = http.createServer(async (req, res) => {
     }
     return send(res, 200, { items }, 'application/json');
   }
+  if (p === '/cart/update.js' && req.method === 'POST') {
+    const items = cartFor(req, res);
+    const body = JSON.parse((await readBody(req)) || '{}');
+    if (body.discount !== undefined) items.discount = String(body.discount || '').toUpperCase() || undefined;
+    return send(res, 200, cartJson(items), 'application/json');
+  }
+  if (p.startsWith('/discount/')) {
+    cartFor(req, res).discount = decodeURIComponent(p.slice(10)).toUpperCase();
+    res.writeHead(302, { Location: u.searchParams.get('redirect') || '/' });
+    return res.end();
+  }
   if (p === '/cart/clear.js') {
     cartFor(req, res).length = 0;
+    delete cartFor(req, res).discount;
     return send(res, 200, cartJson([]), 'application/json');
   }
   if (p === '/cart') {
