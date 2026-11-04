@@ -119,6 +119,17 @@
     founder: '<path d="M12 3.5 14.4 9l5.6.5-4.3 3.8 1.3 5.7L12 16l-5 3 1.3-5.7L4 9.5 9.6 9z"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     chevron: '<path d="m8 10 4 4 4-4"/>',
+    right: '<path d="m10 7 5 5-5 5"/>',
+    printer: '<path d="M7 9V4h10v5"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M7 14h10v6H7z"/>',
+    external: '<path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+    image: '<rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 17 5-5 4 4 2.5-2.5L20 18"/>',
+    help: '<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.5a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.1-2.4 3.6"/><path d="M12 17h.01"/>',
+    book: '<path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h9"/>',
+    collapse: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9 4.5v15"/><path d="m15 10-2 2 2 2"/>',
+    sparkle: '<path d="M12 3.5 13.8 9 19.5 11l-5.7 2-1.8 5.5-1.8-5.5L4.5 11l5.7-2z"/>',
+    arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    logout: '<path d="M15 4h3a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-3"/><path d="M10 16l-4-4 4-4M6 12h10"/>',
+    user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/>',
     play: '<path d="M8 5.8v12.4a.6.6 0 0 0 .9.5l9.8-6.2a.6.6 0 0 0 0-1l-9.8-6.2a.6.6 0 0 0-.9.5z"/>',
     stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
     shield: '<path d="M12 3.5 5 6v5.5c0 4.4 3 7.8 7 9 4-1.2 7-4.6 7-9V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
@@ -162,31 +173,54 @@
     const parts = src.split(/[\s@._-]+/).filter(Boolean);
     return ((parts[0]?.[0] || '?') + (u.name && parts[1] ? parts[1][0] : '')).toUpperCase();
   }
+  function railPref() { try { return localStorage.getItem('tg.rail') === 'collapsed'; } catch { return false; } }
   function shell() {
-    document.body.className = 'app';
+    document.body.className = 'app' + (railPref() ? ' rail-collapsed' : '');
     document.body.innerHTML = `
-      <header class="app-top">
-        <button class="icon-btn menu-btn" id="menu-btn" aria-label="Open navigation" aria-expanded="false">${icon('menu', 20)}</button>
-        <a class="brand" href="#/" aria-label="Tharam home"><img src="/assets/brand/tharam-logo.svg" alt="Tharam" width="110" height="32"></a>
-        <span class="spacer"></span>
-        <a class="top-link" href="/checks" target="_blank" rel="noopener">What we check</a>
-        <a class="top-link" href="mailto:hello@tharam.store">Help</a>
-        <div class="menu">
-          <button class="avatar" id="user-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">${esc(initials(S.me))}</button>
-          <div class="pop right" id="user-pop" role="menu" hidden>
-            <div class="pop-head"><b>${esc(S.me.name || 'Your account')}</b><span>${esc(S.me.email)}</span></div>
-            <a href="#/account" role="menuitem">Account settings</a>
-            ${S.admin ? '<a href="#/admin" role="menuitem">Founder view</a>' : ''}
-            <hr><button type="button" id="logout" role="menuitem">Log out</button>
+      <div class="layout">
+        <aside class="rail" id="rail" aria-label="Main navigation">
+          <div class="rail-brand"><a href="#/" aria-label="Tharam home"><img class="logo-full" src="/assets/brand/tharam-logo-dark.svg" alt="Tharam" width="98" height="28"><img class="logo-mark" src="/assets/brand/tharam-mark-dark.svg" alt="Tharam" width="30" height="30"></a></div>
+          <nav class="rail-nav" id="side"></nav>
+          <div class="rail-foot">
+            <div class="plan">Free beta</div>
+            <button type="button" class="rail-item rail-toggle" id="rail-toggle" data-label="Expand menu" aria-label="Collapse menu">${icon('collapse')}<span class="label">Collapse</span></button>
           </div>
+        </aside>
+        <div class="scrim" id="scrim"></div>
+        <div class="workspace">
+          <header class="topbar">
+            <button class="icon-btn menu-btn" id="menu-btn" aria-label="Open navigation" aria-expanded="false">${icon('menu', 20)}</button>
+            <div id="switch-slot" class="switch-slot"></div>
+            <span class="spacer"></span>
+            <a class="icon-btn hide-sm" href="/checks" target="_blank" rel="noopener" data-tip="What we check" aria-label="What we check">${icon('book', 19)}</a>
+            <a class="icon-btn hide-sm tip-left" href="mailto:hello@tharam.store" data-tip="Help and support" aria-label="Help and support">${icon('help', 19)}</a>
+            <span class="divider hide-sm"></span>
+            <div class="menu">
+              <button class="avatar" id="user-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">${esc(initials(S.me))}</button>
+              <div class="pop right" id="user-pop" role="menu" hidden>
+                <div class="pop-head"><b>${esc(S.me.name || 'Your account')}</b><span>${esc(S.me.email)}</span></div>
+                <a href="#/account" role="menuitem">${icon('user', 16)}Account settings</a>
+                ${S.admin ? `<a href="#/admin" role="menuitem">${icon('founder', 16)}Founder view</a>` : ''}
+                <hr><button type="button" id="logout" role="menuitem">${icon('logout', 16)}Log out</button>
+              </div>
+            </div>
+          </header>
+          <main class="main" id="main" tabindex="-1"></main>
         </div>
-      </header>
-      <div class="shell"><aside class="side" id="side" aria-label="Navigation"></aside><div class="scrim" id="scrim"></div><main class="main" id="main" tabindex="-1"></main></div>`;
+      </div>`;
     const userBtn = $('#user-btn'), userPop = $('#user-pop');
     userBtn.onclick = (e) => { e.stopPropagation(); const open = userPop.hidden; closePops(); userPop.hidden = !open; userBtn.setAttribute('aria-expanded', String(open)); };
     $('#logout').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); S.me = null; location.hash = ''; authView('login'); };
     $('#menu-btn').onclick = () => { const open = !document.body.classList.contains('nav-open'); document.body.classList.toggle('nav-open', open); $('#menu-btn').setAttribute('aria-expanded', String(open)); };
     $('#scrim').onclick = () => document.body.classList.remove('nav-open');
+    const tg = $('#rail-toggle');
+    const syncToggle = () => { const c = document.body.classList.contains('rail-collapsed'); tg.setAttribute('aria-label', c ? 'Expand menu' : 'Collapse menu'); };
+    syncToggle();
+    tg.onclick = () => {
+      const c = document.body.classList.toggle('rail-collapsed');
+      try { localStorage.setItem('tg.rail', c ? 'collapsed' : 'expanded'); } catch {}
+      syncToggle();
+    };
   }
   function closePops() {
     $$('.pop').forEach((p) => (p.hidden = true));
@@ -207,41 +241,43 @@
 
   function sidebar(active) {
     const cur = S.stores.find((s) => s.id === S.storeId);
-    const st = cur && storeStatus(cur);
-    const link = (href, ic, label, on, extra = '') => `<a href="${href}" ${on ? 'aria-current="page"' : ''}>${icon(ic)}<span>${label}</span>${extra}</a>`;
-    const m = active.module;
-    $('#side').innerHTML = `
-      ${cur ? `<div class="switcher">
-        <button type="button" id="sw-btn" aria-haspopup="listbox" aria-expanded="false">
+    const item = (href, ic, label, on, extra = '') => `<a class="rail-item" href="${href}" data-label="${esc(label)}" ${on ? 'aria-current="page"' : ''}>${icon(ic)}<span class="label">${esc(label)}</span>${extra}</a>`;
+    const m = active.module === 'run' ? 'overview' : active.module;
+    const at = (k) => active.store && m === k;
+    const base = cur ? `#/s/${cur.id}` : '';
+    $('#side').innerHTML = `${cur ? `
+      <div class="rail-label">Monitor</div>
+      ${item(base, 'overview', 'Overview', at('overview'))}
+      ${item(`${base}/reports`, 'reports', 'Reports', at('reports'))}
+      ${item(`${base}/runs`, 'runs', 'Runs', at('runs'))}
+      ${item(`${base}/catalog`, 'catalog', 'Catalog', at('catalog'))}
+      ${item(`${base}/visual`, 'visual', 'Visual changes', at('visual'))}
+      ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
+      <div class="rail-label">Configure</div>
+      ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
+      ${item(`${base}/monitoring`, 'monitoring', 'Monitoring', at('monitoring'))}
+      ${item(`${base}/settings`, 'settings', 'Store settings', at('settings'))}` : ''}
+      <div class="rail-label">Workspace</div>
+      ${item('#/stores', 'stores', 'All stores', active.page === 'stores')}
+      ${item('#/add', 'add', 'Add a store', active.page === 'add')}
+      ${S.admin ? item('#/admin', 'founder', 'Founder view', active.page === 'admin') : ''}`;
+    const slot = $('#switch-slot');
+    if (!cur) { slot.innerHTML = ''; }
+    else {
+      const st = storeStatus(cur);
+      slot.innerHTML = `<div class="switcher">
+        <button type="button" id="sw-btn" aria-haspopup="listbox" aria-expanded="false" title="Switch store">
           <span class="dot ${esc(st.key)}" title="${esc(st.label)}"></span>
           <span class="s-text"><span class="s-name">${esc(cur.name || host(cur.url))}</span><span class="s-sub">${esc(host(cur.url))}</span></span>
-          <span class="chev">${icon('chevron', 16)}</span>
-        </button>
-        <div class="pop full" id="sw-pop" role="listbox" hidden>
-          ${S.stores.map((s) => `<a href="#/s/${s.id}" role="option" aria-selected="${s.id === cur.id}"><span class="dot ${esc(storeStatus(s).key)}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name || host(s.url))}</span></a>`).join('')}
-          <hr><a href="#/add">${icon('add', 16)} Add a store</a>
-        </div></div>
-      <nav class="nav" aria-label="Store" style="margin-top:12px">
-        ${link(`#/s/${cur.id}`, 'overview', 'Overview', active.store && m === 'overview')}
-        ${link(`#/s/${cur.id}/reports`, 'reports', 'Reports', active.store && m === 'reports')}
-        ${link(`#/s/${cur.id}/suite`, 'suite', 'Test suite', active.store && m === 'suite')}
-        ${link(`#/s/${cur.id}/runs`, 'runs', 'Runs', active.store && m === 'runs')}
-        ${link(`#/s/${cur.id}/monitoring`, 'monitoring', 'Monitoring', active.store && m === 'monitoring')}
-        ${link(`#/s/${cur.id}/alerts`, 'alerts', 'Alerts', active.store && m === 'alerts', cur.failing.length ? `<span class="badge" title="${cur.failing.length} open problem(s)">${cur.failing.length}</span>` : '')}
-        ${link(`#/s/${cur.id}/catalog`, 'catalog', 'Catalog', active.store && m === 'catalog')}
-        ${link(`#/s/${cur.id}/visual`, 'visual', 'Visual changes', active.store && m === 'visual')}
-        ${link(`#/s/${cur.id}/settings`, 'settings', 'Store settings', active.store && m === 'settings')}
-      </nav>` : ''}
-      <div class="side-label">Workspace</div>
-      <nav class="nav" aria-label="Workspace">
-        ${link('#/stores', 'stores', 'All stores', active.page === 'stores')}
-        ${link('#/add', 'add', 'Add a store', active.page === 'add')}
-        ${link('#/account', 'account', 'Account', active.page === 'account')}
-        ${S.admin ? link('#/admin', 'founder', 'Founder view', active.page === 'admin') : ''}
-      </nav>
-      <div class="side-foot">Free beta · <a href="mailto:hello@tharam.store">hello@tharam.store</a></div>`;
-    const sw = $('#sw-btn');
-    if (sw) sw.onclick = (e) => { e.stopPropagation(); const p = $('#sw-pop'); const open = p.hidden; closePops(); p.hidden = !open; sw.setAttribute('aria-expanded', String(open)); };
+          <span class="chev">${icon('chevron', 16)}</span></button>
+        <div class="pop" id="sw-pop" role="listbox" hidden>
+          <div class="pop-label">Your stores</div>
+          ${S.stores.map((s) => `<a href="#/s/${s.id}" role="option" aria-selected="${s.id === cur.id}"><span class="dot ${esc(storeStatus(s).key)}"></span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name || host(s.url))}</span><span class="opt-sub">${esc(storeStatus(s).label)}</span></a>`).join('')}
+          <hr><a href="#/stores">${icon('stores', 16)}All stores</a><a href="#/add">${icon('add', 16)}Add a store</a>
+        </div></div>`;
+      const sw = $('#sw-btn');
+      sw.onclick = (e) => { e.stopPropagation(); const p = $('#sw-pop'); const open = p.hidden; closePops(); p.hidden = !open; sw.setAttribute('aria-expanded', String(open)); };
+    }
     $$('#side a').forEach((a) => a.addEventListener('click', () => document.body.classList.remove('nav-open')));
   }
 
@@ -315,12 +351,13 @@
       .map(([key, label, count]) => `<a href="${key ? `${base}/${key}` : base}" ${key === current ? 'aria-current="page"' : ''}>${esc(label)}${count ? `<span class="tab-count">${count}</span>` : ''}</a>`)
       .join('')}</nav>`;
   }
-  function storeHead(s, title, { actions = '', crumb = '' } = {}) {
-    const st = storeStatus(s);
-    return `${crumb ? `<div class="crumbs">${crumb}</div>` : ''}<div class="page-head"><div><h1>${esc(title)}</h1>
-      <div class="meta"><span class="status-inline"><span class="dot ${esc(st.key)}"></span>${esc(st.label)}</span><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(host(s.url))}</a>${s.platform ? `<span>${esc(s.platform)}</span>` : ''}</div></div>
+  // Page header. The store's name and status live in the top bar, so pages show a breadcrumb and title.
+  function storeHead(s, title, { actions = '', crumb = '', meta = '' } = {}) {
+    const name = esc(s.name || host(s.url));
+    return `<div class="page-head"><div><div class="crumbs">${crumb || `<a href="#/s/${s.id}">${name}</a>`}</div><h1>${esc(title)}</h1>${meta ? `<div class="meta">${meta}</div>` : ''}</div>
       ${actions ? `<div class="actions">${actions}</div>` : ''}</div>`;
   }
+  const openStore = (s) => `<a class="icon-btn bordered" href="${esc(s.url)}" target="_blank" rel="noopener" data-tip="Open store" aria-label="Open store in a new tab">${icon('external', 17)}</a>`;
   // Every way of starting a test goes through the Run validations page, so nothing starts without a preview.
   const runLink = (s, label = 'Run validations', cls = 'btn') => `<a class="${cls}" href="#/s/${s.id}/run">${label}</a>`;
   function runButtons(s) {
@@ -466,11 +503,11 @@
     }
     if (res || done.length) {
       body += `<div class="grid-2">
-        <section class="panel"><div class="panel-head"><h2>What needs fixing</h2>${lastDone ? `<a href="#/s/${s.id}/reports/${lastDone.id}">Full report</a>` : ''}</div>
+        <section class="panel"><div class="panel-head"><h2>What needs fixing</h2>${lastDone ? `<a href="#/s/${s.id}/reports/${lastDone.id}">Full report ${icon('right', 14)}</a>` : ''}</div>
           ${problems.length ? `<ul class="list">${problems.slice(0, 6).map((c) => `<li><a class="row" href="#/s/${s.id}/reports/${lastDone.id}" data-focus="${esc(c.id)}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.detail)}</span></span><span></span></a></li>`).join('')}</ul>${problems.length > 6 ? `<p class="muted" style="margin:10px 4px 0">and ${problems.length - 6} more in the report</p>` : ''}`
             : `<p class="muted" style="margin:0">Nothing to fix in the latest check.</p>`}
         </section>
-        <section class="panel"><div class="panel-head"><h2>Recent tests</h2><a href="#/s/${s.id}/runs">All runs</a></div>
+        <section class="panel"><div class="panel-head"><h2>Recent tests</h2><a href="#/s/${s.id}/runs">All runs ${icon('right', 14)}</a></div>
           ${strip(runs)}<div class="strip-legend"><span>Older</span><span>Latest</span></div>${LEGEND}
           <div class="figures" style="margin:18px 0 0;grid-template-columns:repeat(2,minmax(0,1fr))">
             <div class="figure"><b>${done.length ? Math.round((ok / done.length) * 100) + '%' : '–'}</b><span>of recent tests could buy</span></div>
@@ -479,10 +516,12 @@
         </section>
       </div>`;
       if (data.alerts.length) {
-        body += `<section class="panel"><div class="panel-head"><h2>Recent alerts</h2><a href="#/s/${s.id}/alerts">All alerts</a></div><ul class="list">${data.alerts.slice(0, 5).map((a) => `<li><div class="row"><span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span><span class="t">${esc(a.title || (a.state === 'failing' ? 'Check failed' : 'Check recovered'))}</span><span class="d" style="-webkit-line-clamp:1">${esc(a.message || a.check_id)}</span></span><span class="r">${time(a.created_at)}</span></div></li>`).join('')}</ul></section>`;
+        body += `<section class="panel"><div class="panel-head"><h2>Recent alerts</h2><a href="#/s/${s.id}/alerts">All alerts ${icon('right', 14)}</a></div><ul class="list">${data.alerts.slice(0, 5).map((a) => `<li><div class="row"><span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span><span class="t">${esc(a.title || (a.state === 'failing' ? 'Check failed' : 'Check recovered'))}</span><span class="d" style="-webkit-line-clamp:1">${esc(a.message || a.check_id)}</span></span><span class="r">${time(a.created_at)}</span></div></li>`).join('')}</ul></section>`;
       }
     }
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, s.name || host(s.url), { actions: runButtons(s) })}<p class="lede-sm">${esc(monitoringLine(s))}</p>${body}</div>`;
+    const st = storeStatus(s);
+    const meta = `${res ? '' : `<span class="pill ${esc(st.key)}">${esc(st.label)}</span>`}<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(host(s.url))}</a>${s.platform ? `<span class="sep"></span><span>${esc(s.platform)}</span>` : ''}<span class="sep"></span><span>${esc(monitoringLine(s))}</span>`;
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, s.name || host(s.url), { crumb: 'Overview', meta, actions: openStore(s) + runButtons(s) })}${body}</div>`;
     $$('[data-focus]', ctx.main).forEach((a) => a.addEventListener('click', () => (S.focus = a.dataset.focus)));
     if (active || s.active_run_id) poll(S.stopping.size ? 1500 : 3000); // also refresh once if the run ended between loads
     else if (s.monitoring && s.last_run_at) poll(60000);
@@ -687,10 +726,10 @@
     const active = data.runs.some((r) => r.status === 'queued' || r.status === 'running');
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Runs', { actions: runButtons(s) })}
       ${tabs(`#/s/${s.id}/runs`, [[null, 'All runs'], ['full', 'Full checks'], ['journeys', 'Journey tests'], ['problems', 'With problems'], ['stopped', 'Stopped']], filter)}
-      ${runs.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Started</th><th>Type</th><th>Started by</th><th>Result</th><th class="num">Checks</th><th class="num">Score</th><th class="num">Took</th></tr></thead><tbody>
+      ${runs.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Started</th><th>Type</th><th>Started by</th><th>Result</th><th class="num">Checks</th><th class="num">Score</th><th class="num">Took</th><th aria-label="Open"></th></tr></thead><tbody>
         ${runs.map((r) => `<tr class="link" data-href="#/s/${s.id}/runs/${r.id}" tabindex="0"><td><span class="cell-main">${time(r.created_at)}</span><div class="cell-sub">${esc(exact(r.created_at))}</div></td><td>${esc(kindLabel(r))}</td><td class="cell-sub">${esc(TRIGGER[r.trigger] || 'Scheduled')}</td>
           <td>${runResult(r)}</td><td class="num cell-sub">${r.checks ?? '–'}</td>
-          <td class="num">${r.score ?? '–'}</td><td class="num">${r.finished_at ? duration(r.created_at, r.finished_at) : '–'}</td></tr>`).join('')}
+          <td class="num">${r.score ?? '–'}</td><td class="num">${r.finished_at ? duration(r.created_at, r.finished_at) : '–'}</td><td class="go">${icon('right', 16)}</td></tr>`).join('')}
       </tbody></table></div>` : `<div class="panel empty"><h2>${filter ? 'No runs match this filter' : 'No runs yet'}</h2><p>${filter ? 'Try another tab.' : 'Run the first check to see results here.'}</p>${filter ? '' : runLink(s, 'Run first check')}</div>`}</div>`;
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
     if (active) poll(5000);
@@ -755,7 +794,7 @@
       incidents.reverse();
       ctx.main.innerHTML = `<div class="main-inner">${head}
         <div class="figures"><div class="figure"><b>${pct(within(24))}</b><span>could buy, last 24 hours</span></div><div class="figure"><b>${pct(within(24 * 7))}</b><span>could buy, last 7 days</span></div><div class="figure"><b>${pct(within(24 * 30))}</b><span>could buy, last 30 days</span></div></div>
-        <section class="panel"><div class="panel-head"><h2>Last ${Math.min(data.runs.length, 100)} tests</h2><a href="#/s/${s.id}/runs">All runs</a></div>${strip(data.runs, 100)}<div class="strip-legend"><span>Older</span><span>Latest</span></div>${LEGEND}</section>
+        <section class="panel"><div class="panel-head"><h2>Last ${Math.min(data.runs.length, 100)} tests</h2><a href="#/s/${s.id}/runs">All runs ${icon('right', 14)}</a></div>${strip(data.runs, 100)}<div class="strip-legend"><span>Older</span><span>Latest</span></div>${LEGEND}</section>
         <section class="panel"><h2>Incidents</h2><p class="sub">Each time a check broke, and how long until it was fixed.</p>
           ${incidents.length ? `<div class="table-wrap" style="border:0"><table class="data"><thead><tr><th>What broke</th><th>Started</th><th>Fixed</th><th class="num">Lasted</th></tr></thead><tbody>${incidents.slice(0, 50).map((i) => `<tr><td><span class="cell-main">${esc(i.msg || i.check)}</span></td><td class="nowrap">${time(i.start)}</td><td class="nowrap">${i.end ? time(i.end) : '<span class="pill critical">Still broken</span>'}</td><td class="num">${i.end ? duration(i.start, i.end) : '–'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No incidents yet.</p>'}
         </section></div>`;
@@ -947,7 +986,7 @@
         ${opt('prev', 'Previous check', baseSel === 'prev')}${opt('day', 'Same time a day before', baseSel === 'day')}${opt('week', 'Same time a week before', baseSel === 'week')}${opt('none', 'No comparison', baseSel === 'none')}
         ${older.length ? `<optgroup label="A specific report">${older.map((x) => opt(x.id, reportLabel(x), String(x.id) === String(baseSel))).join('')}</optgroup>` : ''}
       </select></div>
-      <div class="report-bar-actions"><button class="btn secondary" type="button" id="print">Save as PDF</button></div></div>`;
+      <div class="report-bar-actions"><button class="icon-btn bordered tip-left" type="button" id="print" data-tip="Save as PDF" aria-label="Save as PDF">${icon('printer', 17)}</button></div></div>`;
     const res = run.result;
     const ch = c.changes;
     const compareLine = b
@@ -976,7 +1015,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<button type="button" class="btn link evidence" data-shot="${esc(x.evidence.screenshot)}">View screenshot</button>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -987,7 +1026,7 @@
       const cat = c.catalog, t = cat.totals;
       const changed = t ? t.changed + t.added + t.removed : 0;
       const parts = t ? [t.price && `${t.price} price`, t.sale && `${t.sale} sale`, t.stock && `${t.stock} stock`, t.description && `${t.description} description`, t.added && `${t.added} added`, t.removed && `${t.removed} removed`].filter(Boolean) : [];
-      return `<section class="panel" id="catalog"><div class="panel-head"><h2>Catalog</h2><a href="#/s/${s.id}/catalog">Open catalog</a></div>
+      return `<section class="panel" id="catalog"><div class="panel-head"><h2>Catalog</h2><a href="#/s/${s.id}/catalog">Open catalog ${icon('right', 14)}</a></div>
         <div class="figures" style="margin:0"><div class="figure"><b>${cat.count}${cat.truncated ? '+' : ''}</b><span>products checked</span></div>
         <div class="figure"><b>${(cat.issues || []).length}</b><span>catalog issues</span></div>
         <div class="figure"><b>${changed}</b><span>changed since compared</span></div></div>
@@ -1031,7 +1070,7 @@
         return `<article class="shot-card" data-key="${esc(v.key)}"><header><b>${PAGE[v.key.split('-')[0]]}</b>${chip}</header>
           ${views.length > 1 ? `<div class="seg" role="radiogroup" aria-label="View">${views.map((x, i) => `<label><input type="radio" name="v-${v.key}" value="${esc(x[2])}" ${i === 0 ? 'checked' : ''}><span>${x[1]}</span></label>`).join('')}</div>` : ''}
           <div class="frame">${views[0] ? `<img src="${esc(views[0][2])}" alt="${esc(PAGE[v.key.split('-')[0]])} on ${dev}" loading="lazy">` : '<span class="none">No screenshot</span>'}</div>
-          ${canExplain ? `<div class="explain-row"><button type="button" class="btn secondary small explain-btn">Explain this change with AI</button><div class="explain-out" hidden></div></div>` : ''}</article>`;
+          ${canExplain ? `<div class="explain-row"><button type="button" class="btn secondary small explain-btn">${icon('sparkle', 14)}Explain this change</button><div class="explain-out" hidden></div></div>` : ''}</article>`;
       }).join('');
       $$('.shot-card', el).forEach((card) => {
         card.addEventListener('change', (e) => { if (e.target.name?.startsWith('v-')) card.querySelector('.frame img').src = e.target.value; });
@@ -1085,7 +1124,7 @@
     if (tab === 'issues') {
       const types = Object.keys(c.byType);
       body = types.length ? types.map((t) => `<section class="panel"><h2>${esc(CAT_TYPE[t] || t)} <span class="muted" style="font-weight:400">(${c.byType[t].length})</span></h2>
-        <ul class="list">${c.byType[t].slice(0, 60).map((i) => `<li><a class="row" href="${esc(s.url)}/products/${esc(i.handle)}" target="_blank" rel="noopener"><span class="sev ${i.severity === 'critical' ? 'fail' : i.severity === 'major' ? 'warn' : ''}">${i.severity === 'critical' ? 'Serious' : i.severity === 'major' ? 'Issue' : 'Minor'}</span><span><span class="t">${esc(i.title)}</span><span class="d">${esc(i.message)}</span></span><span class="r">Open ↗</span></a></li>`).join('')}</ul>
+        <ul class="list">${c.byType[t].slice(0, 60).map((i) => `<li><a class="row" href="${esc(s.url)}/products/${esc(i.handle)}" target="_blank" rel="noopener"><span class="sev ${i.severity === 'critical' ? 'fail' : i.severity === 'major' ? 'warn' : ''}">${i.severity === 'critical' ? 'Serious' : i.severity === 'major' ? 'Issue' : 'Minor'}</span><span><span class="t">${esc(i.title)}</span><span class="d">${esc(i.message)}</span></span><span class="r" aria-label="Open product in your store">${icon('external', 15)}</span></a></li>`).join('')}</ul>
         ${c.byType[t].length > 60 ? `<p class="muted" style="margin:10px 4px 0">and ${c.byType[t].length - 60} more</p>` : ''}</section>`).join('') : '<div class="panel"><p class="muted" style="margin:0">No catalog issues found. Nice.</p></div>';
     } else if (tab === 'changes') {
       if (!c.totals) body = '<div class="panel"><p class="muted" style="margin:0">No earlier snapshot to compare with yet. The next full check will show changes.</p></div>';
@@ -1096,12 +1135,12 @@
         ${c.changes.length ? `<section class="panel"><ul class="list">${c.changes.map((ch) => catChange(ch, s)).join('')}</ul></section>` : '<div class="panel"><p class="muted" style="margin:0">Nothing in the catalog changed.</p></div>'}`;
       }
     } else {
-      body = `<div class="table-wrap"><table class="data"><thead><tr><th>Product</th><th>Price</th><th>Stock</th><th class="num">Issues</th><th>Changed</th></tr></thead><tbody>
+      body = `<div class="table-wrap"><table class="data"><thead><tr><th>Product</th><th>Price</th><th>Stock</th><th class="num">Issues</th><th>Changed</th><th aria-label="Open"></th></tr></thead><tbody>
         ${c.products.map((p) => `<tr class="link" data-href="${esc(s.url)}/products/${esc(p.handle)}" tabindex="0"><td><div class="prod-cell">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}<span><span class="cell-main">${esc(p.title)}</span><div class="cell-sub">${p.variants} variant${p.variants > 1 ? 's' : ''} · ${p.images} image${p.images === 1 ? '' : 's'}</div></span></div></td>
           <td class="nowrap">${money(p.price)}${p.maxPrice && p.maxPrice !== p.price ? ` – ${money(p.maxPrice)}` : ''}</td>
           <td>${p.available ? '<span class="status-inline"><span class="dot healthy"></span>In stock</span>' : '<span class="status-inline"><span class="dot"></span>Sold out</span>'}</td>
           <td class="num">${p.issues ? `<span class="pill ${p.worst === 'critical' ? 'critical' : p.worst === 'major' ? 'warning' : ''}">${p.issues}</span>` : '<span class="muted">0</span>'}</td>
-          <td class="cell-sub">${p.changed === 'added' ? 'New' : p.changed === 'changed' ? 'Edited' : '–'}</td></tr>`).join('')}
+          <td class="cell-sub">${p.changed === 'added' ? 'New' : p.changed === 'changed' ? 'Edited' : '–'}</td><td class="go">${icon('external', 15)}</td></tr>`).join('')}
       </tbody></table></div>${c.products.length >= 500 ? '<p class="muted" style="margin-top:12px">Showing the first 500 products.</p>' : ''}`;
     }
     ctx.main.innerHTML = `<div class="main-inner">${head}${figures}${tabsBar}${body}</div>`;
@@ -1144,11 +1183,11 @@
     const d = await api('/api/overview');
     if (!ctx.alive()) return;
     if (!d.stores.length) return PAGES.home(ctx);
-    ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><h1>All stores</h1><div class="meta">${d.stores.length} of 5 stores in the beta</div></div><div class="actions"><a class="btn" href="#/add">Add a store</a></div></div>
-      <div class="table-wrap"><table class="data"><thead><tr><th>Store</th><th>Status</th><th class="num">Health</th><th>Last test</th><th>Next test</th></tr></thead><tbody>
+    ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>All stores</h1><div class="meta">${d.stores.length} of 5 stores in the beta</div></div><div class="actions"><a class="btn" href="#/add">${icon('add', 16)}Add a store</a></div></div>
+      <div class="table-wrap"><table class="data"><thead><tr><th>Store</th><th>Status</th><th class="num">Health</th><th>Last test</th><th>Next test</th><th aria-label="Open"></th></tr></thead><tbody>
       ${d.stores.map((s) => { const st = storeStatus(s); return `<tr class="link" data-href="#/s/${s.id}" tabindex="0"><td><div class="cell-main">${esc(s.name || host(s.url))}</div><div class="cell-sub">${esc(host(s.url))}${s.platform ? ` · ${esc(s.platform)}` : ''}</div></td>
         <td><span class="status-inline"><span class="dot ${esc(st.key)}"></span>${esc(st.label)}</span>${s.failing.length ? `<div class="cell-sub">${s.failing.length} open problem${s.failing.length > 1 ? 's' : ''}</div>` : ''}</td>
-        <td class="num">${s.last_score ?? '–'}</td><td>${s.last_run_at ? time(s.last_run_at) : '<span class="muted">Not yet</span>'}</td><td class="cell-sub">${s.active_run_id ? 'Running now' : s.monitoring && s.last_run_at ? esc(inMin(s.next_run_in)) : s.monitoring ? 'After first check' : 'Paused'}</td></tr>`; }).join('')}
+        <td class="num">${s.last_score ?? '–'}</td><td>${s.last_run_at ? time(s.last_run_at) : '<span class="muted">Not yet</span>'}</td><td class="cell-sub">${s.active_run_id ? 'Running now' : s.monitoring && s.last_run_at ? esc(inMin(s.next_run_in)) : s.monitoring ? 'After first check' : 'Paused'}</td><td class="go">${icon('right', 16)}</td></tr>`; }).join('')}
       </tbody></table></div>
       ${d.alerts.length ? `<section class="panel" style="margin-top:20px"><h2>Latest alerts across stores</h2><ul class="list" style="margin-top:10px">${d.alerts.slice(0, 8).map((a) => `<li><a class="row" href="#/s/${a.store_id}/alerts"><span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span><span class="t">${esc(a.store_name || host(a.store_url))}</span><span class="d">${esc(a.message || a.check_id)}</span></span><span class="r">${time(a.created_at)}</span></a></li>`).join('')}</ul></section>` : ''}</div>`;
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
@@ -1157,7 +1196,7 @@
 
   PAGES.account = async (ctx) => {
     const tab = ctx.r.a === 'password' ? 'password' : null;
-    const head = `<div class="page-head"><div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', [[null, 'Profile'], ['password', 'Password']], tab);
+    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', [[null, 'Profile'], ['password', 'Password']], tab);
     if (tab === 'password') {
       ctx.main.innerHTML = `<div class="main-inner">${head}<form id="pwf"><div class="form-section"><div><h3>Change password</h3><p class="explain">Use at least 8 characters. You'll stay logged in on this device.</p></div>
         <div class="controls"><div class="field"><label for="cur">Current password</label><input id="cur" name="current" type="password" autocomplete="current-password" required></div>
@@ -1191,7 +1230,7 @@
     const d = await api('/api/admin/overview');
     if (!ctx.alive()) return;
     const t = (rows, cols, map = (r, c) => esc(r[c] ?? '')) => rows.length ? `<div class="table-wrap"><table class="data"><thead><tr>${cols.map((c) => `<th>${esc(c[1])}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td>${map(r, c[0])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nothing yet.</p>';
-    ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><h1>Founder view</h1><div class="meta">Only visible to ${esc(S.me.email)}</div></div></div>
+    ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder view</h1><div class="meta">Only visible to ${esc(S.me.email)}</div></div></div>
       <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))"><div class="figure"><b>${d.users}</b><span>accounts</span></div><div class="figure"><b>${d.stores}</b><span>stores added</span></div><div class="figure"><b>${d.freeScans24h}</b><span>free checks, 24 h</span></div><div class="figure"><b>${d.queue.active} / ${d.queue.waiting}</b><span>running / waiting</span></div></div>
       <section class="panel"><h2>Signups</h2>${t(d.signups, [['email', 'Email'], ['name', 'Name'], ['stores', 'Stores'], ['created_at', 'Joined']], (r, c) => (c === 'created_at' ? time(r[c]) : esc(r[c] ?? '')))}</section>
       <section class="panel"><h2>Leads</h2>${t(d.leads, [['email', 'Email'], ['store_url', 'Store'], ['source', 'Source'], ['created_at', 'When']], (r, c) => (c === 'created_at' ? time(r[c]) : esc(r[c] ?? '')))}</section>
@@ -1204,7 +1243,7 @@
     if (!ctx.alive()) return;
     if (!S.wizard) S.wizard = { step: 1, url: '', password: '', locked: false, found: null, disabled: [], testProduct: '', journeyIntervalMin: S.catalog.defaults.journeyIntervalMin, fullIntervalMin: S.catalog.defaults.fullIntervalMin, alertEmail: S.me.email, slack: '', monitoring: true };
     if (S.stores.length >= 5) {
-      ctx.main.innerHTML = `<div class="main-inner narrow-page"><div class="page-head"><div><h1>Add a store</h1></div></div><div class="panel empty"><h2>You've reached the beta limit</h2><p>The beta includes up to 5 stores. Remove one in its settings, or write to hello@tharam.store if you need more.</p><a class="btn secondary" href="#/stores">See all stores</a></div></div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>Add a store</h1></div></div><div class="panel empty"><h2>You've reached the beta limit</h2><p>The beta includes up to 5 stores. Remove one in its settings, or write to hello@tharam.store if you need more.</p><a class="btn secondary" href="#/stores">See all stores</a></div></div>`;
       return;
     }
     wizardStep(ctx);
@@ -1215,7 +1254,7 @@
     const names = ['Find your store', 'Choose tests', 'Schedule and alerts', 'Review'];
     const stepper = `<ol class="stepper">${names.map((n, i) => `<li class="${i + 1 < w.step ? 'done' : i + 1 === w.step ? 'current' : ''}" ${i + 1 === w.step ? 'aria-current="step"' : ''}><span>${n}</span></li>`).join('')}</ol>`;
     const wrap = (inner) => {
-      ctx.main.innerHTML = `<div class="main-inner narrow-page"><div class="page-head"><div><h1>Add a store</h1><div class="meta">Step ${w.step} of 4 · nothing runs until you finish</div></div>${w.step > 1 ? '<div class="actions"><button class="btn link" type="button" id="restart">Start over</button></div>' : ''}</div>${stepper}${inner}</div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>Add a store</h1><div class="meta">Step ${w.step} of 4 · nothing runs until you finish</div></div>${w.step > 1 ? '<div class="actions"><button class="btn link" type="button" id="restart">Start over</button></div>' : ''}</div>${stepper}${inner}</div>`;
       const r = $('#restart');
       if (r) r.onclick = () => { S.wizard = null; render(); };
     };
