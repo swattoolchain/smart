@@ -5,6 +5,8 @@
 import { q } from './db.js';
 import { comparePair } from './compare.js';
 import { startRun, storeConfig } from './scheduler.js';
+import { config } from './config.js';
+import { sendMail, sendSlack } from './alerts.js';
 
 const SKIP = ['catalog', 'ai.copy', 'ai.visual']; // the catalog is the same for both themes
 
@@ -22,13 +24,45 @@ export function previewUrlFor(store, input) {
   throw new Error(`This link isn't for ${storeHost}. Use the Share preview link from this store's Shopify admin.`);
 }
 
-export function startRelease(store, url, label) {
-  const info = q.insertRelease.run(store.id, url, label || null);
+/** Accepts a separate staging store or site (another domain, often password-protected). */
+export function stagingUrlFor(store, input) {
+  let u;
+  try { u = new URL(/^https?:\/\//i.test(input) ? input : 'https://' + input); } catch { throw new Error('Enter the full address, starting with https://'); }
+  if (!/^https?:$/.test(u.protocol)) throw new Error('Enter a web address starting with https://');
+  if (u.host.toLowerCase() === new URL(store.url).host.toLowerCase() && !u.searchParams.get('preview_theme_id')) throw new Error('This is your live store. Enter the address of the staging store or site.');
+  // Tests open pages by path from the site's root, so keep only the origin.
+  return u.origin;
+}
+
+/** Validates an environment as the merchant entered it. Returns the clean fields or throws a readable error. */
+export function cleanEnvironment(store, input = {}, base = {}) {
+  const name = String(input.name ?? base.name ?? '').trim().slice(0, 60);
+  if (!name) throw new Error('Give this environment a name, such as Staging.');
+  const kind = (input.kind ?? base.kind) === 'store' ? 'store' : 'theme';
+  const raw = String(input.url ?? base.url ?? '').trim();
+  if (!raw) throw new Error(kind === 'theme' ? 'Paste the theme preview link.' : 'Enter the staging address.');
+  const url = kind === 'theme' ? previewUrlFor(store, raw) : stagingUrlFor(store, raw);
+  // An empty password field keeps the saved one; "clear" removes it.
+  let password = base.password || null;
+  if (input.password !== undefined && input.password !== '') password = input.password === null ? null : String(input.password).slice(0, 200);
+  if (kind === 'theme') password = null; // theme previews use the live store's password
+  const auto = (input.auto ?? base.auto) === 'daily' ? 'daily' : 'off';
+  return { name, kind, url, password, auto };
+}
+
+/**
+ * Starts a publish check: the live store and the candidate (a theme preview or a staging environment)
+ * are tested side by side with the same suite. Returns the check's id.
+ */
+export function startRelease(store, { url, label, env = null, trigger = 'manual' }) {
+  const info = q.insertRelease.run(store.id, url, label || null, env?.id || null, trigger);
   const id = Number(info.lastInsertRowid);
   const disabled = [...new Set([...(storeConfig(store).disabled || []), ...SKIP])];
   const common = { storeId: store.id, origin: store.url, kind: 'full', password: store.storefront_password, trigger: 'release', disabled, captureOnly: true, release: id };
   const liveId = startRun({ ...common });
-  const draftId = startRun({ ...common, preview: { url } });
+  const draftId = env?.kind === 'store'
+    ? startRun({ ...common, origin: url, password: env.password || null, ownPassword: true })
+    : startRun({ ...common, preview: { url } });
   q.setReleaseRuns.run(liveId, draftId, id);
   return id;
 }
@@ -36,7 +70,7 @@ export function startRelease(store, url, label) {
 const BLOCK = new Set(['critical', 'major']);
 
 /** Turns a draft-vs-live comparison into a verdict and the lists the merchant needs. */
-export function judge(cmp) {
+export function judge(cmp, where = 'the draft') {
   const item = (x) => ({ id: x.id, title: x.title, status: x.a, severity: x.severity, detail: x.detail, liveDetail: x.prevDetail, fix: x.fix, evidence: x.evidence || null });
   const breaks = cmp.changes.new.map(item);
   const blockers = breaks.filter((x) => x.status === 'fail' && BLOCK.has(x.severity));
@@ -48,10 +82,10 @@ export function judge(cmp) {
   const verdict = blockers.length ? 'blocked' : reviews.length || visualChanged.length || slower.length ? 'review' : 'safe';
   const n = (k, one, many = one + 's') => `${k} ${k === 1 ? one : many}`;
   const headline = verdict === 'blocked'
-    ? `${n(blockers.length, 'thing')} that work${blockers.length === 1 ? 's' : ''} on your live store ${blockers.length === 1 ? 'breaks' : 'break'} on the draft.`
+    ? `${n(blockers.length, 'thing')} that work${blockers.length === 1 ? 's' : ''} on your live store ${blockers.length === 1 ? 'breaks' : 'break'} on ${where}.`
     : verdict === 'review'
       ? [reviews.length && n(reviews.length, 'new warning'), visualChanged.length && `${n(visualChanged.length, 'page')} look${visualChanged.length === 1 ? 's' : ''} different`, slower.length && `${n(slower.length, 'speed measure')} got worse`].filter(Boolean).join(', ') + '. Nothing is broken.'
-      : 'Everything that works on your live store also works on the draft.';
+      : `Everything that works on your live store also works on ${where}.`;
   return { verdict, headline, blockers, reviews, fixes, visual, visualChanged: visualChanged.length, slower: slower.map((m) => ({ page: m.page, name: m.name, unit: m.unit, live: m.b, draft: m.a })) };
 }
 
@@ -72,8 +106,41 @@ export function settleRelease(releaseId) {
   const preview = (dres.checks || []).find((c) => c.id === 'fn.preview');
   if (preview?.status === 'fail') return q.finishRelease.run('error', null, JSON.stringify({ error: preview.detail }), releaseId);
   const cmp = comparePair(r.store_id, draft.id, live.id);
-  const j = judge(cmp);
+  const env = r.environment_id ? q.envById.get(r.environment_id) : null;
+  const j = judge(cmp, env ? env.name : 'the draft');
   j.theme = { draft: dres.theme || null, live: JSON.parse(live.result_json).theme || null };
   j.scores = { draft: draft.score, live: live.score };
   q.finishRelease.run('done', j.verdict, JSON.stringify(j), releaseId);
+  // Checks nobody is watching (daily, or started by a deploy pipeline) tell the owner when something needs a look.
+  if (r.trigger !== 'manual' && j.verdict !== 'safe') notifyRelease(r, j).catch((e) => console.error('release notify failed', releaseId, e));
+}
+
+async function notifyRelease(r, j) {
+  const store = q.storeById.get(r.store_id);
+  if (!store) return;
+  const env = r.environment_id ? q.envById.get(r.environment_id) : null;
+  const name = store.name || new URL(store.url).host;
+  const where = env?.name || 'your draft';
+  const link = `${config.baseUrl}/app#/s/${store.id}/publish/${r.id}`;
+  const subject = j.verdict === 'blocked' ? `Don't publish ${where} yet: ${name}` : `Review ${where} before publishing: ${name}`;
+  const items = [...j.blockers, ...j.reviews].slice(0, 6).map((x) => `• ${x.title}: ${x.detail}`);
+  const text = `${j.headline}\n\n${items.join('\n')}\n\nSide-by-side report: ${link}\n\n— Tharam`;
+  const e = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#1c1917"><p><b>${e(name)} · ${e(where)}</b></p><p>${e(j.headline)}</p>
+<ul>${items.map((l) => `<li>${e(l.slice(2))}</li>`).join('')}</ul>
+<p><a href="${link}" style="background:#14532d;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Open the side-by-side report</a></p></div>`;
+  const to = store.alert_email || q.userById.get(store.user_id)?.email;
+  await Promise.allSettled([sendMail({ to, subject, text, html }), sendSlack(store.slack_webhook, `*${subject}*\n${text}`)]);
+}
+
+/** Once a day, check environments that asked for it. Runs from the scheduler. */
+export function dueEnvironmentChecks() {
+  for (const env of q.autoEnvs.all()) {
+    const store = q.storeById.get(env.store_id);
+    if (!store || !store.last_run_at || q.activeRunForStore.get(store.id)) continue;
+    const last = q.lastReleaseForEnv.get(env.id);
+    if (last && (last.status === 'running' || Date.now() - new Date(last.created_at.replace(' ', 'T') + 'Z').getTime() < 23.5 * 3600e3)) continue;
+    startRelease(store, { url: env.url, label: `Daily check of ${env.name}`, env, trigger: 'schedule' });
+    return; // one at a time keeps the queue fair; the next one starts in 5 minutes
+  }
 }

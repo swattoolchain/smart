@@ -80,6 +80,18 @@ CREATE TABLE IF NOT EXISTS releases (
   finished_at TEXT
 );
 CREATE INDEX IF NOT EXISTS releases_store ON releases(store_id, id DESC);
+CREATE TABLE IF NOT EXISTS environments (
+  id INTEGER PRIMARY KEY,
+  store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,                     -- theme (a Shopify theme preview link) | store (a separate staging store or site)
+  url TEXT NOT NULL,
+  password TEXT,
+  auto TEXT NOT NULL DEFAULT 'off',       -- off | daily
+  token TEXT UNIQUE,                      -- lets a deploy pipeline start a check without logging in
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS environments_store ON environments(store_id, id);
 CREATE TABLE IF NOT EXISTS check_state (
   store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
   check_id TEXT NOT NULL,
@@ -98,6 +110,8 @@ ensureColumn('stores', 'config_json', "TEXT NOT NULL DEFAULT '{}'");
 ensureColumn('stores', 'platform', 'TEXT');
 ensureColumn('runs', 'trigger', 'TEXT');
 ensureColumn('alerts', 'title', 'TEXT');
+ensureColumn('releases', 'environment_id', 'INTEGER');
+ensureColumn('releases', 'trigger', "TEXT NOT NULL DEFAULT 'manual'");
 
 export const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
@@ -150,7 +164,16 @@ export const q = {
   ),
   insertAlert: db.prepare('INSERT INTO alerts (store_id, check_id, state, message, title) VALUES (?, ?, ?, ?, ?)'),
   alertsByStore: db.prepare('SELECT * FROM alerts WHERE store_id = ? ORDER BY id DESC LIMIT 30'),
-  insertRelease: db.prepare('INSERT INTO releases (store_id, preview_url, label) VALUES (?, ?, ?)'),
+  insertRelease: db.prepare('INSERT INTO releases (store_id, preview_url, label, environment_id, trigger) VALUES (?, ?, ?, ?, ?)'),
+  envsByStore: db.prepare('SELECT * FROM environments WHERE store_id = ? ORDER BY id'),
+  envById: db.prepare('SELECT * FROM environments WHERE id = ?'),
+  envByToken: db.prepare('SELECT * FROM environments WHERE token = ?'),
+  insertEnv: db.prepare('INSERT INTO environments (store_id, name, kind, url, password, auto, token) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+  updateEnv: db.prepare('UPDATE environments SET name = ?, kind = ?, url = ?, password = ?, auto = ? WHERE id = ?'),
+  setEnvToken: db.prepare('UPDATE environments SET token = ? WHERE id = ?'),
+  deleteEnv: db.prepare('DELETE FROM environments WHERE id = ?'),
+  autoEnvs: db.prepare("SELECT e.* FROM environments e JOIN stores s ON s.id = e.store_id WHERE e.auto = 'daily' AND s.monitoring = 1"),
+  lastReleaseForEnv: db.prepare('SELECT * FROM releases WHERE environment_id = ? ORDER BY id DESC LIMIT 1'),
   setReleaseRuns: db.prepare('UPDATE releases SET live_run_id = ?, draft_run_id = ? WHERE id = ?'),
   releaseById: db.prepare('SELECT * FROM releases WHERE id = ?'),
   releasesByStore: db.prepare('SELECT * FROM releases WHERE store_id = ? ORDER BY id DESC LIMIT 50'),

@@ -12,7 +12,8 @@ import { startRun, startScheduler, storeConfig, intervals, nextRunIn } from './s
 import { queueDepth, cancelRun } from './queue.js';
 import { liveView } from './live.js';
 import { scorecard, weekBuyability } from './scorecard.js';
-import { previewUrlFor, startRelease, settleRelease } from './release.js';
+import crypto from 'node:crypto';
+import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './release.js';
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
 import { approveBaseline } from './engine/visual.js';
@@ -375,7 +376,8 @@ app.post('/api/stores/:id/run/:runId/cancel', requireUser, (req, res) => {
 const releaseView = (r) => {
   const sum = r.summary_json ? JSON.parse(r.summary_json) : null;
   const run = (id) => { const x = id && q.runById.get(id); return x ? { id: x.id, status: x.status, score: x.score, error: x.error, live: x.status === 'queued' || x.status === 'running' ? liveView(x.id) : null, created_at: x.created_at, finished_at: x.finished_at } : null; };
-  return { id: r.id, preview_url: r.preview_url, label: r.label, status: r.status, verdict: r.verdict, created_at: r.created_at, finished_at: r.finished_at, summary: sum, runs: { live: run(r.live_run_id), draft: run(r.draft_run_id) } };
+  const env = r.environment_id ? q.envById.get(r.environment_id) : null;
+  return { id: r.id, preview_url: r.preview_url, label: r.label, status: r.status, verdict: r.verdict, trigger: r.trigger, environment: env ? { id: env.id, name: env.name, kind: env.kind } : null, created_at: r.created_at, finished_at: r.finished_at, summary: sum, runs: { live: run(r.live_run_id), draft: run(r.draft_run_id) } };
 };
 app.get('/api/stores/:id/releases', requireUser, (req, res) => {
   const s = ownStore(req, res);
@@ -386,9 +388,107 @@ app.post('/api/stores/:id/releases', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   if (q.activeRunForStore.get(s.id)) return res.status(409).json({ error: 'A test is running for this store. Start the publish check when it finishes.' });
+  const label = String(req.body?.label || '').trim().slice(0, 120);
+  if (req.body?.environmentId) {
+    const env = q.envById.get(Number(req.body.environmentId));
+    if (!env || env.store_id !== s.id) return res.status(404).json({ error: 'Environment not found.' });
+    return res.json({ id: startRelease(s, { url: env.url, label, env }) });
+  }
   let url;
   try { url = previewUrlFor(s, String(req.body?.url || '').trim()); } catch (e) { return res.status(400).json({ error: e.message }); }
-  res.json({ id: startRelease(s, url, String(req.body?.label || '').trim().slice(0, 120)) });
+  res.json({ id: startRelease(s, { url, label }) });
+});
+
+// ---------- Environments (staging themes and stores) and release gates ----------
+const newToken = () => 'tg_' + crypto.randomBytes(18).toString('base64url');
+const envView = (e) => {
+  const last = q.lastReleaseForEnv.get(e.id);
+  return { id: e.id, name: e.name, kind: e.kind, url: e.url, hasPassword: !!e.password, auto: e.auto, token: e.token, created_at: e.created_at,
+    last: last ? { id: last.id, status: last.status, verdict: last.verdict, created_at: last.created_at, trigger: last.trigger } : null };
+};
+async function checkEnvTarget(env) {
+  if (env.kind === 'store') await assertPublicTarget(new URL(env.url).origin);
+}
+app.get('/api/stores/:id/environments', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json({ environments: q.envsByStore.all(s.id).map(envView) });
+});
+app.post('/api/stores/:id/environments', requireUser, async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (q.envsByStore.all(s.id).length >= 10) return res.status(400).json({ error: 'A store can have up to 10 environments.' });
+  let e;
+  try { e = cleanEnvironment(s, req.body || {}); await checkEnvTarget(e); } catch (x) { return res.status(400).json({ error: x.message }); }
+  const info = q.insertEnv.run(s.id, e.name, e.kind, e.url, e.password, e.auto, newToken());
+  res.json(envView(q.envById.get(Number(info.lastInsertRowid))));
+});
+const ownEnv = (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return null;
+  const env = q.envById.get(Number(req.params.eid));
+  if (!env || env.store_id !== s.id) { res.status(404).json({ error: 'Environment not found.' }); return null; }
+  return { s, env };
+};
+app.patch('/api/stores/:id/environments/:eid', requireUser, async (req, res) => {
+  const o = ownEnv(req, res);
+  if (!o) return;
+  let e;
+  try { e = cleanEnvironment(o.s, req.body || {}, o.env); await checkEnvTarget(e); } catch (x) { return res.status(400).json({ error: x.message }); }
+  q.updateEnv.run(e.name, e.kind, e.url, e.password, e.auto, o.env.id);
+  res.json(envView(q.envById.get(o.env.id)));
+});
+app.delete('/api/stores/:id/environments/:eid', requireUser, (req, res) => {
+  const o = ownEnv(req, res);
+  if (!o) return;
+  q.deleteEnv.run(o.env.id);
+  res.json({ ok: true });
+});
+app.post('/api/stores/:id/environments/:eid/token', requireUser, (req, res) => {
+  const o = ownEnv(req, res);
+  if (!o) return;
+  q.setEnvToken.run(newToken(), o.env.id);
+  res.json(envView(q.envById.get(o.env.id)));
+});
+
+// A deploy pipeline (GitHub Actions, Bitbucket, a script) starts a publish check with the environment's key,
+// then polls for the verdict and stops the deploy when it is "blocked".
+const gateView = (r) => {
+  const sum = r.summary_json ? JSON.parse(r.summary_json) : null;
+  const done = r.status !== 'running';
+  return { id: r.id, status: r.status, verdict: r.verdict, pass: r.status === 'done' ? r.verdict !== 'blocked' : null, done,
+    headline: sum?.headline || sum?.error || (done ? null : 'Testing live and candidate side by side'),
+    blockers: (sum?.blockers || []).map((x) => ({ title: x.title, detail: x.detail })), report: `${config.baseUrl}/app#/s/${r.store_id}/publish/${r.id}` };
+};
+const gateEnv = (req, res) => {
+  const t = String(req.get('authorization') || '').replace(/^Bearer\s+/i, '') || String(req.params.token || '');
+  const env = t ? q.envByToken.get(t) : null;
+  if (!env) { res.status(401).json({ error: 'Unknown key. Copy it again from Safe to publish → Environments.' }); return null; }
+  const store = q.storeById.get(env.store_id);
+  if (!store) { res.status(404).json({ error: 'Store not found.' }); return null; }
+  return { env, store };
+};
+app.post(['/api/gate', '/api/gate/:token'], async (req, res) => {
+  const g = gateEnv(req, res);
+  if (!g) return;
+  // A pipeline may send a fresh preview link for the theme it just pushed.
+  let url = g.env.url;
+  if (req.body?.url) {
+    try { url = cleanEnvironment(g.store, { url: req.body.url }, g.env).url; } catch (e) { return res.status(400).json({ error: e.message }); }
+  }
+  const running = q.lastReleaseForEnv.get(g.env.id);
+  if (running?.status === 'running') return res.json(gateView(running));
+  if (q.activeRunForStore.get(g.store.id)) return res.status(409).json({ error: 'A test is already running for this store. Try again in a few minutes.' });
+  const label = String(req.body?.label || req.body?.commit || '').trim().slice(0, 120) || `Deploy check of ${g.env.name}`;
+  const id = startRelease(g.store, { url, label, env: { ...g.env, url }, trigger: 'ci' });
+  res.status(202).json(gateView(q.releaseById.get(id)));
+});
+app.get(['/api/gate/:token/:rid', '/api/gate/check/:rid'], (req, res) => {
+  const g = gateEnv(req, res);
+  if (!g) return;
+  const r = q.releaseById.get(Number(req.params.rid));
+  if (!r || r.environment_id !== g.env.id) return res.status(404).json({ error: 'Check not found.' });
+  res.json(gateView(r));
 });
 app.get('/api/stores/:id/releases/:rid', requireUser, (req, res) => {
   const s = ownStore(req, res);

@@ -58,7 +58,7 @@ function pump() {
   }
 }
 
-async function execute({ runId, origin, kind, password, storeId, confirmed, disabled, preview, captureOnly, release }) {
+async function execute({ runId, origin, kind, password, ownPassword, storeId, confirmed, disabled, preview, captureOnly, release }) {
   const controller = new AbortController();
   running.set(runId, controller);
   q.setRunRunning.run(runId);
@@ -71,7 +71,8 @@ async function execute({ runId, origin, kind, password, storeId, confirmed, disa
     const store = storeId ? q.storeById.get(storeId) : null;
     if (storeId && !store) throw new Error('Store was removed');
     const cfg = store ? storeConfig(store) : {};
-    if (store) password = store.storefront_password || password;
+    // A staging environment brings its own password; everything else uses the live store's latest one.
+    if (store && !ownPassword) password = store.storefront_password || password;
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
       runScan({ runId, origin, kind, password, storeId, disabled: disabled || cfg.disabled || [], testProduct: cfg.testProduct || null, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),

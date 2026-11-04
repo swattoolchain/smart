@@ -4,6 +4,7 @@ import cron from 'node-cron';
 import { config } from './config.js';
 import { db, q } from './db.js';
 import { enqueue } from './queue.js';
+import { dueEnvironmentChecks } from './release.js';
 
 export function minutesSince(ts) {
   if (!ts) return Infinity;
@@ -36,10 +37,10 @@ export function nextRunIn(store) {
   return Math.max(0, Math.round(Math.min(j, f)));
 }
 
-export function startRun({ storeId, origin, kind, password, ip = null, trigger = 'manual', disabled, preview, captureOnly, release }) {
+export function startRun({ storeId, origin, kind, password, ownPassword, ip = null, trigger = 'manual', disabled, preview, captureOnly, release }) {
   const info = q.insertRun.run(storeId || null, origin, kind, ip, trigger);
   const runId = Number(info.lastInsertRowid);
-  enqueue({ runId, origin, kind, password, storeId, disabled, preview, captureOnly, release });
+  enqueue({ runId, origin, kind, password, ownPassword, storeId, disabled, preview, captureOnly, release });
   return runId;
 }
 
@@ -59,6 +60,7 @@ export function startScheduler() {
       if (dueFull) startRun({ storeId: s.id, origin: s.url, kind: 'full', password: s.storefront_password, trigger: 'schedule' });
       else if (dueJourney) startRun({ storeId: s.id, origin: s.url, kind: 'journeys', password: s.storefront_password, trigger: 'schedule' });
     }
+    try { dueEnvironmentChecks(); } catch (e) { console.error('environment checks failed', e); }
     pruneOldRuns();
   });
   console.log(`scheduler on: default journeys every ${config.journeyIntervalMin}m, full every ${config.fullScanIntervalMin}m`);

@@ -89,6 +89,32 @@
       d.querySelector('button.secondary').focus();
     });
   }
+  /** A small form in a dialog. onSubmit(form) may throw a readable error; resolves with its result or null. */
+  function formDialog({ title, body, submit, onSubmit, wide, onOpen, cancel = 'Cancel' }) {
+    return new Promise((resolve) => {
+      const d = document.createElement('dialog');
+      d.className = `confirm form-dialog${wide ? ' wide' : ''}`;
+      d.innerHTML = `<form novalidate><div class="fd-head"><h2>${esc(title)}</h2><button type="button" class="icon-btn" data-close aria-label="Close">${icon('close', 18)}</button></div>${body}
+        <p class="error-msg" role="alert"></p><div class="row">${cancel ? `<button type="button" class="btn secondary" data-close>${esc(cancel)}</button>` : ''}${submit ? `<button type="submit" class="btn">${esc(submit)}</button>` : ''}</div></form>`;
+      document.body.appendChild(d);
+      let result = null;
+      const f = d.querySelector('form');
+      d.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => d.close()));
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        const btn = f.querySelector('button[type=submit]');
+        const done = busy(btn, 'Saving');
+        try { result = await onSubmit(f); d.close(); } catch (ex) { done(); f.querySelector('.error-msg').textContent = ex.message; }
+      };
+      d.addEventListener('close', () => { resolve(result); d.remove(); });
+      d.showModal();
+      if (onOpen) onOpen(d);
+      (f.querySelector('input:not([type=hidden]):not([type=radio]):not([type=checkbox])') || f.querySelector('button')).focus();
+    });
+  }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); toast('Copied'); } catch { toast('Select the text and copy it', 'error'); }
+  }
   function busy(btn, label) {
     const prev = btn.innerHTML;
     btn.disabled = true;
@@ -135,6 +161,13 @@
     publish: '<path d="M12 20V9"/><path d="m7.5 13.5 4.5-4.5 4.5 4.5"/><path d="M5 4.5h14"/>',
     shield: '<path d="M12 3.5 5 6v5.5c0 4.4 3 7.8 7 9 4-1.2 7-4.6 7-9V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
     check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+    code: '<path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13"/>',
+    trash: '<path d="M4.5 7h15M10 11v6M14 11v6"/><path d="M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12M9.5 7V4.5h5V7"/>',
+    edit: '<path d="M4.5 19.5h4l10-10a2.1 2.1 0 0 0-4-4l-10 10z"/><path d="m13.5 6.5 4 4"/>',
+    close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
+    copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
+    layers: '<path d="m12 4 8.5 4.5L12 13 3.5 8.5z"/><path d="m3.5 12.5 8.5 4.5 8.5-4.5"/><path d="m3.5 16.5 8.5 4.5 8.5-4.5"/>',
+    globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.6 3.5 5.4 3.5 8.5s-1.1 5.9-3.5 8.5c-2.4-2.6-3.5-5.4-3.5-8.5s1.1-5.9 3.5-8.5z"/>',
   };
   const icon = (k, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
 
@@ -1203,35 +1236,80 @@
     : r.status === 'cancelled' ? '<span class="pill">Stopped</span>' : '<span class="pill">Didn\'t finish</span>';
   const DEVICE_PAGE = { home: 'Homepage', product: 'Product page' };
 
+  const BY = { manual: 'You', schedule: 'Daily check', ci: 'Deploy pipeline' };
+  const ENV_KIND = { theme: ['Theme on this store', 'layers'], store: ['Staging store or site', 'globe'] };
+  const hostOf = (u) => { try { const x = new URL(u); return x.hostname + (x.searchParams.get('preview_theme_id') ? ` · theme ${x.searchParams.get('preview_theme_id')}` : ''); } catch { return u; } };
+
   STORE_PAGES.publish = async (ctx, s) => {
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (ctx.r.a && /^\d+$/.test(ctx.r.a)) return publishDetail(ctx, s, Number(ctx.r.a));
-    const d = await api(`/api/stores/${s.id}/releases`);
+    const [d, ev] = await Promise.all([api(`/api/stores/${s.id}/releases`), api(`/api/stores/${s.id}/environments`)]);
     if (!ctx.alive()) return;
     const shopify = !s.platform || /shopify/i.test(s.platform);
+    const busyStore = !!s.active_run_id;
+    const envs = ev.environments;
+
+    const envRow = (e) => {
+      const [kl, ki] = ENV_KIND[e.kind];
+      const last = e.last ? `${pubPill(e.last)}<span class="cell-sub">${time(e.last.created_at)} · ${esc(BY[e.last.trigger] || 'You')}</span>` : '<span class="cell-sub">Not checked yet</span>';
+      return `<li class="env" data-env="${e.id}"><span class="env-icon">${icon(ki, 18)}</span>
+        <div class="env-main"><div class="env-name"><b>${esc(e.name)}</b>${e.auto === 'daily' ? '<span class="chip">Checked daily</span>' : ''}</div>
+          <div class="cell-sub">${esc(kl)} · ${esc(hostOf(e.url))}</div></div>
+        <div class="env-last">${last}</div>
+        <div class="env-actions">
+          ${e.last ? `<a class="icon-btn" href="#/s/${s.id}/publish/${e.last.id}" data-tip="Last result" aria-label="Open last result">${icon('reports', 17)}</a>` : ''}
+          <button type="button" class="icon-btn" data-act="pipe" data-tip="Check from your deploy pipeline" aria-label="Deploy pipeline setup">${icon('code', 17)}</button>
+          <button type="button" class="icon-btn" data-act="edit" data-tip="Edit" aria-label="Edit environment">${icon('edit', 17)}</button>
+          <button type="button" class="icon-btn" data-act="del" data-tip="Remove" aria-label="Remove environment">${icon('trash', 17)}</button>
+          <button type="button" class="btn small" data-act="run" ${busyStore ? 'disabled title="A test is running"' : ''}>${icon('play', 14)}Check now</button></div></li>`;
+    };
+    const envPanel = `<section class="panel"><div class="panel-head stack-sm"><div><h2>Environments</h2><p class="sub" style="margin:2px 0 0">Your staging themes and staging stores, saved once. Each check compares it with your live store.</p></div>
+        <button type="button" class="btn secondary" id="env-add">${icon('add', 16)}Add environment</button></div>
+      ${envs.length ? `<ul class="env-list">${envs.map(envRow).join('')}</ul>`
+        : `<div class="env-empty"><p><b>Do you test changes somewhere before they go live?</b> Save it here, for example a <b>staging theme</b> your developer works on, a theme connected to GitHub, or a <b>separate staging store</b>. Then check it with one click, every day, or automatically after each deploy.</p></div>`}</section>`;
+
     const form = `<section class="panel pub-start">
-      <div class="pub-intro"><span class="empty-icon">${icon('publish', 22)}</span><div><h2>Check a theme before it goes live</h2>
-        <p class="sub">We run your test suite on the draft theme and on your live theme at the same time, compare every check, screenshot and speed measure, and tell you if anything would break.</p></div></div>
+      <div class="pub-intro"><span class="empty-icon">${icon('publish', 22)}</span><div><h2>Check a theme once</h2>
+        <p class="sub">Paste a draft theme's preview link. We test it and your live theme at the same time, compare every check, screenshot and speed measure, and tell you if anything would break.</p></div></div>
       <form id="pubf" novalidate>
         <div class="pub-fields"><div class="field"><label for="purl">Theme preview link</label><input id="purl" name="url" placeholder="https://xxxx.shopifypreview.com" autocomplete="off" required></div>
         <div class="field"><label for="plabel">What changed <span class="muted" style="font-weight:400">(optional)</span></label><input id="plabel" name="label" placeholder="e.g. New Diwali homepage" maxlength="120"></div>
-        <button class="btn" type="submit" ${s.active_run_id ? 'disabled title="A test is running"' : ''}>${icon('play', 16)}Start check</button></div>
+        <button class="btn" type="submit" ${busyStore ? 'disabled title="A test is running"' : ''}>${icon('play', 16)}Start check</button></div>
         <p class="error-msg" id="pub-err" role="alert"></p>
       </form>
       <details class="howto"><summary>Where do I find the preview link?</summary><ol>
         <li>In Shopify admin, open <b>Online Store → Themes</b>.</li>
         <li>Next to the draft theme, open the <b>⋯</b> menu and choose <b>Preview</b>.</li>
         <li>In the preview bar at the bottom, choose <b>Share preview</b> and copy the link.</li></ol>
-        <p class="muted">Nothing is published and no orders are placed. The draft theme is only opened in our test browser.</p></details>
-      ${shopify ? '' : '<div class="notice"><p>Publish checks work with Shopify themes.</p></div>'}</section>`;
+        <p class="muted">Nothing is published and no orders are placed. The draft theme is only opened in our test browser. Shopify preview links stop working after 14 days, so copy a fresh one for older drafts.</p></details>
+      ${shopify ? '' : '<div class="notice"><p>Theme preview links are a Shopify feature. For other platforms, add your staging site as an environment above.</p></div>'}</section>`;
+
     const list = d.releases.length ? `<section class="panel"><div class="panel-head"><h2>Earlier checks</h2></div>
-      <div class="table-wrap flat"><table class="data"><thead><tr><th>Started</th><th>Theme</th><th>Result</th><th>Findings</th><th aria-label="Open"></th></tr></thead><tbody>
-      ${d.releases.map((r) => { const c = r.summary?.counts; const th = r.summary?.theme?.draft?.name; return `<tr class="link" data-href="#/s/${s.id}/publish/${r.id}" tabindex="0"><td><span class="cell-main">${time(r.created_at)}</span><div class="cell-sub">${esc(exact(r.created_at))}</div></td>
-        <td><span class="cell-main">${esc(th || 'Draft theme')}</span>${r.label ? `<div class="cell-sub">${esc(r.label)}</div>` : ''}</td><td>${pubPill(r)}</td>
+      <div class="table-wrap flat"><table class="data"><thead><tr><th>Started</th><th>What was checked</th><th>Result</th><th>Findings</th><th aria-label="Open"></th></tr></thead><tbody>
+      ${d.releases.map((r) => { const c = r.summary?.counts; const th = r.summary?.theme?.draft?.name; const what = r.environment?.name || th || 'Draft theme'; return `<tr class="link" data-href="#/s/${s.id}/publish/${r.id}" tabindex="0"><td><span class="cell-main">${time(r.created_at)}</span><div class="cell-sub">${esc(BY[r.trigger] || 'You')} · ${esc(exact(r.created_at))}</div></td>
+        <td><span class="cell-main">${esc(what)}</span>${r.label || (r.environment && th) ? `<div class="cell-sub">${esc([r.environment && th, r.label].filter(Boolean).join(' · '))}</div>` : ''}</td><td>${pubPill(r)}</td>
         <td class="cell-sub">${c ? [c.blockers && plural(c.blockers, 'break'), c.reviews && plural(c.reviews, 'warning'), c.visual && `${plural(c.visual, 'page')} changed`, c.fixes && `${plural(c.fixes, 'fix', 'fixes')}`].filter(Boolean).join(' · ') || 'No differences' : esc(r.summary?.error || '–')}</td>
         <td class="go">${icon('right', 16)}</td></tr>`; }).join('')}</tbody></table></div></section>` : '';
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Safe to publish')}${form}${list}</div>`;
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Safe to publish')}${envPanel}${form}${list}</div>`;
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
+    $('#env-add').onclick = async () => { if (await envDialog(s)) render({ silent: true }); };
+    $$('li.env', ctx.main).forEach((li) => {
+      const e = envs.find((x) => x.id === Number(li.dataset.env));
+      li.querySelectorAll('[data-act]').forEach((b) => (b.onclick = async () => {
+        const act = b.dataset.act;
+        if (act === 'edit') { if (await envDialog(s, e)) render({ silent: true }); }
+        else if (act === 'pipe') pipelineDialog(s, e);
+        else if (act === 'del') {
+          if (!(await confirmDialog({ title: `Remove ${e.name}?`, body: 'Earlier checks stay in your history. A deploy pipeline using this environment\'s key will stop working.', confirm: 'Remove', danger: true }))) return;
+          await api(`/api/stores/${s.id}/environments/${e.id}`, { method: 'DELETE' });
+          render({ silent: true });
+        } else if (act === 'run') {
+          const done = busy(b, 'Starting');
+          try { const r = await api(`/api/stores/${s.id}/releases`, { method: 'POST', body: { environmentId: e.id } }); location.hash = `#/s/${s.id}/publish/${r.id}`; }
+          catch (ex) { done(); toast(ex.message, 'error'); }
+        }
+      }));
+    });
     $('#pubf').onsubmit = async (e) => {
       e.preventDefault();
       const url = $('#purl').value.trim();
@@ -1245,14 +1323,82 @@
     if (d.releases.some((r) => r.status === 'running')) poll(4000);
   };
 
+  function envDialog(s, e = null) {
+    const kind = e?.kind || 'theme';
+    const body = `<p>Save a place where changes are tested before they go live. We compare it with your live store.</p>
+      <div class="field"><label for="env-name">Name</label><input id="env-name" name="name" maxlength="60" placeholder="e.g. Staging" value="${esc(e?.name || '')}" required></div>
+      <fieldset class="field env-kinds"><legend>What is it?</legend>
+        <label class="opt"><input type="radio" name="kind" value="theme" ${kind === 'theme' ? 'checked' : ''}><span><b>A theme on this store</b><small>A draft or staging theme, including one connected to GitHub. Use its Share preview link.</small></span></label>
+        <label class="opt"><input type="radio" name="kind" value="store" ${kind === 'store' ? 'checked' : ''}><span><b>A separate staging store or site</b><small>Another Shopify store, a Hydrogen or headless preview, or a staging site on any platform.</small></span></label></fieldset>
+      <div class="field"><label for="env-url" id="env-url-l"></label><input id="env-url" name="url" autocomplete="off" value="${esc(e?.url || '')}" required><p class="hint" id="env-url-h"></p></div>
+      <div class="field" id="env-pw-f"><label for="env-pw">Storefront password <span class="muted" style="font-weight:400">(if it has one)</span></label><input id="env-pw" name="password" type="password" autocomplete="new-password" placeholder="${e?.hasPassword ? 'Saved. Type to replace it' : 'Leave empty if it has none'}"></div>
+      <label class="check-line"><input type="checkbox" name="auto" ${e?.auto === 'daily' ? 'checked' : ''}><span>Check it every day and email me if something would break</span></label>`;
+    return formDialog({
+      title: e ? `Edit ${e.name}` : 'Add environment', body, submit: e ? 'Save' : 'Add environment',
+      onOpen: (dl) => {
+        const sync = () => {
+          const k = dl.querySelector('input[name=kind]:checked').value;
+          dl.querySelector('#env-url-l').textContent = k === 'theme' ? 'Theme preview link' : 'Address';
+          dl.querySelector('#env-url').placeholder = k === 'theme' ? 'https://xxxx.shopifypreview.com' : 'https://staging-yourstore.myshopify.com';
+          dl.querySelector('#env-url-h').textContent = k === 'theme' ? 'Online Store → Themes → ⋯ → Preview → Share preview. A theme connected to GitHub keeps the same link.' : 'The home page of the staging store or site.';
+          dl.querySelector('#env-pw-f').hidden = k !== 'store';
+        };
+        dl.querySelectorAll('input[name=kind]').forEach((r) => (r.onchange = sync));
+        sync();
+      },
+      onSubmit: (f) => {
+        const body = { name: f.name.value, kind: f.kind.value, url: f.url.value, auto: f.auto.checked ? 'daily' : 'off' };
+        if (f.password.value) body.password = f.password.value;
+        return e ? api(`/api/stores/${s.id}/environments/${e.id}`, { method: 'PATCH', body }) : api(`/api/stores/${s.id}/environments`, { method: 'POST', body });
+      },
+    });
+  }
+
+  function pipelineDialog(s, e) {
+    const base = location.origin;
+    const curl = `curl -X POST ${base}/api/gate \\\n  -H "Authorization: Bearer ${e.token}"`;
+    const yaml = `- name: Tharam publish check
+  env:
+    THARAM_KEY: \${{ secrets.THARAM_KEY }}
+  run: |
+    R=$(curl -s -X POST ${base}/api/gate -H "Authorization: Bearer $THARAM_KEY" \\
+      -H "Content-Type: application/json" -d '{"label":"\${{ github.sha }}"}')
+    ID=$(echo "$R" | jq -r .id)
+    for i in $(seq 1 60); do
+      sleep 10
+      R=$(curl -s ${base}/api/gate/check/$ID -H "Authorization: Bearer $THARAM_KEY")
+      [ "$(echo "$R" | jq -r .done)" = "true" ] && break
+    done
+    echo "$R" | jq -r '.headline, .report'
+    [ "$(echo "$R" | jq -r .pass)" = "true" ]`;
+    const body = `<p>If your developer deploys <b>${esc(e.name)}</b> with GitHub, Bitbucket or a script, a check can run after every deploy. The deploy stops when Tharam says <b>Don't publish yet</b>, and you get the side-by-side report.</p>
+      <div class="field"><label>Key for ${esc(e.name)}</label><div class="copy-row"><code id="pk">${esc(e.token)}</code><button type="button" class="icon-btn bordered" data-copy="key" data-tip="Copy" aria-label="Copy key">${icon('copy', 16)}</button></div>
+        <p class="hint">Treat it like a password. Anyone with it can start checks of this environment, nothing else.</p></div>
+      <details class="howto" open><summary>GitHub Actions step</summary><p class="muted">Save the key as a repository secret named THARAM_KEY, then add this step after the step that deploys to ${esc(e.name)}.</p>
+        <div class="code-box"><button type="button" class="icon-btn" data-copy="yaml" data-tip="Copy" aria-label="Copy step">${icon('copy', 16)}</button><pre>${esc(yaml)}</pre></div></details>
+      <details class="howto"><summary>Any other tool</summary><p class="muted">Start a check, then read <code>/api/gate/check/&lt;id&gt;</code> until <code>done</code> is true. <code>pass</code> is false when something would break. To check a new theme, send <code>{"url": "&lt;preview link&gt;"}</code>.</p>
+        <div class="code-box"><button type="button" class="icon-btn" data-copy="curl" data-tip="Copy" aria-label="Copy command">${icon('copy', 16)}</button><pre>${esc(curl)}</pre></div></details>
+      <p style="margin-top:14px"><button type="button" class="btn small secondary" data-rotate>Make a new key</button> <span class="muted">The old key stops working.</span></p>`;
+    formDialog({ title: 'Check from your deploy pipeline', body, wide: true, cancel: 'Done',
+      onOpen: (dl) => {
+        const vals = { key: () => e.token, yaml: () => yaml.replaceAll(e.token, e.token), curl: () => curl };
+        dl.querySelectorAll('[data-copy]').forEach((b) => (b.onclick = () => copyText(vals[b.dataset.copy]())));
+        dl.querySelector('[data-rotate]').onclick = async (ev) => {
+          if (!(await confirmDialog({ title: 'Make a new key?', body: 'Pipelines using the current key stop working until you update them.', confirm: 'Make new key', danger: true }))) return;
+          const n = await api(`/api/stores/${s.id}/environments/${e.id}/token`, { method: 'POST' });
+          dl.close(); pipelineDialog(s, n);
+        };
+      } });
+  }
+
   async function publishDetail(ctx, s, rid) {
     const r = await api(`/api/stores/${s.id}/releases/${rid}`);
     if (!ctx.alive()) return;
     const sum = r.summary;
     const crumb = `<a href="#/s/${s.id}/publish">Safe to publish</a> / Check #${r.id}`;
-    const title = sum?.theme?.draft?.name || r.label || 'Draft theme';
-    const meta = `${r.label && sum?.theme?.draft?.name ? `<span>${esc(r.label)}</span><span class="sep"></span>` : ''}<span>Started ${esc(exact(r.created_at))}</span>${r.finished_at ? `<span class="sep"></span><span>took ${duration(r.created_at, r.finished_at)}</span>` : ''}`;
-    const preview = `<a class="icon-btn bordered" href="${esc(r.preview_url)}" target="_blank" rel="noopener" data-tip="Open draft preview" aria-label="Open draft preview">${icon('external', 17)}</a>`;
+    const title = r.environment?.name || sum?.theme?.draft?.name || r.label || 'Draft theme';
+    const meta = `${[r.environment && sum?.theme?.draft?.name, r.label && (r.environment || sum?.theme?.draft?.name) ? r.label : null].filter(Boolean).map((x) => `<span>${esc(x)}</span><span class="sep"></span>`).join('')}<span>Started ${esc(exact(r.created_at))}${r.trigger && r.trigger !== 'manual' ? ` · ${esc(BY[r.trigger])}` : ''}</span>${r.finished_at ? `<span class="sep"></span><span>took ${duration(r.created_at, r.finished_at)}</span>` : ''}`;
+    const preview = `<a class="icon-btn bordered" href="${esc(r.preview_url)}" target="_blank" rel="noopener" data-tip="Open what was checked" aria-label="Open what was checked">${icon('external', 17)}</a>`;
 
     if (r.status === 'running') {
       const row = (label, run) => {
@@ -1263,8 +1409,8 @@
           <div class="progress"><i style="width:${run.status === 'done' ? 100 : st.pct}%"></i></div>${run.live ? `<p class="live-tally">${tally(run.live.counts)}</p>` : ''}</div>`;
       };
       ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb, meta, actions: preview + `<button type="button" class="btn danger" id="pub-stop">${icon('stop', 16)}Stop</button>` })}
-        <section class="panel run-live"><div class="rl-head"><span class="spinner"></span><div><h2>Testing both themes side by side</h2><p>Usually takes 1 to 3 minutes. This page updates by itself.</p></div></div></section>
-        <div class="grid-2 run-live-grid"><section class="panel">${row('Live theme', r.runs.live)}</section><section class="panel">${row('Draft theme', r.runs.draft)}</section></div></div>`;
+        <section class="panel run-live"><div class="rl-head"><span class="spinner"></span><div><h2>Testing live and ${esc(r.environment?.name || 'the draft')} side by side</h2><p>Usually takes 1 to 3 minutes. This page updates by itself.</p></div></div></section>
+        <div class="grid-2 run-live-grid"><section class="panel">${row(r.environment?.kind === 'store' ? 'Live store' : 'Live theme', r.runs.live)}</section><section class="panel">${row(r.environment?.name || 'Draft theme', r.runs.draft)}</section></div></div>`;
       $('#pub-stop').onclick = async (e) => {
         if (!(await confirmDialog({ title: 'Stop this publish check?', body: 'Both test runs stop and nothing is saved.', confirm: 'Stop check', danger: true }))) return;
         busy(e.currentTarget, 'Stopping');
@@ -1279,28 +1425,30 @@
       return;
     }
 
+    const cand = r.environment?.name || 'the draft';
+    const candCap = r.environment?.name || 'Draft';
     const [vLabel, vKey] = PUB[r.verdict];
     const icn = { safe: 'check', review: 'alerts', blocked: 'stop' }[r.verdict];
     const hero = `<section class="panel pub-verdict ${vKey}">
       <span class="pv-icon">${icon(icn, 26)}</span>
       <div class="pv-text"><p class="pv-kicker">${esc(vLabel)}</p><h2>${esc(sum.headline)}</h2>
-        <p class="muted">${esc(sum.theme?.draft?.name || 'Draft')} compared with ${esc(sum.theme?.live?.name || 'your live theme')} on desktop, tablet and phone.</p></div>
-      <div class="pv-scores"><div><span>Live</span><b>${sum.scores?.live ?? '–'}</b></div><span class="pv-arrow">${icon('arrow', 18)}</span><div><span>Draft</span><b class="${(sum.scores?.draft ?? 0) < (sum.scores?.live ?? 0) - 5 ? 't-fail' : ''}">${sum.scores?.draft ?? '–'}</b></div></div></section>`;
+        <p class="muted">${esc(r.environment?.kind === 'store' ? r.environment.name : sum.theme?.draft?.name || 'Draft')} compared with ${esc(r.environment?.kind === 'store' ? 'your live store' : sum.theme?.live?.name || 'your live theme')} on desktop, tablet and phone.</p></div>
+      <div class="pv-scores"><div><span>Live</span><b>${sum.scores?.live ?? '–'}</b></div><span class="pv-arrow">${icon('arrow', 18)}</span><div><span>${r.environment?.kind === 'store' ? 'Staging' : 'Draft'}</span><b class="${(sum.scores?.draft ?? 0) < (sum.scores?.live ?? 0) - 5 ? 't-fail' : ''}">${sum.scores?.draft ?? '–'}</b></div></div></section>`;
     const findRow = (x, kind) => `<li><div class="row"><span class="sev ${kind === 'fix' ? 'ok' : x.status === 'fail' ? 'fail' : 'warn'}">${kind === 'fix' ? 'Fixed' : x.status === 'fail' ? 'Breaks' : 'Check'}</span>
       <span><span class="t">${esc(x.title)}</span><span class="d">${esc(kind === 'fix' ? `On live: ${x.liveDetail}` : x.detail)}</span>
       ${kind !== 'fix' && x.liveDetail ? `<span class="pub-live">On live: ${esc(x.liveDetail)}</span>` : ''}
       ${kind !== 'fix' && x.fix ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}
       ${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}</span><span></span></div></li>`;
     const breaks = [...sum.blockers, ...sum.reviews];
-    const findings = `<div class="grid-2 tight"><section class="panel"><h2>Breaks or changes on the draft</h2><p class="sub">Works on your live store, but not on the draft.</p>
-        ${breaks.length ? `<ul class="list">${breaks.map((x) => findRow(x, 'break')).join('')}</ul>` : `<p class="muted" style="margin:0">Nothing breaks on the draft.</p>`}</section>
-      <section class="panel"><h2>Fixed by the draft</h2><p class="sub">Problems on your live store that the draft fixes.</p>
-        ${sum.fixes.length ? `<ul class="list">${sum.fixes.map((x) => findRow(x, 'fix')).join('')}</ul>` : `<p class="muted" style="margin:0">No live problems are fixed by the draft.</p>`}</section></div>`;
+    const findings = `<div class="grid-2 tight"><section class="panel"><h2>Breaks or changes on ${esc(cand)}</h2><p class="sub">Works on your live store, but not on ${esc(cand)}.</p>
+        ${breaks.length ? `<ul class="list">${breaks.map((x) => findRow(x, 'break')).join('')}</ul>` : `<p class="muted" style="margin:0">Nothing breaks on ${esc(cand)}.</p>`}</section>
+      <section class="panel"><h2>Fixed by ${esc(cand)}</h2><p class="sub">Problems on your live store that ${esc(cand)} fixes.</p>
+        ${sum.fixes.length ? `<ul class="list">${sum.fixes.map((x) => findRow(x, 'fix')).join('')}</ul>` : `<p class="muted" style="margin:0">No live problems are fixed by ${esc(cand)}.</p>`}</section></div>`;
     const cmp = r.compare || { visual: [], metrics: [], areas: [] };
     const DEV = [['desktop', 'Desktop'], ['tablet', 'Tablet'], ['mobile', 'Phone']].filter(([dv]) => cmp.visual.some((v) => v.key.endsWith(dv)));
-    const visual = cmp.visual.length ? `<section class="panel"><div class="panel-head"><h2>How the draft looks</h2>
+    const visual = cmp.visual.length ? `<section class="panel"><div class="panel-head"><h2>How ${esc(cand)} looks</h2>
         <div class="seg" role="radiogroup" aria-label="Device">${DEV.map(([dv, l], i) => `<label><input type="radio" name="pdev" value="${dv}" ${i === 0 ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
-        <p class="sub">Draft and live screenshots of the same page. Difference shows changed pixels in red.</p><div class="shots" id="pub-shots"></div></section>` : '';
+        <p class="sub">${esc(candCap)} and live screenshots of the same page. Difference shows changed pixels in red.</p><div class="shots" id="pub-shots"></div></section>` : '';
     const metrics = cmp.metrics.length ? `<section class="panel"><h2>Speed and page weight</h2><p class="sub">Phone-sized screen. Changes under 10% are treated as noise.</p>
       <div class="table-wrap flat"><table class="data"><thead><tr><th>Page</th><th>Measure</th><th class="num">Live</th><th class="num">Draft</th><th class="num">Change</th></tr></thead><tbody>
       ${cmp.metrics.map((m) => `<tr><td class="cell-sub">${esc(m.page)}</td><td>${esc(m.name)}</td><td class="num">${fmtVal(m.b, m.unit)}</td><td class="num">${fmtVal(m.a, m.unit)}</td><td class="num"><span class="trend ${m.trend}">${m.trend === 'worse' ? 'Slower' : m.trend === 'better' ? 'Faster' : 'Same'}</span></td></tr>`).join('')}</tbody></table></div></section>` : '';
@@ -1313,7 +1461,7 @@
     $$('[data-shot]', ctx.main).forEach((x) => (x.onclick = () => lightbox(x.dataset.shot, 'Screenshot')));
     const draw = (dv) => {
       $('#pub-shots').innerHTML = cmp.visual.filter((v) => v.key.endsWith(dv)).map((v) => {
-        const views = [['a', 'Draft', v.a], ['b', 'Live', v.b], ['diff', 'Difference', v.diff]].filter((x) => x[2]);
+        const views = [['a', candCap, v.a], ['b', 'Live', v.b], ['diff', 'Difference', v.diff]].filter((x) => x[2]);
         const chip = v.ratio == null ? '' : v.ratio > 5 ? `<span class="pill warning">${v.ratio}% different</span>` : '<span class="pill healthy">Looks the same</span>';
         const pg = DEVICE_PAGE[v.key.split('-')[0]] || v.key;
         return `<article class="shot-card"><header><b>${esc(pg)}</b>${chip}</header>
