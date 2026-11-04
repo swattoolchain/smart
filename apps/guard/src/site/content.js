@@ -5,12 +5,14 @@
  */
 
 export const STATUS = {
-  live: { label: 'Live', tone: 'live' },
-  beta: { label: 'Beta', tone: 'beta' },
-  soon: { label: 'Coming soon', tone: 'soon' },
-  planned: { label: 'Planned', tone: 'planned' },
+  live: null,
+  beta: null,
+  soon: { label: 'Early access', tone: 'soon' },
+  planned: { label: 'Early access', tone: 'soon' },
   early: { label: 'Early access', tone: 'soon' },
 };
+/** For tables: available today, or early access. */
+export const available = (st) => st === 'live' || st === 'beta';
 
 /** The features. Each has its own page under /features. */
 export const PRODUCTS = [
@@ -71,7 +73,7 @@ export const PRODUCTS = [
       ['Looks at every page', 'On computer and phone: overlapping text, cut-off prices, broken photos, and anything blocking the Buy button.'],
       ['Reads your product text', 'Spelling, grammar and mix-ups in new or edited products, with a suggested correction.'],
       ['Explains changes', 'When a page looks different, AI says what changed and whether it looks deliberate or like a mistake.'],
-      ['AI shoppers (coming soon)', 'AI shoppers with a goal, like “find a gift under ₹2,000 and check out”, that tell you where they got stuck.'],
+      ['AI shoppers (early access)', 'AI shoppers with a goal, like “find a gift under ₹2,000 and check out”, that tell you where they got stuck.'],
     ],
   },
   {
@@ -90,24 +92,24 @@ export const PRODUCTS = [
 
 /** Store platforms. What works where, in plain words. */
 export const PLATFORMS = [
-  { slug: 'shopify', name: 'Shopify', status: 'live', blurb: 'Everything Tharam does works on Shopify today. Our Shopify app is on its way to the Shopify App Store.',
+  { slug: 'shopify', name: 'Shopify', status: 'live', blurb: 'Everything Tharam does works on Shopify, with no install: shopping checks, product and price checks, Safe to publish, speed, Google and AI review.',
     caps: { experience: 'live', journey: 'live', catalog: 'live', publish: 'live', app: 'soon' },
     notes: ['Works with Shopify’s standard themes, like Dawn, and popular paid themes.', 'Store still behind a password? Add the password and we’ll test it.', 'Our checkout test stops before payment, so no orders are ever placed.'] },
-  { slug: 'woocommerce', name: 'WooCommerce', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests and a WordPress plugin are next.',
+  { slug: 'woocommerce', name: 'WooCommerce', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks for your WooCommerce store, with shopping tests and a WordPress plugin in early access.',
     caps: { experience: 'live', journey: 'soon', catalog: 'soon', publish: 'planned', app: 'planned' },
     notes: ['Product and price checks are possible without installing anything.', 'The plugin will also check order emails.'] },
-  { slug: 'bigcommerce', name: 'BigCommerce', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are on our roadmap.',
+  { slug: 'bigcommerce', name: 'BigCommerce', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks, with shopping tests in early access.',
     caps: { experience: 'live', journey: 'planned', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: [] },
-  { slug: 'adobe-commerce', name: 'Adobe Commerce (Magento)', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are on our roadmap.',
+  { slug: 'adobe-commerce', name: 'Adobe Commerce (Magento)', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks, with shopping tests in early access.',
     caps: { experience: 'live', journey: 'planned', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: [] },
-  { slug: 'salesforce-commerce', name: 'Salesforce Commerce Cloud', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are set up with you.',
-    caps: { experience: 'live', journey: 'beta', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: ['Talk to us and we’ll set up shopping tests for your store.'] },
-  { slug: 'wix', name: 'Wix', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are on our roadmap.',
+  { slug: 'salesforce-commerce', name: 'Salesforce Commerce Cloud', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks, with shopping tests for your storefront in early access.',
+    caps: { experience: 'live', journey: 'soon', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: ['Join early access and we’ll set up shopping tests for your storefront with you.'] },
+  { slug: 'wix', name: 'Wix', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks, with shopping tests in early access.',
     caps: { experience: 'live', journey: 'planned', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: [] },
-  { slug: 'squarespace', name: 'Squarespace', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks work today. Shopping tests are on our roadmap.',
+  { slug: 'squarespace', name: 'Squarespace', status: 'beta', blurb: 'Speed, Google, mobile, broken link and design checks, with shopping tests in early access.',
     caps: { experience: 'live', journey: 'planned', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: [] },
-  { slug: 'headless', name: 'Custom-built stores', status: 'beta', blurb: 'Built your own store, or had a developer build one? Speed, Google, mobile and design checks work today, and we set up shopping tests with you.',
-    caps: { experience: 'live', journey: 'beta', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: ['Works with any store on a public web address, including “headless” stores built with Hydrogen or Next.js.'] },
+  { slug: 'headless', name: 'Custom-built stores', status: 'beta', blurb: 'Built your own store, or had a developer build one? Speed, Google, mobile and design checks, with shopping tests for your storefront in early access.',
+    caps: { experience: 'live', journey: 'soon', catalog: 'planned', publish: 'planned', app: 'planned' }, notes: ['Works with any store on a public web address, including “headless” stores built with Hydrogen or Next.js.'] },
 ];
 
 export const CAPS = [
@@ -167,7 +169,7 @@ export const FAQ = [
   ['Do I need to be technical?', 'No. You enter your store address and choose how often to check. Tharam tells you in plain words what broke and how to fix it, or we fix it for you with the managed service.'],
   ['Will the tests place fake orders?', 'No. Our test adds one item to a new cart, opens checkout to make sure it loads, then stops and empties the cart. It never enters payment details, so no order is ever created.'],
   ['Will it slow down my store?', 'No. A check is a few page visits every few hours, less than a single customer. It also tells your analytics it’s a test, so it doesn’t mess up your numbers.'],
-  ['Does it work with my store?', 'Speed, Google, mobile, broken link and design checks work on any online store. Shopping tests, product checks and Safe to publish work on Shopify today, with other platforms following.'],
+  ['Does it work with my store?', 'Yes. Tharam works with Shopify, WooCommerce, BigCommerce, Magento, Wix, Squarespace and custom-built stores. Shopify stores get every check with no install; other platforms are joining early access for shopping tests.'],
   ['My store is still behind a password', 'No problem. Add your store password and we’ll unlock the store before each check.'],
   ['Can you look after my store for me?', 'Yes. With the managed service, our team watches your store, fixes what breaks and checks every change for you. Start with a free store review.'],
 ];

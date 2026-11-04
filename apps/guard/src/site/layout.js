@@ -29,6 +29,8 @@ const P = {
 };
 export const icon = (k, size = 20) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[k] || ''}</svg>`;
 export const badge = (status) => { const s = STATUS[status]; return s ? `<span class="st st-${s.tone}">${esc(s.label)}</span>` : ''; };
+/** A table cell: a tick when available, otherwise early access. */
+export const capCell = (status) => (STATUS[status] ? badge(status) : `<span class="cap-yes" aria-label="Included">✓</span>`);
 
 function nav(path) {
   const on = (p) => (path === p || path.startsWith(p + '/') ? ' aria-current="page"' : '');

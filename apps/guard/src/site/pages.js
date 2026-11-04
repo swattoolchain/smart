@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { layout, esc, icon, badge, VERSION } from './layout.js';
+import { layout, esc, icon, badge, capCell, VERSION } from './layout.js';
 export { VERSION };
 import { PRODUCTS, PLATFORMS, MARKETPLACES, CAPS, FAQ, MANAGED, AUDIENCES, PROMISES } from './content.js';
 import { demoMarkup, demoScript } from './demo.js';
@@ -73,10 +73,10 @@ export function home() {
     <div class="sec-head"><p class="eyebrow">AI-powered</p><h2 class="h2">An extra pair of eyes that never gets tired</h2>
       <p class="body-l">Our checks give you a clear yes or no, so an alert is always real. On top of that, AI looks at your pages and reads your product text like a shopper would.</p></div>
     <div class="ai-grid">
-      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>Looks at every page ${badge('beta')}</h3><p>Text covering photos, cut-off prices, broken images, or a popup hiding the Buy button, on computer and phone.</p></div>
-      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>Reads your product text ${badge('beta')}</h3><p>Spelling mistakes and mix-ups, like a silk saree described as cotton, with a suggested fix.</p></div>
-      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>Explains what changed ${badge('beta')}</h3><p>A page looks different? AI tells you what changed and whether it looks deliberate or like a mistake.</p></div>
-      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>AI shoppers ${badge('soon')}</h3><p>Shoppers with a goal, like “find a gift under ₹2,000”, that tell you where they got stuck.</p></div>
+      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>Looks at every page</h3><p>Text covering photos, cut-off prices, broken images, or a popup hiding the Buy button, on computer and phone.</p></div>
+      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>Reads your product text</h3><p>Spelling mistakes and mix-ups, like a silk saree described as cotton, with a suggested fix.</p></div>
+      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>Explains what changed</h3><p>A page looks different? AI tells you what changed and whether it looks deliberate or like a mistake.</p></div>
+      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>AI shoppers ${badge('early')}</h3><p>Shoppers with a goal, like “find a gift under ₹2,000”, that tell you where they got stuck.</p></div>
     </div>
   </div></section>
 
@@ -175,7 +175,7 @@ export function product(slug) {
   <div class="plan-note"><div class="wrap">${esc(p.name)} is included in every Tharam plan. <a href="/pricing">See plans</a></div></div>
   <section class="band white"><div class="wrap"><div class="features">${p.points.map(([t, d]) => `<div class="feature"><span class="ft-ic">${icon('check', 16)}</span><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div></div></section>
   <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">Works with</h2></div>
-    <div class="support-grid">${PLATFORMS.map((pl) => `<a href="/platforms/${pl.slug}" class="sup"><span>${esc(pl.name)}</span>${badge(pl.caps[k])}</a>`).join('')}</div></div></section>
+    <div class="support-grid">${PLATFORMS.map((pl) => `<a href="/platforms/${pl.slug}" class="sup"><span>${esc(pl.name)}</span>${capCell(pl.caps[k])}</a>`).join('')}</div></div></section>
   <section class="band white"><div class="wrap"><div class="sec-head"><h2 class="h2">Also included</h2></div><div class="pillars three">${others.map((o) => featureCard(o, false)).join('')}</div></div></section>
   ${cta()}</main>`;
   return layout({ title: p.name, description: p.short, path: `/features/${slug}`, body });
@@ -183,10 +183,10 @@ export function product(slug) {
 
 /* ---------- Platforms ---------- */
 const capTable = (list) => `<div class="table-scroll"><table class="cmp caps"><thead><tr><th>What Tharam checks</th>${list.map((p) => `<th><a href="/platforms/${p.slug}">${esc(p.name)}</a></th>`).join('')}</tr></thead><tbody>
-  ${CAPS.map(([k, l]) => `<tr><td>${esc(l)}</td>${list.map((p) => `<td>${badge(p.caps[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  ${CAPS.map(([k, l]) => `<tr><td>${esc(l)}</td>${list.map((p) => `<td>${capCell(p.caps[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 
 export function platformIndex() {
-  const body = `<main>${pageHead({ eyebrow: 'Platforms', title: 'Works with the store you already have', lede: 'Speed, Google, mobile and design checks work on any online store today. Shopping tests, product checks and Safe to publish come platform by platform, starting with Shopify.' })}
+  const body = `<main>${pageHead({ eyebrow: 'Platforms', title: 'Works with the store you already have', lede: 'Tharam works with the store you already have: Shopify, WooCommerce, BigCommerce, Magento, Salesforce Commerce Cloud, Wix, Squarespace and custom-built stores.' })}
     <section class="band white"><div class="wrap"><div class="plat-grid">${PLATFORMS.map((p) => `<a class="plat" href="/platforms/${p.slug}"><div class="plat-h"><h3>${esc(p.name)}</h3>${badge(p.status)}</div><p>${esc(p.blurb)}</p><span class="more">Details ${icon('arrow', 14)}</span></a>`).join('')}</div></div></section>
     <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">What works where</h2></div>${capTable(PLATFORMS)}</div></section>${cta()}</main>`;
   return layout({ title: 'Platforms', description: 'Tharam works with Shopify, WooCommerce, BigCommerce, Magento, Salesforce Commerce Cloud, Wix, Squarespace and custom-built stores.', path: '/platforms', body });
@@ -199,10 +199,10 @@ export function platform(slug) {
   const short = p.name.split(' ')[0];
   const body = `<main>${pageHead({ eyebrow: 'Platforms', status: p.status, title: `Tharam for ${p.name}`, lede: p.blurb, actions: `<a class="btn" href="/#check">Check my ${esc(short)} store free</a>${live ? '<a class="btn secondary" href="/app#signup">Create free account</a>' : '<a class="btn secondary" href="/demo">Talk to us</a>'}` })}
   <section class="band white"><div class="wrap split">
-    <div><h2 class="h2">What Tharam checks on ${esc(p.name)}</h2><ul class="cap-list">${CAPS.map(([k, l]) => `<li><span>${esc(l)}</span>${badge(p.caps[k])}</li>`).join('')}</ul></div>
+    <div><h2 class="h2">What Tharam checks on ${esc(p.name)}</h2><ul class="cap-list">${CAPS.map(([k, l]) => `<li><span>${esc(l)}</span>${capCell(p.caps[k])}</li>`).join('')}</ul></div>
     <div>${p.notes.length ? `<div class="note-card"><h3>Good to know</h3><ul>${p.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}
-      ${!live ? `<form class="note-card wl" data-waitlist="platform-${esc(p.slug)}" novalidate><h3>Be first when shopping tests arrive</h3><p>Leave your email and store address. We’ll let you know as soon as they’re ready for ${esc(p.name)}.</p>
-        <input name="email" type="email" placeholder="you@yourstore.com" required aria-label="Email"><input name="url" type="text" placeholder="yourstore.com" aria-label="Store address"><button class="btn" type="submit">Keep me posted</button><p class="wl-msg" role="status"></p></form>` : ''}</div>
+      ${!live ? `<form class="note-card wl" data-waitlist="platform-${esc(p.slug)}" novalidate><h3>Join early access for ${esc(p.name)}</h3><p>Leave your email and store address and we’ll set up shopping tests for your store.</p>
+        <input name="email" type="email" placeholder="you@yourstore.com" required aria-label="Email"><input name="url" type="text" placeholder="yourstore.com" aria-label="Store address"><button class="btn" type="submit">Join early access</button><p class="wl-msg" role="status"></p></form>` : ''}</div>
   </div></section>
   <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">What you get</h2></div><div class="pillars three">${PRODUCTS.slice(0, 3).map((o) => featureCard(o, false)).join('')}</div></div></section>
   ${cta(`See how your ${short} store is doing`)}</main>`;
