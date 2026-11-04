@@ -28,10 +28,13 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, signal, progress }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
+  const phase = (k) => { if (progress) progress.phase = k; };
+  if (progress) progress.rec = rec;
+  phase('open');
   const runDir = path.join(config.dataDir, 'shots', `run-${runId}`);
   fs.mkdirSync(runDir, { recursive: true });
   let shotN = 0;
@@ -45,6 +48,9 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
   const mctx = await newContext({ mobile: true });
   ctx.setDefaultTimeout(20000);
   mctx.setDefaultTimeout(20000);
+  // Stopping a run closes both browser contexts; any Playwright call in flight then rejects at once.
+  const onAbort = () => { ctx.close().catch(() => {}); mctx.close().catch(() => {}); };
+  if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort); }
   const page = await ctx.newPage();
   const mobilePage = await mctx.newPage();
   let info;
@@ -67,19 +73,26 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let metrics = {};
     let catalog = null;
     let ai = null;
+    phase('journey');
     const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (kind !== 'journeys') {
+        phase('quality');
         metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;
       }
       if (kind === 'full' && storeId && on('visual')) {
+        phase('visual');
         await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`) });
       }
       if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
+        phase('catalog');
         catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on });
+        // The full catalog checks supersede the quick sample check; reporting both double-counts one mistake.
+        if (catalog?.count) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
       }
       if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
+        phase('ai');
         ai = await reviewScreens({ runDir, origin, rec });
       }
     }
@@ -91,6 +104,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     return {
       origin,
       kind,
+      skippedGroups: disabled,
       startedAt: new Date(started).toISOString(),
       durationMs: Date.now() - started,
       isShopify: info.isShopify,
@@ -110,10 +124,12 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       cover,
     };
   } catch (e) {
+    if (signal?.aborted) throw new Error('cancelled');
     rec.add(check('fn.engine', 'functional', 'Scan completed', 'skip', { detail: shortErr(e) }));
     const { score, verdict, categories } = scoreChecks(rec.checks);
     return { origin, kind, error: shortErr(e), checks: rec.checks, steps: rec.steps, score, verdict, categories, summary: 'The scan could not finish.' };
   } finally {
+    if (signal) signal.removeEventListener('abort', onAbort);
     await ctx.close().catch(() => {});
     await mctx.close().catch(() => {});
   }

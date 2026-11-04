@@ -5,7 +5,7 @@
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = window.escHtml;
 
-  const S = { me: null, admin: false, stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '' };
+  const S = { me: null, admin: false, stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
 
   // ---------- Helpers ----------
   async function api(path, opts = {}) {
@@ -52,6 +52,7 @@
     const l = groups.map((x) => softLabel(x.label));
     return l.length > 1 ? `${l.slice(0, -1).join(', ')} and ${l[l.length - 1]}` : l[0] || '';
   }
+  const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
   const scoreClass = (n) => (n >= 90 ? '' : n >= 60 ? 'mid' : 'low');
 
   function storeStatus(s) {
@@ -118,6 +119,10 @@
     founder: '<path d="M12 3.5 14.4 9l5.6.5-4.3 3.8 1.3 5.7L12 16l-5 3 1.3-5.7L4 9.5 9.6 9z"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     chevron: '<path d="m8 10 4 4 4-4"/>',
+    play: '<path d="M8 5.8v12.4a.6.6 0 0 0 .9.5l9.8-6.2a.6.6 0 0 0 0-1l-9.8-6.2a.6.6 0 0 0-.9.5z"/>',
+    stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
+    shield: '<path d="M12 3.5 5 6v5.5c0 4.4 3 7.8 7 9 4-1.2 7-4.6 7-9V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
+    check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   };
   const icon = (k, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
 
@@ -188,6 +193,16 @@
     $$('[aria-expanded="true"]').forEach((b) => b.id !== 'menu-btn' && b.setAttribute('aria-expanded', 'false'));
   }
   document.addEventListener('click', (e) => { if (!e.target.closest('.menu, .switcher')) closePops(); });
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-stop]');
+    if (!b || !S.storeId) return;
+    const id = Number(b.dataset.stop);
+    if (!(await confirmDialog({ title: 'Stop this test?', body: 'Results collected so far are discarded and no alerts are sent. Scheduled monitoring carries on as normal.', confirm: 'Stop test', danger: true }))) return;
+    const done = busy(b, 'Stopping');
+    try { await api(`/api/stores/${S.storeId}/run/${id}/cancel`, { method: 'POST' }); S.stopping.add(id); render({ silent: true }); }
+    catch (ex) { done(); toast(ex.message, 'error'); render({ silent: true }); }
+  });
+  setInterval(() => $$('[data-clock]').forEach((el) => (el.textContent = clock(Date.now() - Number(el.dataset.clock)))), 1000);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closePops(); document.body.classList.remove('nav-open'); } });
 
   function sidebar(active) {
@@ -275,7 +290,7 @@
       const main = $('#main');
       if (!silent) { main.innerHTML = skeleton(); window.scrollTo(0, 0); }
       const ctx = { alive, main, r };
-      if (r.store) await STORE_PAGES[r.module](ctx, S.stores.find((s) => s.id === r.store));
+      if (r.store) await (STORE_PAGES[r.module] || STORE_PAGES.overview)(ctx, S.stores.find((s) => s.id === r.store));
       else await PAGES[r.page](ctx);
       if (!silent && alive()) { const h1 = main.querySelector('h1'); document.title = `${h1 ? h1.textContent + ' – ' : ''}Tharam`; }
     } catch (e) {
@@ -306,37 +321,113 @@
       <div class="meta"><span class="status-inline"><span class="dot ${esc(st.key)}"></span>${esc(st.label)}</span><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(host(s.url))}</a>${s.platform ? `<span>${esc(s.platform)}</span>` : ''}</div></div>
       ${actions ? `<div class="actions">${actions}</div>` : ''}</div>`;
   }
+  // Every way of starting a test goes through the Run validations page, so nothing starts without a preview.
+  const runLink = (s, label = 'Run validations', cls = 'btn') => `<a class="${cls}" href="#/s/${s.id}/run">${label}</a>`;
   function runButtons(s) {
-    const running = !!s.active_run_id;
-    return `<button class="btn" data-run="full" ${running ? 'disabled' : ''}>${running ? 'Test running…' : 'Run full check'}</button>
-      <button class="btn secondary" data-run="journeys" ${running ? 'disabled' : ''}>Run journey test</button>`;
+    if (s.active_run_id) return `<a class="btn secondary" href="#/s/${s.id}/runs/${s.active_run_id}"><span class="pulse" aria-hidden="true"></span>View running test</a>`;
+    return `<a class="btn" href="#/s/${s.id}/run">${icon('play', 16)}Run validations</a>`;
   }
-  function bindRunButtons(ctx, s) {
-    $$('[data-run]', ctx.main).forEach((b) => (b.onclick = async () => {
-      const done = busy(b, 'Starting');
-      try { await api(`/api/stores/${s.id}/run`, { method: 'POST', body: { kind: b.dataset.run } }); toast(b.dataset.run === 'full' ? 'Full check started' : 'Journey test started'); render({ silent: true }); }
-      catch (e) { done(); toast(e.message, 'error'); }
-    }));
+  function bindRunButtons() {} // Stop buttons are handled by one listener below.
+  const kindLabel = (r) => (r.trigger === 'manual' ? 'Validation run' : KIND[r.kind] || 'Run');
+
+  // What a run does, in order. Mirrors src/live.js on the server.
+  const PHASES = [
+    { key: 'open', label: 'Open your store', sub: 'On a desktop and a phone-sized screen' },
+    { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js'] },
+    { key: 'quality', label: 'Measure speed, SEO and accessibility', groups: ['speed', 'seo', 'a11y', 'links', 'policies'], full: true },
+    { key: 'visual', label: 'Compare screenshots with the approved look', groups: ['visual'], full: true },
+    { key: 'catalog', label: 'Check every product', groups: ['catalog', 'ai.copy'], full: true },
+    { key: 'ai', label: 'AI review of how pages look', groups: ['ai.visual'], full: true },
+  ];
+  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14 };
+  const estimate = (keys) => {
+    const sec = 8 + keys.reduce((n, k) => n + (EST[k] || 5), 0);
+    return sec < 60 ? 'under a minute' : `about ${Math.ceil(sec / 60)} minutes`;
+  };
+  function planPhases(selected, kind) {
+    const full = kind ? kind === 'full' : selected.some((k) => S.catalog.groups.find((g) => g.key === k)?.run === 'full');
+    return PHASES.filter((p) => !p.groups || (p.groups.some((k) => selected.includes(k)) && (!p.full || full)))
+      .filter((p) => !(p.key === 'ai' && !S.catalog.aiEnabled));
   }
-  function liveRun(run, s) {
-    const stages = run.kind === 'full'
-      ? ['Opens your store', 'Searches and opens a product', 'Adds to cart and opens checkout', 'Measures speed, SEO and accessibility', 'Compares screenshots']
-      : ['Opens your store', 'Searches and opens a product', 'Adds to cart and opens checkout'];
+  const groupsOf = (p, selected) => S.catalog.groups.filter((g) => p.groups?.includes(g.key) && selected.includes(g.key));
+
+  function tally(c) {
+    const parts = [`<span class="t-pass">${c.pass} passed</span>`];
+    if (c.warn) parts.push(`<span class="t-warn">${c.warn} to check</span>`);
+    if (c.fail) parts.push(`<span class="t-fail">${c.fail} failed</span>`);
+    return parts.join('<span aria-hidden="true"> · </span>');
+  }
+  function liveState(run) {
+    const lv = run.live || { phase: run.status === 'queued' ? 'queued' : 'open', disabled: [], steps: [], counts: { pass: 0, warn: 0, fail: 0 }, problems: [] };
+    const selected = S.catalog.groups.filter((g) => !lv.disabled.includes(g.key)).map((g) => g.key);
+    const phases = planPhases(selected, run.kind);
+    const queued = run.status === 'queued' || lv.phase === 'queued';
+    const idx = queued ? -1 : Math.max(0, phases.findIndex((p) => p.key === lv.phase));
+    const pct = queued ? 3 : Math.min(96, Math.round(((idx + 0.5) / phases.length) * 100));
+    const stopping = S.stopping.has(run.id);
+    const startedMs = lv.steps[0]?.at || null;
+    return { lv, selected, phases, queued, idx, pct, stopping, startedMs, current: phases[idx] };
+  }
+  const clock = (ms) => { const t = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+
+  // Compact card on the Overview while a test runs.
+  function liveCard(run, s) {
+    const st = liveState(run);
+    const what = st.stopping ? 'Stopping…' : st.queued ? (run.position ? `Waiting for ${plural(run.position, 'test')} ahead` : 'Starting in a moment') : `${st.current.label} · step ${st.idx + 1} of ${st.phases.length}`;
     return `<section class="panel live" aria-live="polite"><span class="spinner" aria-hidden="true"></span>
-      <div><h2>${esc(KIND[run.kind])} ${run.status === 'queued' ? 'is queued' : 'is running'}</h2><p>Started ${time(run.created_at)}. ${run.kind === 'full' ? 'Usually takes 1–3 minutes.' : 'Usually takes under a minute.'} This page updates by itself.</p></div>
-      <a class="btn secondary small" href="#/s/${s.id}/runs/${run.id}">Open run</a>
-      <div class="stages">${stages.map((x) => `<span>${esc(x)}</span>`).join('<span aria-hidden="true">·</span>')}</div></section>`;
+      <div class="live-text"><h2>${esc(kindLabel(run))} ${st.queued ? 'is queued' : 'is running'}</h2><p>${esc(what)}</p>
+        <div class="progress" role="progressbar" aria-valuenow="${st.pct}" aria-valuemin="0" aria-valuemax="100" aria-label="Progress"><i style="width:${st.pct}%"></i></div>
+        ${st.queued ? '' : `<p class="live-tally">${tally(st.lv.counts)} so far</p>`}</div>
+      <div class="live-actions"><a class="btn secondary small" href="#/s/${s.id}/runs/${run.id}">View progress</a>${st.stopping ? '' : `<button type="button" class="btn ghost small" data-stop="${run.id}">${icon('stop', 15)}Stop</button>`}</div></section>`;
+  }
+
+  // Full live view on the run's own page.
+  function liveDetail(run, s) {
+    const st = liveState(run);
+    const t0 = st.startedMs;
+    const head = st.stopping ? 'Stopping the test' : st.queued ? 'Waiting to start' : st.current.label;
+    const sub = st.stopping ? 'Closing the test browser. Nothing from this run is saved or alerted.'
+      : st.queued ? (run.position ? `${plural(run.position, 'test')} ahead of this one. It starts automatically.` : 'Starts in a moment.')
+      : `Step ${st.idx + 1} of ${st.phases.length}${t0 ? ` · running for <span data-clock="${t0}">${clock(Date.now() - t0)}</span>` : ''}`;
+    const phaseList = st.phases.map((p, i) => {
+      const state = st.queued ? 'pending' : i < st.idx ? 'done' : i === st.idx ? 'current' : 'pending';
+      const gs = groupsOf(p, st.selected);
+      const subText = p.sub || (gs.length > 1 ? listLabels(gs) : '');
+      return `<li class="${state}"><span class="ph-mark" aria-hidden="true">${state === 'done' ? icon('check', 14) : state === 'current' ? '<span class="spinner"></span>' : ''}</span>
+        <span><b>${esc(p.label)}</b>${subText ? `<span>${esc(subText[0].toUpperCase() + subText.slice(1))}</span>` : ''}</span>
+        <span class="ph-state">${state === 'done' ? 'Done' : state === 'current' ? 'Now' : ''}</span></li>`;
+    }).join('');
+    const steps = [...st.lv.steps].reverse().slice(0, 14);
+    const feed = steps.length
+      ? `<ol class="feed">${steps.map((x) => `<li><span class="f-t">${t0 ? `+${((x.at - t0) / 1000).toFixed(1)}s` : ''}</span><span>${esc(x.text)}</span></li>`).join('')}</ol>`
+      : `<p class="muted" style="margin:0">${st.queued ? 'Activity appears here once the test starts.' : 'Opening the store…'}</p>`;
+    const problems = st.lv.problems || [];
+    return `<section class="panel run-live" aria-live="polite">
+        <div class="rl-head"><span class="spinner" aria-hidden="true"></span><div><h2>${esc(head)}</h2><p>${sub}</p></div>
+          ${st.queued ? '' : `<p class="rl-tally">${tally(st.lv.counts)}</p>`}</div>
+        <div class="progress big"><i style="width:${st.pct}%"></i></div></section>
+      ${problems.length ? `<div class="notice"><p><b>Found so far:</b> ${problems.map((x) => esc(x.title)).join(', ')}. The full report is ready when the test finishes.</p></div>` : ''}
+      <div class="grid-2 run-live-grid">
+        <section class="panel"><h2>Plan</h2><p class="sub">${plural(st.selected.length, 'validation')} on ${esc(host(s.url))}. Stops before payment; no orders are placed.</p><ol class="phase-list">${phaseList}</ol></section>
+        <section class="panel"><h2>Live activity</h2><p class="sub">What the test browser is doing, newest first.</p>${feed}</section>
+      </div>`;
+  }
+  function runResult(r) {
+    if (r.status === 'done') return `<span class="status-inline"><span class="dot ${esc(r.verdict)}"></span>${esc(VERDICT[r.verdict] || r.verdict)}</span>`;
+    if (r.status === 'cancelled') return '<span class="status-inline muted"><span class="dot"></span>Stopped</span>';
+    if (r.status === 'error') return '<span class="status-inline muted"><span class="dot"></span>Didn\'t finish</span>';
+    return `<span class="pill running">${r.status === 'queued' ? 'Queued' : 'Running'}</span>`;
   }
   function strip(runs, n = 48) {
     const list = runs.slice(0, n).reverse();
     const cells = list.map((r) => {
-      const k = r.status === 'done' ? r.verdict : r.status === 'error' ? 'error' : 'running';
-      return `<i class="${esc(k)}" title="${esc(`${KIND[r.kind]} · ${exact(r.created_at)} · ${r.status === 'done' ? VERDICT[r.verdict] || r.verdict : r.status}`)}"></i>`;
+      const k = r.status === 'done' ? r.verdict : r.status === 'error' || r.status === 'cancelled' ? 'error' : 'running';
+      const what = r.status === 'done' ? VERDICT[r.verdict] || r.verdict : r.status === 'cancelled' ? 'Stopped' : r.status === 'error' ? "Didn't finish" : 'Running';
+      return `<i class="${esc(k)}" title="${esc(`${kindLabel(r)} · ${exact(r.created_at)} · ${what}`)}"></i>`;
     });
-    while (cells.length < Math.min(n, 24)) cells.unshift('<i></i>');
     return `<div class="strip" role="img" aria-label="Results of the last ${list.length} tests">${cells.join('')}</div>`;
   }
-  const LEGEND = `<div class="legend"><span><i style="background:#3aa864"></i>Healthy</span><span><i style="background:#e2a33a"></i>Needs attention</span><span><i style="background:#d93b30"></i>Customers can't buy</span><span><i style="background:#a7abbd"></i>Didn't finish</span></div>`;
+  const LEGEND = `<div class="legend"><span><i style="background:#3aa864"></i>Healthy</span><span><i style="background:#e2a33a"></i>Needs attention</span><span><i style="background:#d93b30"></i>Customers can't buy</span><span><i style="background:#a7abbd"></i>Stopped or didn't finish</span></div>`;
   function problemsFrom(result) {
     const order = { fail: 0, warn: 1 }, sev = { critical: 0, major: 1, minor: 2 };
     return (result?.checks || []).filter((c) => c.status === 'fail' || c.status === 'warn').sort((a, b) => order[a.status] - order[b.status] || sev[a.severity] - sev[b.severity]);
@@ -351,16 +442,16 @@
     const runs = data.runs;
     const active = runs.find((r) => r.status === 'queued' || r.status === 'running');
     const lastDone = runs.find((r) => r.status === 'done');
-    const latest = lastDone ? await api('/api/runs/' + lastDone.id) : null;
+    const [latest, activeRun] = await Promise.all([lastDone ? api('/api/runs/' + lastDone.id) : null, active ? api('/api/runs/' + active.id) : null, S.catalog ? null : api('/api/catalog').then((c) => (S.catalog = c))]);
     if (!ctx.alive()) return;
     const res = latest?.result;
     const problems = problemsFrom(res);
     const done = runs.filter((r) => r.status === 'done');
     const ok = done.filter((r) => r.verdict !== 'critical').length;
     let body = '';
-    if (active) body += liveRun(active, s);
+    if (activeRun && (activeRun.status === 'queued' || activeRun.status === 'running')) body += liveCard(activeRun, s);
     if (!res && !active) {
-      body += `<section class="panel empty"><h2>Ready for its first check</h2><p>Your store is set up. The first full check tests the shopping journey, speed, SEO and accessibility, and saves today's look for visual comparisons. ${s.monitoring ? 'Scheduled monitoring starts after it finishes.' : 'Monitoring is paused, so only checks you start will run.'}</p><button class="btn" data-run="full">Run first check</button></section>`;
+      body += `<section class="panel empty"><h2>Ready for its first check</h2><p>Your store is set up. The first full check tests the shopping journey, speed, SEO and accessibility, and saves today's look for visual comparisons. ${s.monitoring ? 'Scheduled monitoring starts after it finishes.' : 'Monitoring is paused, so only checks you start will run.'}</p>${runLink(s, 'Run first check')}</section>`;
     }
     if (res) {
       const cats = (res.categories || []).filter((c) => c.tested);
@@ -376,7 +467,7 @@
     if (res || done.length) {
       body += `<div class="grid-2">
         <section class="panel"><div class="panel-head"><h2>What needs fixing</h2>${lastDone ? `<a href="#/s/${s.id}/reports/${lastDone.id}">Full report</a>` : ''}</div>
-          ${problems.length ? `<ul class="list">${problems.slice(0, 6).map((c) => `<li><a class="row" href="#/s/${s.id}/reports/${lastDone.id}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.detail)}</span></span><span></span></a></li>`).join('')}</ul>${problems.length > 6 ? `<p class="muted" style="margin:10px 4px 0">and ${problems.length - 6} more in the report</p>` : ''}`
+          ${problems.length ? `<ul class="list">${problems.slice(0, 6).map((c) => `<li><a class="row" href="#/s/${s.id}/reports/${lastDone.id}" data-focus="${esc(c.id)}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.detail)}</span></span><span></span></a></li>`).join('')}</ul>${problems.length > 6 ? `<p class="muted" style="margin:10px 4px 0">and ${problems.length - 6} more in the report</p>` : ''}`
             : `<p class="muted" style="margin:0">Nothing to fix in the latest check.</p>`}
         </section>
         <section class="panel"><div class="panel-head"><h2>Recent tests</h2><a href="#/s/${s.id}/runs">All runs</a></div>
@@ -388,13 +479,124 @@
         </section>
       </div>`;
       if (data.alerts.length) {
-        body += `<section class="panel"><div class="panel-head"><h2>Recent alerts</h2><a href="#/s/${s.id}/alerts">All alerts</a></div><ul class="list">${data.alerts.slice(0, 5).map((a) => `<li><div class="row"><span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span class="d" style="-webkit-line-clamp:1">${esc(a.message || a.check_id)}</span><span class="r">${time(a.created_at)}</span></div></li>`).join('')}</ul></section>`;
+        body += `<section class="panel"><div class="panel-head"><h2>Recent alerts</h2><a href="#/s/${s.id}/alerts">All alerts</a></div><ul class="list">${data.alerts.slice(0, 5).map((a) => `<li><div class="row"><span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span><span class="t">${esc(a.title || (a.state === 'failing' ? 'Check failed' : 'Check recovered'))}</span><span class="d" style="-webkit-line-clamp:1">${esc(a.message || a.check_id)}</span></span><span class="r">${time(a.created_at)}</span></div></li>`).join('')}</ul></section>`;
       }
     }
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, s.name || host(s.url), { actions: runButtons(s) })}<p class="lede-sm">${esc(monitoringLine(s))}</p>${body}</div>`;
-    bindRunButtons(ctx, s);
-    if (active) poll(4000);
+    $$('[data-focus]', ctx.main).forEach((a) => a.addEventListener('click', () => (S.focus = a.dataset.focus)));
+    if (active || s.active_run_id) poll(S.stopping.size ? 1500 : 3000); // also refresh once if the run ended between loads
     else if (s.monitoring && s.last_run_at) poll(60000);
+  };
+
+  // Run validations: choose what to check, see the plan, then start. Nothing runs without this preview.
+  function availability(g, s) {
+    const shopify = !s.platform || /shopify/i.test(s.platform);
+    if (!shopify && ((g.key.startsWith('journey.') && !g.locked) || g.key === 'catalog' || g.key === 'ai.copy')) return 'Shopify stores only for now';
+    return null;
+  }
+  STORE_PAGES.run = async (ctx, s) => {
+    S.catalog = S.catalog || (await api('/api/catalog'));
+    if (!ctx.alive()) return;
+    if (s.active_run_id) { location.replace(`#/s/${s.id}/runs/${s.active_run_id}`); return; }
+    const name = s.name || host(s.url);
+    const groups = S.catalog.groups.filter((g) => !g.ai || S.catalog.aiEnabled);
+    const byKey = Object.fromEntries(groups.map((g) => [g.key, g]));
+    const usable = groups.filter((g) => !availability(g, s));
+    const keys = (list) => list.map((g) => g.key);
+    const same = (a, b) => a.length === b.length && a.every((k) => b.includes(k));
+    const suite = keys(usable.filter((g) => g.locked || !s.config.disabled.includes(g.key)));
+    const PRESETS = [
+      { key: 'quick', title: 'Quick journey', desc: 'Can customers find a product, add it to the cart and reach checkout?', keys: keys(usable.filter((g) => g.run === 'journeys')) },
+      { key: 'suite', title: 'Your test suite', desc: 'Everything switched on for scheduled full checks of this store.', keys: suite, tag: 'Recommended' },
+      { key: 'all', title: 'Everything', desc: 'Every validation available, including ones switched off in your suite.', keys: keys(usable) },
+    ].filter((p, i, all) => p.key !== 'all' || !same(p.keys, all[1].keys));
+    let sel = [...suite];
+    let saveSuite = false;
+
+    const presetCards = PRESETS.map((p) => `<label class="preset"><input type="radio" name="preset" value="${p.key}">
+      <span class="p-body"><span class="p-title"><b>${esc(p.title)}</b>${p.tag ? `<span class="pill healthy">${esc(p.tag)}</span>` : ''}</span><span class="p-desc">${esc(p.desc)}</span>
+      <span class="p-meta">${plural(p.keys.length, 'validation')} · ${estimate(p.keys)}</span></span></label>`).join('');
+    const areas = [...new Set(groups.map((g) => g.area))].map((area) => {
+      const list = groups.filter((g) => g.area === area);
+      return `<section class="pick-area" data-area="${esc(area)}"><header><h3>${esc(area)}</h3><span class="pa-count"></span><button type="button" class="btn link small" data-all="${esc(area)}">Select all</button></header>
+        <div class="rows">${list.map((g) => {
+          const na = availability(g, s);
+          return `<label class="pick-row ${na ? 'na' : ''}"><input type="checkbox" name="g" value="${esc(g.key)}" ${g.locked ? 'checked disabled' : na ? 'disabled' : ''}>
+            <span class="pr-text"><b>${esc(g.label)}</b><span>${esc(g.description.replace(/ Always on: this is the heart of every test\.$/, ''))}</span></span>
+            <span class="pr-tags">${g.locked ? '<span class="tag">Always included</span>' : ''}${g.ai ? '<span class="tag ai">AI</span>' : ''}${na ? `<span class="tag">${esc(na)}</span>` : ''}${!g.locked && !na && s.config.disabled.includes(g.key) ? '<span class="tag">Off in your suite</span>' : ''}</span></label>`;
+        }).join('')}</div></section>`;
+    }).join('');
+
+    const caveat = !s.has_password && s.last_status === 'locked'
+      ? `<div class="notice"><p>Your store was password protected at the last check. <a href="#/s/${s.id}/settings">Add the storefront password</a> or only the homepage can be tested.</p></div>`
+      : s.last_status === 'blocked' ? `<div class="notice"><p>The last check was stopped by bot protection. Allow Tharam in first, or this run will be blocked too.</p></div>` : '';
+
+    ctx.main.innerHTML = `<div class="main-inner wide">${storeHead(s, 'Run validations', { crumb: `<a href="#/s/${s.id}">${esc(name)}</a> / Run validations` })}
+      <p class="lede-sm">Choose what to check on ${esc(name)} right now. This doesn't change your monitoring schedule.</p>
+      <div class="run-layout"><form id="runf" class="run-pick" novalidate>
+        <fieldset class="presets"><legend class="sr-only">Start from</legend>${presetCards}</fieldset>
+        <div class="pick-head"><h2>Validations</h2><p class="sub">Pick a starting point above, then adjust anything below.</p></div>
+        ${areas}</form>
+        <aside class="run-plan" aria-label="Run plan"><div class="panel" id="plan" aria-live="polite"></div></aside></div></div>`;
+
+    const form = $('#runf');
+    const draw = () => {
+      $$('input[name=g]', form).forEach((i) => { if (!i.disabled) i.checked = sel.includes(i.value); });
+      $$('.pick-area', form).forEach((sec) => {
+        const ins = $$('input[name=g]', sec), on = ins.filter((i) => i.checked).length, avail = ins.filter((i) => !i.disabled);
+        sec.querySelector('.pa-count').textContent = `${on} of ${ins.length}`;
+        const b = sec.querySelector('[data-all]');
+        b.hidden = !avail.length;
+        b.textContent = avail.length && avail.every((i) => i.checked) ? 'Clear' : 'Select all';
+      });
+      const match = PRESETS.find((p) => same(p.keys, sel));
+      $$('input[name=preset]', form).forEach((r) => (r.checked = r.value === match?.key));
+      const phases = planPhases(sel);
+      const differs = !same(sel, suite);
+      const tp = s.config.testProduct ? s.config.testProduct.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()) : 'Picked automatically (in stock, with variants)';
+      $('#plan').innerHTML = `<p class="plan-kicker">${esc(match ? match.title : 'Custom selection')}</p>
+        <h2 class="plan-sum">${plural(sel.length, 'validation')}</h2><p class="plan-time">Takes ${estimate(sel)}</p>
+        <ol class="plan-steps">${phases.map((p) => { const gs = groupsOf(p, sel); const sub = p.sub || (gs.length > 1 ? listLabels(gs) : ''); return `<li><b>${esc(p.label)}</b>${sub ? `<span>${esc(sub[0].toUpperCase() + sub.slice(1))}</span>` : ''}</li>`; }).join('')}</ol>
+        <dl class="plan-facts">
+          <div><dt>Test product</dt><dd>${esc(tp)} <a href="#/s/${s.id}/suite/product">Change</a></dd></div>
+          <div><dt>After the run</dt><dd>A report you can compare with earlier ones. If something new breaks, you're alerted as usual.</dd></div>
+        </dl>
+        <p class="plan-safe">${icon('shield', 18)}<span>Behaves like one shopper. It adds one item to a fresh cart and opens checkout, then stops before payment and empties the cart. No orders are placed.</span></p>
+        ${caveat}
+        ${differs ? `<label class="plan-save"><input type="checkbox" id="save-suite" ${saveSuite ? 'checked' : ''}><span>Also use this selection for scheduled checks</span></label>` : ''}
+        <button type="button" class="btn block" id="start">${icon('play', 16)}Start run</button>
+        <a class="btn ghost block" href="#/s/${s.id}">Cancel</a>`;
+    };
+    draw();
+    form.addEventListener('change', (e) => {
+      if (e.target.name === 'preset') sel = [...PRESETS.find((p) => p.key === e.target.value).keys];
+      if (e.target.name === 'g') sel = $$('input[name=g]', form).filter((i) => i.checked).map((i) => i.value);
+      draw();
+    });
+    form.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-all]');
+      if (!b) return;
+      const ins = $$(`[data-area="${CSS.escape(b.dataset.all)}"] input[name=g]`, form).filter((i) => !i.disabled);
+      const all = ins.every((i) => i.checked);
+      ins.forEach((i) => (i.checked = !all));
+      sel = $$('input[name=g]', form).filter((i) => i.checked).map((i) => i.value);
+      draw();
+    });
+    $('#plan').addEventListener('change', (e) => { if (e.target.id === 'save-suite') saveSuite = e.target.checked; });
+    $('#plan').addEventListener('click', async (e) => {
+      const btn = e.target.closest('#start');
+      if (!btn) return;
+      const done = busy(btn, 'Starting');
+      try {
+        if (saveSuite && !same(sel, suite)) {
+          const disabled = S.catalog.groups.filter((g) => !g.locked && !sel.includes(g.key) && !(g.ai && !S.catalog.aiEnabled)).map((g) => g.key);
+          await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { disabled } } });
+        }
+        const r = await api(`/api/stores/${s.id}/run`, { method: 'POST', body: { groups: sel.filter((k) => byKey[k]) } });
+        toast('Run started');
+        location.hash = `#/s/${s.id}/runs/${r.runId}`;
+      } catch (ex) { done(); toast(ex.message, 'error'); }
+    });
   };
 
   // Test suite
@@ -474,23 +676,23 @@
   // Runs
   STORE_PAGES.runs = async (ctx, s) => {
     if (ctx.r.a && /^\d+$/.test(ctx.r.a)) return runDetail(ctx, s, Number(ctx.r.a), ctx.r.b);
-    const filter = ['full', 'journeys', 'problems'].includes(ctx.r.a) ? ctx.r.a : null;
+    const filter = ['full', 'journeys', 'problems', 'stopped'].includes(ctx.r.a) ? ctx.r.a : null;
     const data = await api(`/api/stores/${s.id}/runs?limit=200`);
     if (!ctx.alive()) return;
     let runs = data.runs;
     if (filter === 'full') runs = runs.filter((r) => r.kind === 'full');
     if (filter === 'journeys') runs = runs.filter((r) => r.kind === 'journeys');
     if (filter === 'problems') runs = runs.filter((r) => r.status === 'error' || (r.verdict && r.verdict !== 'healthy'));
+    if (filter === 'stopped') runs = runs.filter((r) => r.status === 'cancelled');
     const active = data.runs.some((r) => r.status === 'queued' || r.status === 'running');
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Runs', { actions: runButtons(s) })}
-      ${tabs(`#/s/${s.id}/runs`, [[null, 'All runs'], ['full', 'Full checks'], ['journeys', 'Journey tests'], ['problems', 'With problems']], filter)}
-      ${runs.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Started</th><th>Type</th><th>Started by</th><th>Result</th><th class="num">Score</th><th class="num">Took</th></tr></thead><tbody>
-        ${runs.map((r) => `<tr class="link" data-href="#/s/${s.id}/runs/${r.id}" tabindex="0"><td><span class="cell-main">${time(r.created_at)}</span><div class="cell-sub">${esc(exact(r.created_at))}</div></td><td>${esc(KIND[r.kind] || r.kind)}</td><td class="cell-sub">${esc(TRIGGER[r.trigger] || 'Scheduled')}</td>
-          <td>${r.status === 'done' ? `<span class="status-inline"><span class="dot ${esc(r.verdict)}"></span>${esc(VERDICT[r.verdict] || r.verdict)}</span>` : r.status === 'error' ? `<span class="status-inline"><span class="dot"></span>Didn't finish</span>` : `<span class="pill running">${r.status === 'queued' ? 'Queued' : 'Running'}</span>`}</td>
+      ${tabs(`#/s/${s.id}/runs`, [[null, 'All runs'], ['full', 'Full checks'], ['journeys', 'Journey tests'], ['problems', 'With problems'], ['stopped', 'Stopped']], filter)}
+      ${runs.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Started</th><th>Type</th><th>Started by</th><th>Result</th><th class="num">Checks</th><th class="num">Score</th><th class="num">Took</th></tr></thead><tbody>
+        ${runs.map((r) => `<tr class="link" data-href="#/s/${s.id}/runs/${r.id}" tabindex="0"><td><span class="cell-main">${time(r.created_at)}</span><div class="cell-sub">${esc(exact(r.created_at))}</div></td><td>${esc(kindLabel(r))}</td><td class="cell-sub">${esc(TRIGGER[r.trigger] || 'Scheduled')}</td>
+          <td>${runResult(r)}</td><td class="num cell-sub">${r.checks ?? '–'}</td>
           <td class="num">${r.score ?? '–'}</td><td class="num">${r.finished_at ? duration(r.created_at, r.finished_at) : '–'}</td></tr>`).join('')}
-      </tbody></table></div>` : `<div class="panel empty"><h2>${filter ? 'No runs match this filter' : 'No runs yet'}</h2><p>${filter ? 'Try another tab.' : 'Run the first check to see results here.'}</p>${filter ? '' : '<button class="btn" data-run="full">Run first check</button>'}</div>`}</div>`;
+      </tbody></table></div>` : `<div class="panel empty"><h2>${filter ? 'No runs match this filter' : 'No runs yet'}</h2><p>${filter ? 'Try another tab.' : 'Run the first check to see results here.'}</p>${filter ? '' : runLink(s, 'Run first check')}</div>`}</div>`;
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
-    bindRunButtons(ctx, s);
     if (active) poll(5000);
   };
 
@@ -498,17 +700,24 @@
     const run = await api('/api/runs/' + runId);
     if (!ctx.alive()) return;
     const base = `#/s/${s.id}/runs/${runId}`;
-    const title = `${KIND[run.kind] || 'Run'} #${run.id}`;
+    S.catalog = S.catalog || (await api('/api/catalog'));
+    if (!ctx.alive()) return;
+    const title = `${kindLabel(run)} #${run.id}`;
     const crumb = `<a href="#/s/${s.id}/runs">Runs</a> / ${esc(title)}`;
     const meta = `<p class="lede-sm">${esc(TRIGGER[run.trigger] || 'Scheduled')} · started ${esc(exact(run.created_at))}${run.finished_at ? ` · took ${duration(run.created_at, run.finished_at)}` : ''}</p>`;
     if (run.status === 'queued' || run.status === 'running') {
-      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb })}${meta}${liveRun(run, s).replace(/<a class="btn secondary small"[^>]*>Open run<\/a>/, '')}</div>`;
-      poll(3000);
+      const stopBtn = S.stopping.has(run.id) ? '' : `<button type="button" class="btn danger" data-stop="${run.id}">${icon('stop', 16)}Stop test</button>`;
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb, actions: stopBtn })}${meta}${liveDetail(run, s)}</div>`;
+      poll(S.stopping.has(run.id) ? 1200 : 2500);
       return;
     }
+    S.stopping.delete(run.id);
     if (!run.result) {
-      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb })}${meta}<div class="panel"><h2>This run didn't finish</h2><p>${esc(run.error || 'Something interrupted the test.')}</p><p class="muted">Most often the store was slow or briefly unreachable. Your next scheduled test will try again.</p><button class="btn" data-run="${esc(run.kind === 'journeys' ? 'journeys' : 'full')}">Run again</button></div></div>`;
-      bindRunButtons(ctx, s);
+      const stopped = run.status === 'cancelled';
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb })}${meta}<div class="panel empty"><h2>${stopped ? 'You stopped this test' : "This test didn't finish"}</h2>
+        <p>${stopped ? 'Nothing from it was saved and no alerts were sent. Scheduled monitoring carries on as normal.' : esc(run.error || 'Something interrupted the test.')}</p>
+        ${stopped ? '' : '<p class="muted">Most often the store was slow or briefly unreachable. The next scheduled test tries again.</p>'}
+        ${runLink(s, stopped ? 'Run validations' : 'Run again')}</div></div>`;
       return;
     }
     const steps = run.result.steps || [];
@@ -614,13 +823,13 @@
     const data = await api(`/api/stores/${s.id}/runs?limit=1`);
     if (!ctx.alive()) return;
     const open = s.failing;
-    const msgFor = (id) => data.alerts.find((a) => a.check_id === id && a.state === 'failing')?.message;
+    const alertFor = (id) => data.alerts.find((a) => a.check_id === id && a.state === 'failing');
     ctx.main.innerHTML = `<div class="main-inner">${head}
       <section class="panel"><h2>Broken right now</h2><p class="sub">Checks that are failing and haven't recovered yet.</p>
-        ${open.length ? `<ul class="list">${open.map((f) => `<li><div class="row"><span class="sev fail">Open</span><span><span class="t">${esc(msgFor(f.check_id) || f.check_id)}</span></span><span class="r">since ${time(f.since)}</span></div></li>`).join('')}</ul>` : '<p class="muted" style="margin:0">Nothing is broken right now.</p>'}
+        ${open.length ? `<ul class="list">${open.map((f) => { const a = alertFor(f.check_id); return `<li><div class="row"><span class="sev fail">Open</span><span><span class="t">${esc(a?.title || a?.message || f.check_id)}</span>${a?.title && a.message ? `<span class="d">${esc(a.message)}</span>` : ''}</span><span class="r">since ${time(f.since)}</span></div></li>`; }).join('')}</ul>` : '<p class="muted" style="margin:0">Nothing is broken right now.</p>'}
       </section>
       <section class="panel"><h2>Alert history</h2><p class="sub">Every alert we sent for this store.</p>
-        ${data.alerts.length ? `<ul class="list">${data.alerts.map((a) => `<li><div class="row"><span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span><span class="d" style="-webkit-line-clamp:3">${esc(a.message || a.check_id)}</span></span><span class="r">${time(a.created_at)}</span></div></li>`).join('')}</ul>` : `<p class="muted" style="margin:0">No alerts yet. <a href="${base}/channels">Check where alerts go</a>.</p>`}
+        ${data.alerts.length ? `<ul class="list">${data.alerts.map((a) => `<li><div class="row"><span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span>${a.title ? `<span class="t">${esc(a.title)}</span>` : ''}<span class="d" style="-webkit-line-clamp:3">${esc(a.state === 'failing' || !a.title ? a.message || a.check_id : 'Working again.')}</span></span><span class="r">${time(a.created_at)}</span></div></li>`).join('')}</ul>` : `<p class="muted" style="margin:0">No alerts yet. <a href="${base}/channels">Check where alerts go</a>.</p>`}
       </section></div>`;
   };
 
@@ -628,12 +837,12 @@
   STORE_PAGES.visual = async (ctx, s) => {
     const d = await api(`/api/stores/${s.id}/visual`);
     if (!ctx.alive()) return;
-    const LABEL = { 'home-desktop': 'Homepage on desktop', 'home-mobile': 'Homepage on mobile', 'product-desktop': 'Product page on desktop', 'product-mobile': 'Product page on mobile' };
+    const PG = { home: 'Homepage', product: 'Product page', collection: 'Collection page', cart: 'Cart' };
+    const LABEL = new Proxy({}, { get: (_, k) => { const [pg, dev] = String(k).split('-'); return `${PG[pg] || pg} on ${dev || 'desktop'}`; } });
     const changed = d.shots.filter((x) => x.status === 'changed');
     const intro = `<p class="lede-sm">With every full check we take screenshots and compare them with the look you approved, so unintended changes from theme edits or app updates stand out.</p>`;
     if (!d.shots.length) {
-      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Visual changes')}${intro}<div class="panel empty"><h2>No screenshots yet</h2><p>${s.config.disabled.includes('visual') ? 'Visual checks are switched off in the test suite.' : 'They are taken during the next full check.'}</p>${s.config.disabled.includes('visual') ? `<a class="btn" href="#/s/${s.id}/suite">Open test suite</a>` : '<button class="btn" data-run="full">Run full check</button>'}</div></div>`;
-      bindRunButtons(ctx, s);
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Visual changes')}${intro}<div class="panel empty"><h2>No screenshots yet</h2><p>${s.config.disabled.includes('visual') ? 'Visual checks are switched off in the test suite.' : 'They are taken during the next full check.'}</p>${s.config.disabled.includes('visual') ? `<a class="btn" href="#/s/${s.id}/suite">Open test suite</a>` : runLink(s, 'Run validations')}</div></div>`;
       return;
     }
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Visual changes', { actions: d.runId && changed.length ? '<button class="btn" id="approve">Approve latest look</button>' : '' })}${intro}
@@ -724,8 +933,7 @@
     ]);
     if (!ctx.alive()) return;
     if (!c) {
-      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Reports')}<div class="panel empty"><h2>No reports yet</h2><p>Every check produces a report you can compare with earlier ones. Run the first check to get one.</p><button class="btn" data-run="full">Run full check</button></div></div>`;
-      bindRunButtons(ctx, s);
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Reports')}<div class="panel empty"><h2>No reports yet</h2><p>Every check produces a report you can compare with earlier ones. Run the first check to get one.</p>${runLink(s, 'Run validations')}</div></div>`;
       return;
     }
     const run = c.run, b = c.base;
@@ -751,7 +959,7 @@
       <div class="rs-text"><div class="inline-row"><span class="pill ${esc(run.verdict)}">${esc(VERDICT[run.verdict] || run.verdict)}</span>${b ? delta(run.score, b.score) : ''}</div>
         <h2>${esc(c.summary)}</h2>
         <p class="muted">${esc(KIND[run.kind])} · ${esc(exact(run.created_at))}${c.testedProduct ? ` · tested with “${esc(c.testedProduct.title)}”` : ''}<br>${compareLine}</p></div>
-      ${b ? `<div class="change-counts"><a href="#changes" class="cc new"><b>${ch.new.length}</b><span>newly broken</span></a><a href="#changes" class="cc fixed"><b>${ch.fixed.length}</b><span>fixed</span></a><a href="#changes" class="cc still"><b>${ch.still.length}</b><span>still broken</span></a></div>`
+      ${b ? `<div class="change-counts"><button type="button" data-jump="changes" class="cc new"><b>${ch.new.length}</b><span>newly broken</span></button><button type="button" data-jump="changes" class="cc fixed"><b>${ch.fixed.length}</b><span>fixed</span></button><button type="button" data-jump="changes" class="cc still"><b>${ch.still.length}</b><span>still broken</span></button></div>`
         : `<div class="change-counts"><span class="cc still"><b>${ch.still.length}</b><span>to fix or check</span></span></div>`}
     </section>`;
     const changeItem = (x, kind) => `<li><div class="row"><span class="sev ${kind === 'fixed' ? 'ok' : x.a === 'fail' ? 'fail' : 'warn'}">${kind === 'fixed' ? 'Fixed' : x.a === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(x.title)}</span><span class="d">${esc(kind === 'fixed' ? x.prevDetail : x.detail)}</span></span><span></span></div></li>`;
@@ -759,7 +967,7 @@
       <div class="grid-2 tight"><div><h3 class="col-h">Newly broken</h3>${ch.new.length ? `<ul class="list">${ch.new.map((x) => changeItem(x, 'new')).join('')}</ul>` : '<p class="muted">Nothing new broke.</p>'}</div>
       <div><h3 class="col-h">Fixed</h3>${ch.fixed.length ? `<ul class="list">${ch.fixed.map((x) => changeItem(x, 'fixed')).join('')}</ul>` : '<p class="muted">Nothing was fixed since then.</p>'}</div></div>
       ${ch.still.length ? `<details class="still"><summary>${ch.still.length} still broken from before</summary><ul class="list">${ch.still.map((x) => changeItem(x, 'still')).join('')}</ul></details>` : ''}</section>` : '';
-    const areas = `<section class="panel"><h2>Validation areas</h2><p class="sub">Every check this report ran, grouped by area${b ? ', with the result from the compared report' : ''}.</p>
+    const areas = `<section class="panel" id="areas"><h2>Validation areas</h2><p class="sub">Every check this report ran, grouped by area${b ? ', with the result from the compared report' : ''}.</p>
       ${c.areas.map((a) => {
         const issues = a.counts.fail + a.counts.warn;
         return `<details class="area" ${issues ? 'open' : ''}><summary>
@@ -768,10 +976,10 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<button type="button" class="btn link evidence" data-shot="${esc(x.evidence.screenshot)}">View screenshot</button>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<button type="button" class="btn link evidence" data-shot="${esc(x.evidence.screenshot)}">View screenshot</button>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
-    const metrics = c.metrics.length ? `<section class="panel"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
+    const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
       <div class="table-wrap flat"><table class="data"><thead><tr><th>Page</th><th>Measure</th><th class="num">This report</th>${b ? '<th class="num">Before</th><th class="num">Change</th>' : ''}</tr></thead><tbody>
       ${c.metrics.map((m) => `<tr><td class="cell-sub">${esc(m.page)}</td><td>${esc(m.name)}</td><td class="num">${fmtVal(m.a, m.unit)}</td>${b ? `<td class="num">${fmtVal(m.b, m.unit)}</td><td class="num"><span class="trend ${m.trend}">${m.trend === 'worse' ? 'Worse' : m.trend === 'better' ? 'Better' : 'Same'}</span></td>` : ''}</tr>`).join('')}
       </tbody></table></div></section>` : '';
@@ -779,16 +987,16 @@
       const cat = c.catalog, t = cat.totals;
       const changed = t ? t.changed + t.added + t.removed : 0;
       const parts = t ? [t.price && `${t.price} price`, t.sale && `${t.sale} sale`, t.stock && `${t.stock} stock`, t.description && `${t.description} description`, t.added && `${t.added} added`, t.removed && `${t.removed} removed`].filter(Boolean) : [];
-      return `<section class="panel"><div class="panel-head"><h2>Catalog</h2><a href="#/s/${s.id}/catalog">Open catalog</a></div>
+      return `<section class="panel" id="catalog"><div class="panel-head"><h2>Catalog</h2><a href="#/s/${s.id}/catalog">Open catalog</a></div>
         <div class="figures" style="margin:0"><div class="figure"><b>${cat.count}${cat.truncated ? '+' : ''}</b><span>products checked</span></div>
         <div class="figure"><b>${(cat.issues || []).length}</b><span>catalog issues</span></div>
         <div class="figure"><b>${changed}</b><span>changed since compared</span></div></div>
         ${parts.length ? `<p class="muted" style="margin:14px 0 0">Changes: ${esc(parts.join(', '))}.</p>` : ''}</section>`;
     })() : '';
-    const aiPanel = c.ai && c.ai.findings && c.ai.findings.length ? `<section class="panel"><h2>AI visual review</h2><p class="sub">What an AI reviewer noticed looking at your pages like a shopper.</p>
+    const aiPanel = c.ai && c.ai.findings && c.ai.findings.length ? `<section class="panel" id="ai"><h2>AI visual review</h2><p class="sub">What an AI reviewer noticed looking at your pages like a shopper.</p>
       <ul class="ai-findings" style="margin-left:0">${c.ai.findings.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul></section>` : '';
     const ta = c.timings.a.filter((x) => x.ms != null), tb = c.timings.b;
-    const timings = ta.length ? `<section class="panel"><h2>Journey step timings</h2><p class="sub">How long each step of the shopping journey took, including the page settling.</p>
+    const timings = ta.length ? `<section class="panel" id="timings"><h2>Journey step timings</h2><p class="sub">How long each step of the shopping journey took, including the page settling.</p>
       <div class="table-wrap flat"><table class="data"><thead><tr><th>Step</th><th class="num">This report</th>${b ? '<th class="num">Before</th>' : ''}</tr></thead><tbody>
       ${ta.map((x) => { const prev = tb.find((y) => y.text === x.text && y.ms != null); return `<tr><td>${esc(x.text)}</td><td class="num">${fmtVal(x.ms, 'ms')}</td>${b ? `<td class="num">${prev ? fmtVal(prev.ms, 'ms') : '–'}</td>` : ''}</tr>`; }).join('')}
       </tbody></table></div></section>` : '';
@@ -797,7 +1005,15 @@
         <div class="seg" role="radiogroup" aria-label="Device">${DEV.map(([d, l], i) => `<label><input type="radio" name="dev" value="${d}" ${i === 0 ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
       <p class="sub">${b ? 'Screenshots from this report and the compared one. Difference highlights changed pixels in red.' : 'Screenshots from this report.'}</p>
       <div class="shots" id="dev-shots"></div></section>` : '';
-    ctx.main.innerHTML = `<div class="main-inner report-page">${storeHead(s, 'Reports')}${controls}${summary}${changes}${areas}${catPanel}${aiPanel}${metrics}${timings}${visual}</div>`;
+    const jumps = [['changes', 'What changed', changes], ['areas', 'Validation areas', areas], ['catalog', 'Catalog', catPanel], ['ai', 'AI review', aiPanel], ['speed', 'Speed', metrics], ['timings', 'Step timings', timings], ['devices', 'Devices', visual]].filter((x) => x[2]);
+    const jumpBar = `<nav class="jump no-print" aria-label="Sections of this report">${jumps.map(([id, l]) => `<button type="button" data-jump="${id}">${esc(l)}</button>`).join('')}</nav>`;
+    ctx.main.innerHTML = `<div class="main-inner report-page">${storeHead(s, 'Reports', { actions: runButtons(s) })}${controls}${summary}${jumpBar}${changes}${areas}${catPanel}${aiPanel}${metrics}${timings}${visual}</div>`;
+    $$('[data-jump]', ctx.main).forEach((b) => (b.onclick = () => document.getElementById(b.dataset.jump)?.scrollIntoView({ behavior: 'smooth', block: 'start' })));
+    if (S.focus) {
+      const row = ctx.main.querySelector(`[data-check="${CSS.escape(S.focus)}"]`);
+      S.focus = null;
+      if (row) { row.closest('details').open = true; row.classList.add('flash'); setTimeout(() => row.scrollIntoView({ block: 'center' }), 50); }
+    }
 
     const go = (runId, base) => (location.hash = `#/s/${s.id}/reports/${runId}/${base}`);
     $('#rep-run').onchange = (e) => go(e.target.value, /^\d+$/.test(baseParam) ? 'prev' : baseParam);
@@ -839,7 +1055,12 @@
 
   // Catalog: product-level issues and changes, with period comparison.
   const CAT_TYPE = { pricing: 'Pricing', content: 'Text', media: 'Images', data: 'Data', counts: 'Counts', copy: 'AI copy review' };
-  const money = (v) => (v == null ? '–' : '₹' + Number(v).toLocaleString('en-IN'));
+  let CUR = null;
+  const money = (v) => {
+    if (v == null) return '–';
+    if (!CUR) return Number(v).toLocaleString();
+    try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: CUR, maximumFractionDigits: Number.isInteger(Number(v)) ? 0 : 2 }).format(v); } catch { return `${v} ${CUR}`; }
+  };
   STORE_PAGES.catalog = async (ctx, s) => {
     const runParam = ctx.r.a && /^\d+$/.test(ctx.r.a) ? Number(ctx.r.a) : null;
     const baseParam = ctx.r.b || 'prev';
@@ -847,11 +1068,11 @@
     const c = await api(`/api/stores/${s.id}/catalog?base=${encodeURIComponent(baseParam)}`).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
     if (!ctx.alive()) return;
     if (!c) {
-      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Catalog')}<div class="panel empty"><h2>No catalog snapshot yet</h2><p>Every full check reads your whole product catalog, validates it, and logs what changed. Run a full check to get started.</p>${s.config.disabled.includes('catalog') ? `<a class="btn" href="#/s/${s.id}/suite">Turn on Catalog checks</a>` : '<button class="btn" data-run="full">Run full check</button>'}</div></div>`;
-      bindRunButtons(ctx, s);
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Catalog')}<div class="panel empty"><h2>No catalog snapshot yet</h2><p>Every full check reads your whole product catalog, validates it, and logs what changed. Run a full check to get started.</p>${s.config.disabled.includes('catalog') ? `<a class="btn" href="#/s/${s.id}/suite">Turn on Catalog checks</a>` : runLink(s, 'Run validations')}</div></div>`;
       return;
     }
     const base = `#/s/${s.id}/catalog`;
+    CUR = c.currency || null;
     const sum = c.summary;
     const head = storeHead(s, 'Catalog') + `<p class="lede-sm">${sum.products} products${c.run.truncated ? ' (first 2,000)' : ''} read ${time(c.run.takenAt)}${c.base ? `, compared with ${time(c.base.takenAt)}` : ''}.</p>`;
     const figures = `<div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
@@ -877,7 +1098,7 @@
     } else {
       body = `<div class="table-wrap"><table class="data"><thead><tr><th>Product</th><th>Price</th><th>Stock</th><th class="num">Issues</th><th>Changed</th></tr></thead><tbody>
         ${c.products.map((p) => `<tr class="link" data-href="${esc(s.url)}/products/${esc(p.handle)}" tabindex="0"><td><div class="prod-cell">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}<span><span class="cell-main">${esc(p.title)}</span><div class="cell-sub">${p.variants} variant${p.variants > 1 ? 's' : ''} · ${p.images} image${p.images === 1 ? '' : 's'}</div></span></div></td>
-          <td>${money(p.price)}${p.maxPrice && p.maxPrice !== p.price ? `–${money(p.maxPrice)}`.replace('₹', '') : ''}</td>
+          <td class="nowrap">${money(p.price)}${p.maxPrice && p.maxPrice !== p.price ? ` – ${money(p.maxPrice)}` : ''}</td>
           <td>${p.available ? '<span class="status-inline"><span class="dot healthy"></span>In stock</span>' : '<span class="status-inline"><span class="dot"></span>Sold out</span>'}</td>
           <td class="num">${p.issues ? `<span class="pill ${p.worst === 'critical' ? 'critical' : p.worst === 'major' ? 'warning' : ''}">${p.issues}</span>` : '<span class="muted">0</span>'}</td>
           <td class="cell-sub">${p.changed === 'added' ? 'New' : p.changed === 'changed' ? 'Edited' : '–'}</td></tr>`).join('')}
@@ -885,7 +1106,6 @@
     }
     ctx.main.innerHTML = `<div class="main-inner">${head}${figures}${tabsBar}${body}</div>`;
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => window.open(tr.dataset.href, '_blank', 'noopener'); tr.onkeydown = (e) => { if (e.key === 'Enter') window.open(tr.dataset.href, '_blank', 'noopener'); }; });
-    bindRunButtons(ctx, s);
   };
   function catChange(ch, s) {
     const link = `${s.url}/products/${ch.handle}`;

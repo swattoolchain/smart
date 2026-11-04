@@ -1,4 +1,4 @@
-import { check, shortErr } from './checks.js';
+import { check, shortErr, plural } from './checks.js';
 import { gotoStore, settle, settleChallenge } from './browser.js';
 import { searchTermFrom } from './discover.js';
 
@@ -375,7 +375,7 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
           detail:
             showsItem && cart.item_count > 0
               ? `Cart page lists "${product.title}" (cart total ${typeof total === 'number' ? (total / 100).toFixed(2) : '?'} ${cart.currency || ''}).`
-              : `The cart has ${cart.item_count || 0} item(s) but the cart page does not show "${product.title}".`,
+              : `The cart has ${plural(cart.item_count || 0, 'item')} but the cart page does not show "${product.title}".`,
           evidence: showsItem ? null : { screenshot: await shot(page, 'cart') },
           fix: showsItem ? '' : 'Check the cart template or cart drawer app; customers may not see what they added.',
         })

@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { check, shortErr } from './checks.js';
+import { check, shortErr, plural } from './checks.js';
 import { gotoStore, settle } from './browser.js';
 
 async function measure(page) {
@@ -131,7 +131,7 @@ export async function runNonFunctional({ page, mobilePage, rec, origin, info, pa
         rec.add(
           check(`nf.mixed.${t.key}`, 'trust', `${t.label} loads only secure resources`, 'warn', {
             severity: 'minor',
-            detail: `${m.mixedContent} resource(s) load over insecure http://, which browsers may block.`,
+            detail: `${plural(m.mixedContent, 'resource')} load over insecure http://, which browsers may block.`,
             fix: 'Update hard-coded http:// links in theme settings, custom code or app embeds to https://.',
           })
         );
@@ -200,7 +200,7 @@ export async function runNonFunctional({ page, mobilePage, rec, origin, info, pa
       rec.add(
         check(`nf.a11y.${t.key}`, 'accessibility', `${t.label} is usable with assistive tech`, serious.length === 0 ? 'pass' : serious.length > 4 ? 'fail' : 'warn', {
           severity: 'minor',
-          detail: serious.length === 0 ? 'No serious accessibility issues found by automated checks.' : `${serious.length} serious issue type(s): ${top.join('; ')}.`,
+          detail: serious.length === 0 ? 'No serious accessibility issues found by automated checks.' : `${plural(serious.length, 'serious issue type')}: ${top.join('; ')}.`,
           fix: serious.length ? 'Fix colour contrast and missing labels in theme settings; ask your theme developer about the listed rules.' : '',
         })
       );
@@ -308,7 +308,7 @@ export function jsErrorCheck(rec, pageErrors) {
       detail:
         unique.length === 0
           ? 'No script errors occurred during the shopping journey.'
-          : `${unique.length} script error(s), e.g. "${unique[0].message}" on ${new URL(unique[0].url).pathname}.`,
+          : `${plural(unique.length, 'script error')}, e.g. "${unique[0].message}" on ${new URL(unique[0].url).pathname}.`,
       evidence: unique.length ? { errors: unique.slice(0, 6) } : null,
       fix: unique.length ? 'Script errors usually come from an app or custom code. They can silently break buttons and cart drawers.' : '',
     })

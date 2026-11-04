@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
-import { check, shortErr } from './checks.js';
+import { check, shortErr, plural } from './checks.js';
 import { fetchCatalog, validateCatalog, diffCatalog } from './products.js';
 import { aiEnabled, reviewCopy } from '../ai.js';
 
@@ -61,6 +61,7 @@ export async function runCatalog({ request, origin, storeId, runId, rec, info, o
     const issues = validateCatalog(snap, prev?.snap);
     const diff = diffCatalog(snap, prev?.snap);
     out.count = snap.count;
+    out.currency = snap.currency;
     out.truncated = snap.truncated;
     out.comparedWith = prev?.runId || null;
     out.issues = issues.slice(0, 400);
@@ -72,23 +73,23 @@ export async function runCatalog({ request, origin, storeId, runId, rec, info, o
     const zeroPrice = pricing.some((i) => /zero/.test(i.message));
     rec.add(check('cat.pricing', 'trust', 'Prices and discounts are valid', zeroPrice ? 'fail' : pricing.length ? 'warn' : 'pass', {
       severity: 'major',
-      detail: pricing.length ? `${pricing.length} pricing issue(s) across ${snap.count} products. ${first(pricing)}` : `All ${snap.count} products have valid prices and discounts.`,
+      detail: pricing.length ? `${plural(pricing.length, 'pricing issue')} across ${snap.count} products. ${first(pricing)}` : `All ${snap.count} products have valid prices and discounts.`,
       fix: pricing.length ? 'Open each product in Shopify admin → Products and correct the price or compare-at price. Zero prices and fake discounts are often bulk-edit or import mistakes.' : '',
     }));
     const content = by('content');
     rec.add(check('cat.content', 'trust', 'Product text is clean', content.some((i) => i.severity === 'major') ? 'warn' : 'pass', {
       severity: 'minor',
-      detail: content.length ? `${content.length} text issue(s): placeholders, duplicates, empty or short descriptions, formatting. ${first(content)}` : `Titles and descriptions of all ${snap.count} products look clean.`,
+      detail: content.length ? `${plural(content.length, 'text issue')}: placeholders, duplicates, empty or short descriptions, formatting. ${first(content)}` : `Titles and descriptions of all ${snap.count} products look clean.`,
       fix: content.length ? 'Edit the product title or description in Shopify admin. Placeholder text usually comes from a theme demo or an import template.' : '',
     }));
     const media = by('media');
     rec.add(check('cat.media', 'trust', 'Products have images', media.some((i) => i.severity === 'major') ? 'warn' : 'pass', {
       severity: 'minor',
-      detail: media.length ? `${media.length} image issue(s). ${first(media)}` : `All ${snap.count} products have images.`,
+      detail: media.length ? `${plural(media.length, 'image issue')}. ${first(media)}` : `All ${snap.count} products have images.`,
       fix: media.length ? 'Add product images in Shopify admin → Products → Media.' : '',
     }));
     const data = by('data');
-    if (data.length) rec.add(check('cat.data', 'trust', 'SKUs are unique', 'warn', { severity: 'minor', detail: `${data.length} product(s) share SKUs with others. ${first(data)}`, fix: 'Give every variant its own SKU so inventory and fulfilment apps track it correctly.' }));
+    if (data.length) rec.add(check('cat.data', 'trust', 'SKUs are unique', 'warn', { severity: 'minor', detail: `${plural(data.length, 'product')} share SKUs with others. ${first(data)}`, fix: 'Give every variant its own SKU so inventory and fulfilment apps track it correctly.' }));
 
     // Counts: catalog vs sitemap vs collections.
     const inSitemap = await sitemapProductCount(request, origin);
@@ -97,7 +98,7 @@ export async function runCatalog({ request, origin, storeId, runId, rec, info, o
     const gap = inSitemap != null && !snap.truncated ? snap.count - inSitemap : 0;
     const countProblems = [];
     if (inSitemap != null && !snap.truncated && Math.abs(gap) > Math.max(2, snap.count * 0.05))
-      countProblems.push(gap > 0 ? `${gap} product(s) are in your store but missing from the sitemap Google reads (${snap.count} vs ${inSitemap}).` : `Your sitemap lists ${-gap} more product(s) than the store shows (${inSitemap} vs ${snap.count}); some sitemap links may lead nowhere.`);
+      countProblems.push(gap > 0 ? `${plural(gap, 'product')} ${gap === 1 ? 'is' : 'are'} in your store but missing from the sitemap Google reads (${snap.count} vs ${inSitemap}).` : `Your sitemap lists ${plural(-gap, 'more product')} than the store shows (${inSitemap} vs ${snap.count}); some sitemap links may lead nowhere.`);
     if (empty.length) countProblems.push(`Collection${empty.length > 1 ? 's' : ''} with no products: ${empty.join(', ')}.`);
     rec.add(check('cat.counts', 'trust', 'Product counts add up', countProblems.length ? 'warn' : 'pass', {
       severity: 'minor',
@@ -107,10 +108,10 @@ export async function runCatalog({ request, origin, storeId, runId, rec, info, o
 
     if (diff) {
       const t = diff.totals;
-      const parts = [t.price && `${t.price} price change(s)`, t.sale && `${t.sale} sale change(s)`, t.stock && `${t.stock} stock change(s)`, t.description && `${t.description} description edit(s)`, t.images && `${t.images} image change(s)`, t.title && `${t.title} title change(s)`, t.added && `${t.added} product(s) added`, t.removed && `${t.removed} removed`].filter(Boolean);
+      const parts = [t.price && `${plural(t.price, 'price change')}`, t.sale && `${plural(t.sale, 'sale change')}`, t.stock && `${plural(t.stock, 'stock change')}`, t.description && `${plural(t.description, 'description edit')}`, t.images && `${plural(t.images, 'image change')}`, t.title && `${plural(t.title, 'title change')}`, t.added && `${plural(t.added, 'product')} added`, t.removed && `${t.removed} removed`].filter(Boolean);
       rec.add(check('cat.changes', 'trust', 'Catalog changes since the last check', 'pass', {
         severity: 'minor',
-        detail: parts.length ? `${diff.changes.length} product(s) changed: ${parts.join(', ')}.` : 'Nothing in the catalog changed.',
+        detail: parts.length ? `${plural(diff.changes.length, 'product')} changed: ${parts.join(', ')}.` : 'Nothing in the catalog changed.',
       }));
     }
 
@@ -125,7 +126,7 @@ export async function runCatalog({ request, origin, storeId, runId, rec, info, o
         out.copy = { reviewed, skipped, issues: found.slice(0, 300) };
         rec.add(check('ai.copy', 'trust', 'Product copy reads correctly (AI review)', found.some((i) => i.severity === 'major') ? 'warn' : 'pass', {
           severity: 'minor',
-          detail: found.length ? `${found.length} spelling, grammar or consistency issue(s). ${found.slice(0, 3).map((i) => `“${i.title}”: ${i.issue}${i.fix ? ` (suggested: “${i.fix}”)` : ''}`).join(' ')}` : `Reviewed ${reviewed} new or edited product(s); no copy issues found.`,
+          detail: found.length ? `${plural(found.length, 'spelling, grammar or consistency issue')}. ${found.slice(0, 3).map((i) => `“${i.title}”: ${i.issue}${i.fix ? ` (suggested: “${i.fix}”)` : ''}`).join(' ')}` : `Reviewed ${plural(reviewed, 'new or edited product')}; no copy issues found.`,
           fix: found.length ? 'Open the Catalog section for every issue with the suggested correction.' : '',
         }));
       } catch (e) {

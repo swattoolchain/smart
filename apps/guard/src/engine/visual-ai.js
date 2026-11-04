@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { check, shortErr } from './checks.js';
+import { check, shortErr, plural } from './checks.js';
 import { reviewScreenshot } from '../ai.js';
 
 const PAGE = { home: 'homepage', product: 'product page' };
@@ -30,7 +30,7 @@ export async function reviewScreens({ runDir, origin, rec }) {
         out.reviewed === 0
           ? `AI review did not run${out.error ? `: ${out.error}` : ''}.`
           : out.findings.length
-            ? `AI spotted ${out.findings.length} issue(s) a shopper would notice: ${out.findings.slice(0, 3).map((f) => `${f.issue} (${f.page}, ${f.device})`).join('; ')}.`
+            ? `AI spotted ${plural(out.findings.length, 'issue')} a shopper would notice: ${out.findings.slice(0, 3).map((f) => `${f.issue} (${f.page}, ${f.device})`).join('; ')}.`
             : `AI reviewed ${out.reviewed} screenshots across desktop and mobile; nothing looked wrong.`,
       evidence: out.findings.length ? { ai: out.findings.slice(0, 20) } : null,
       fix: out.findings.length ? 'Each finding points to a page and device. Open the Reports section to see the screenshots.' : '',

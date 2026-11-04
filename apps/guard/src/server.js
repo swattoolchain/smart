@@ -9,7 +9,8 @@ import { normalizeStoreUrl, assertPublicTarget, newContext, gotoStore, settleCha
 import { discover } from './engine/discover.js';
 import { GROUPS, INTERVALS, FULL_INTERVALS, normalizeConfig } from './engine/catalog.js';
 import { startRun, startScheduler, storeConfig, intervals, nextRunIn } from './scheduler.js';
-import { queueDepth } from './queue.js';
+import { queueDepth, cancelRun } from './queue.js';
+import { liveView } from './live.js';
 import { approveBaseline } from './engine/visual.js';
 import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
@@ -100,6 +101,8 @@ app.get('/api/runs/:id', (req, res) => {
     finished_at: run.finished_at,
     position: ahead,
     store_id: run.store_id,
+    trigger: run.trigger,
+    live: run.status === 'queued' || run.status === 'running' ? liveView(run.id) : null,
     result: run.result_json ? JSON.parse(run.result_json) : null,
   });
 });
@@ -334,8 +337,27 @@ app.post('/api/stores/:id/run', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   if (q.activeRunForStore.get(s.id)) return res.status(409).json({ error: 'A test is already running for this store.' });
-  const kind = req.body?.kind === 'journeys' ? 'journeys' : 'full';
-  res.json({ runId: startRun({ storeId: s.id, origin: s.url, kind, password: s.storefront_password, trigger: 'manual' }) });
+  // A run can be limited to chosen validation groups. Anything not chosen is skipped for this run only.
+  let kind = req.body?.kind === 'journeys' ? 'journeys' : 'full';
+  let disabled;
+  if (Array.isArray(req.body?.groups)) {
+    const chosen = new Set(req.body.groups.map(String));
+    for (const g of GROUPS) if (g.locked) chosen.add(g.key);
+    disabled = GROUPS.filter((g) => !chosen.has(g.key)).map((g) => g.key);
+    kind = GROUPS.some((g) => g.run === 'full' && chosen.has(g.key)) ? 'full' : 'journeys';
+  }
+  res.json({ runId: startRun({ storeId: s.id, origin: s.url, kind, password: s.storefront_password, trigger: 'manual', disabled }), kind });
+});
+
+app.post('/api/stores/:id/run/:runId/cancel', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const run = q.runById.get(Number(req.params.runId));
+  if (!run || run.store_id !== s.id) return res.status(404).json({ error: 'Run not found.' });
+  if (run.status !== 'queued' && run.status !== 'running') return res.status(409).json({ error: 'This test has already finished.' });
+  const stopped = cancelRun(run.id);
+  if (!stopped) q.cancelRun.run(run.id); // not in this process's queue (e.g. after a restart); mark it cancelled anyway
+  res.json({ ok: true });
 });
 
 app.post('/api/stores/:id/discover', requireUser, async (req, res) => {
@@ -488,3 +510,7 @@ app.listen(config.port, () => {
   console.log(`Tharam Store Guard on ${config.baseUrl} (port ${config.port})`);
   if (process.env.DISABLE_SCHEDULER !== '1') startScheduler();
 });
+
+// Docker sends SIGTERM on redeploy; Node as PID 1 ignores it unless handled. Runs in flight are
+// marked "Interrupted by restart" on the next start.
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => process.exit(0));

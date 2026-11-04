@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { config } from './config.js';
 import { q } from './db.js';
+import { groupOf } from './engine/catalog.js';
 
 let transport = null;
 function mailer() {
@@ -56,12 +57,24 @@ export async function handleAlerts(storeId, runId, result) {
       changes.push({ c, state: now === 'failing' ? 'failing' : 'recovered' });
     }
   }
+  // A failure whose check no longer runs (switched off in the suite, or replaced by a better check) can never
+  // recover by itself. Close it quietly on a full check rather than leaving it "broken" forever.
+  const ran = new Set((result.checks || []).map((c) => c.id));
+  const skipped = new Set(result.skippedGroups || []);
+  let suiteOff = new Set();
+  try { suiteOff = new Set(JSON.parse(store.config_json || '{}').disabled || []); } catch {}
+  for (const row of q.failingChecks.all(storeId)) {
+    if (ran.has(row.check_id)) continue;
+    const g = groupOf(row.check_id);
+    if (!g) continue;
+    if (suiteOff.has(g) || (result.kind === 'full' && !skipped.has(g))) q.upsertCheckState.run(storeId, row.check_id, 'ok');
+  }
   if (!changes.length) return;
 
-  const link = `${config.baseUrl}/app#/runs/${runId}`;
+  const link = `${config.baseUrl}/app#/s/${storeId}/reports/${runId}`;
   const failing = changes.filter((x) => x.state === 'failing');
   const recovered = changes.filter((x) => x.state === 'recovered');
-  for (const x of changes) q.insertAlert.run(storeId, x.c.id, x.state, x.c.detail);
+  for (const x of changes) q.insertAlert.run(storeId, x.c.id, x.state, x.c.detail, x.c.title);
 
   const name = store.name || new URL(store.url).host;
   const lines = [
@@ -69,8 +82,8 @@ export async function handleAlerts(storeId, runId, result) {
     ...recovered.map((x) => `🟢 Recovered: ${x.c.title}`),
   ];
   const subject = failing.length
-    ? `${failing.some((x) => x.c.severity === 'critical') ? 'URGENT: ' : ''}${failing[0].c.title} failing on ${name}`
-    : `Recovered on ${name}: ${recovered.map((x) => x.c.title).join(', ')}`;
+    ? `${failing.some((x) => x.c.severity === 'critical') ? 'Urgent: ' : ''}Check failed on ${name}: ${failing[0].c.title}${failing.length > 1 ? ` (+${failing.length - 1} more)` : ''}`
+    : `Fixed on ${name}: ${recovered.map((x) => x.c.title).join(', ')}`;
   const text = `${lines.join('\n\n')}\n\nFull report with screenshots: ${link}\n\n— Tharam Store Guard`;
   const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#1c1917">
 <p><b>${name}</b></p>${lines.map((l) => `<p style="white-space:pre-wrap">${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>`).join('')}

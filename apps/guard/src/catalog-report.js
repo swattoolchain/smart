@@ -52,6 +52,7 @@ export function catalogReport(storeId, runId, base) {
 
   return {
     run: { id: curId, takenAt: cur.takenAt, count: cur.count, truncated: cur.truncated },
+    currency: cur.currency || null,
     base: prev ? { id: baseId, takenAt: prev.takenAt, count: prev.count } : null,
     reports: snaps.map((id) => { const r = runRow.get(id, storeId); return { id, created_at: r?.created_at }; }),
     summary: {

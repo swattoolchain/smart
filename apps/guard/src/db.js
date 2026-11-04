@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS runs (
   store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
   url TEXT NOT NULL,
   kind TEXT NOT NULL,           -- free | journeys | full
-  status TEXT NOT NULL DEFAULT 'queued', -- queued | running | done | error
+  status TEXT NOT NULL DEFAULT 'queued', -- queued | running | done | error | cancelled
   score INTEGER,
   verdict TEXT,                 -- healthy | warning | critical
   result_json TEXT,
@@ -83,6 +83,7 @@ function ensureColumn(table, col, type) {
 ensureColumn('stores', 'config_json', "TEXT NOT NULL DEFAULT '{}'");
 ensureColumn('stores', 'platform', 'TEXT');
 ensureColumn('runs', 'trigger', 'TEXT');
+ensureColumn('alerts', 'title', 'TEXT');
 
 export const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
@@ -107,13 +108,14 @@ export const q = {
   insertRun: db.prepare('INSERT INTO runs (store_id, url, kind, requester_ip, trigger) VALUES (?, ?, ?, ?, ?)'),
   runById: db.prepare('SELECT * FROM runs WHERE id = ?'),
   runsByStore: db.prepare(
-    'SELECT id, kind, status, score, verdict, trigger, error, created_at, finished_at FROM runs WHERE store_id = ? ORDER BY id DESC LIMIT ?'
+    "SELECT id, kind, status, score, verdict, trigger, error, created_at, finished_at, json_array_length(result_json, '$.checks') AS checks FROM runs WHERE store_id = ? ORDER BY id DESC LIMIT ?"
   ),
   setRunRunning: db.prepare("UPDATE runs SET status = 'running' WHERE id = ?"),
   finishRun: db.prepare(
     "UPDATE runs SET status = 'done', score = ?, verdict = ?, result_json = ?, finished_at = datetime('now') WHERE id = ?"
   ),
   failRun: db.prepare("UPDATE runs SET status = 'error', error = ?, finished_at = datetime('now') WHERE id = ?"),
+  cancelRun: db.prepare("UPDATE runs SET status = 'cancelled', error = 'Stopped by you', finished_at = datetime('now') WHERE id = ?"),
   recentFreeRunsByIp: db.prepare(
     "SELECT COUNT(*) AS n FROM runs WHERE kind = 'free' AND requester_ip = ? AND created_at > datetime('now', '-1 hour')"
   ),
@@ -132,7 +134,7 @@ export const q = {
   upsertCheckState: db.prepare(
     "INSERT INTO check_state (store_id, check_id, status, since) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(store_id, check_id) DO UPDATE SET status = excluded.status, since = datetime('now')"
   ),
-  insertAlert: db.prepare('INSERT INTO alerts (store_id, check_id, state, message) VALUES (?, ?, ?, ?)'),
+  insertAlert: db.prepare('INSERT INTO alerts (store_id, check_id, state, message, title) VALUES (?, ?, ?, ?, ?)'),
   alertsByStore: db.prepare('SELECT * FROM alerts WHERE store_id = ? ORDER BY id DESC LIMIT 30'),
   staleRuns: db.prepare("UPDATE runs SET status = 'error', error = 'Interrupted by restart' WHERE status IN ('queued','running')"),
 };

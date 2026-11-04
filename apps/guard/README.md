@@ -26,7 +26,8 @@ Products and collections are discovered automatically from `/products.json` and 
 | `src/engine/nonfunctional.js` | Speed, SEO, accessibility, links, errors, catalog |
 | `src/engine/visual.js` | Screenshot baselines and diffs |
 | `src/engine/score.js` | Health score and verdict |
-| `src/queue.js` | In-process run queue, failure confirmation |
+| `src/queue.js` | In-process run queue, stop/cancel, failure confirmation |
+| `src/live.js` | Live progress of running tests |
 | `src/scheduler.js` | Monitoring schedule |
 | `src/alerts.js` | Email (SMTP) and Slack alerts |
 | `public/` | tharam.store website, report page, dashboard |
@@ -44,6 +45,12 @@ With an AI key set (`AI_API_KEY`, Anthropic by default), two more checks run on 
 - **Explain this change** (on-demand in Reports) uses AI to describe what changed between two screenshots and whether it looks intentional or like a bug.
 
 AI is provider-agnostic: set `AI_PROVIDER=openai`, `AI_BASE_URL` and model names for any OpenAI-compatible API (text-only providers skip the vision checks).
+
+## Running validations by hand
+
+Every manual run starts from **Run validations** (`#/s/:id/run`): pick a preset (Quick journey, Your test suite, Everything) or individual validations, review the run plan (steps, test product, time, what happens to the cart), then start. The selection applies to that run only unless "Also use this selection for scheduled checks" is ticked.
+
+While a run is queued or running, its page shows live progress: the current phase, elapsed time, pass/fail tally, problems found so far and the browser's own steps (`src/live.js`). **Stop test** closes the test browser within a few seconds; a stopped run is saved as `cancelled`, keeps no results and sends no alerts.
 
 ## Reports
 

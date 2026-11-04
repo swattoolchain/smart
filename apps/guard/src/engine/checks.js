@@ -33,3 +33,8 @@ export function shortErr(e) {
     .replace(/\s+/g, ' ')
     .slice(0, 220);
 }
+
+/** "1 issue", "3 issues". */
+export function plural(n, one, many = one + 's') {
+  return `${n} ${n === 1 ? one : many}`;
+}

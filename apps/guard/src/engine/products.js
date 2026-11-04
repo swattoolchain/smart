@@ -1,3 +1,4 @@
+import { plural } from './checks.js';
 /**
  * Catalog checksum mode: fingerprints every product so any two checks can be compared,
  * and validates product data the way a careful merchandiser would.
@@ -66,7 +67,11 @@ export async function fetchCatalog(request, origin, { maxPages = 8 } = {}) {
     if (page === maxPages) truncated = true;
     await new Promise((r) => setTimeout(r, 400)); // be gentle with the store
   }
-  return { takenAt: new Date().toISOString(), count: products.length, truncated, products };
+  // The store's currency, so prices read the way the merchant sees them (cart.js always reports it).
+  let currency = null;
+  const cart = await request.get(`${origin}/cart.js`, { timeout: 15000 }).catch(() => null);
+  if (cart?.ok()) currency = (await cart.json().catch(() => null))?.currency || null;
+  return { takenAt: new Date().toISOString(), count: products.length, truncated, currency, products };
 }
 
 const PLACEHOLDER = [
@@ -79,7 +84,14 @@ const PLACEHOLDER = [
 ];
 
 /** Validations a careful merchandiser would make, on one snapshot (plus the previous one for price jumps). */
+export function formatMoney(n, currency) {
+  if (n == null) return '–';
+  if (!currency) return String(n);
+  try { return new Intl.NumberFormat('en', { style: 'currency', currency, maximumFractionDigits: Number.isInteger(n) ? 0 : 2 }).format(n); } catch { return `${n} ${currency}`; }
+}
+
 export function validateCatalog(snap, prev = null) {
+  const m = (n) => formatMoney(n, snap.currency);
   const issues = [];
   const add = (p, type, severity, message, extra = {}) => issues.push({ handle: p.handle, title: p.title, type, severity, message, ...extra });
   const prevBy = new Map((prev?.products || []).map((p) => [p.id, p]));
@@ -91,15 +103,15 @@ export function validateCatalog(snap, prev = null) {
   for (const p of snap.products) {
     // Pricing
     for (const v of p.variants) {
-      const label = p.variants.length > 1 ? ` (${v.title})` : '';
+      const label = p.variants.length > 1 ? ` for “${v.title}”` : '';
       if (v.price == null || v.price === 0) add(p, 'pricing', 'critical', `Priced at zero${label}. Customers could order it for free.`, { variant: v.title });
       if (v.compareAt != null && v.price != null && v.compareAt > 0 && v.compareAt <= v.price)
-        add(p, 'pricing', 'major', `Compare-at price ${v.compareAt} is not higher than the price ${v.price}${label}, so the "sale" is not a real discount.`, { variant: v.title });
+        add(p, 'pricing', 'major', `Compare-at price ${m(v.compareAt)} is not higher than the price ${m(v.price)}${label}, so the “sale” is not a real discount.`, { variant: v.title });
       const old = prevBy.get(p.id)?.variants.find((x) => x.id === v.id);
       if (old?.price && v.price != null && v.price > 0) {
         const change = (v.price - old.price) / old.price;
-        if (change <= -0.5) add(p, 'pricing', 'major', `Price dropped ${Math.round(-change * 100)}% since the last check (${old.price} → ${v.price})${label}. Check this isn't a mistake.`, { variant: v.title });
-        if (change >= 1) add(p, 'pricing', 'minor', `Price more than doubled since the last check (${old.price} → ${v.price})${label}.`, { variant: v.title });
+        if (change <= -0.5) add(p, 'pricing', 'major', `Price${label} dropped ${Math.round(-change * 100)}% since the last check, from ${m(old.price)} to ${m(v.price)}. Check this isn't a mistake.`, { variant: v.title });
+        if (change >= 1) add(p, 'pricing', 'minor', `Price${label} more than doubled since the last check, from ${m(old.price)} to ${m(v.price)}.`, { variant: v.title });
       }
     }
     // Content
@@ -109,7 +121,7 @@ export function validateCatalog(snap, prev = null) {
       if (m) add(p, 'content', 'major', `${label}: “${m[0].slice(0, 60)}”.`, { snippet: m[0].slice(0, 80) });
     }
     if (p.text.length < 25) add(p, 'content', 'minor', p.text.length ? 'Description is very short.' : 'Description is empty.');
-    if (p.text.length > 40 && textCount.get(p.textHash) > 1) add(p, 'content', 'minor', `Same description as ${textCount.get(p.textHash) - 1} other product(s). Duplicate text hurts SEO.`);
+    if (p.text.length > 40 && textCount.get(p.textHash) > 1) add(p, 'content', 'minor', `Same description as ${plural(textCount.get(p.textHash) - 1, 'other product')}. Duplicate text hurts SEO.`);
     const rep = hay.match(/\b(\w{2,})\s+\1\b/i);
     if (rep && !/^(\d+|ha|bye|no|so|very|knock)$/i.test(rep[1])) add(p, 'content', 'minor', `Repeated word: “${rep[0]}”.`, { snippet: rep[0] });
     if (/[a-z][.,;:!?][A-Za-z]{3,}/.test(p.text.replace(/https?:\S+|\b\d+\.\d+\b|\w+\.(com|in|co|net|org)\b/g, ''))) add(p, 'content', 'minor', 'Missing space after punctuation somewhere in the description.');
@@ -119,7 +131,7 @@ export function validateCatalog(snap, prev = null) {
     // Media and stock
     if (!p.images) add(p, 'media', 'major', 'No product images.');
     const old = prevBy.get(p.id);
-    if (old && p.images < old.images) add(p, 'media', 'minor', `${old.images - p.images} image(s) removed since the last check.`);
+    if (old && p.images < old.images) add(p, 'media', 'minor', `${plural(old.images - p.images, 'image')} removed since the last check.`);
     if (old && old.available && !p.available) add(p, 'stock', 'minor', 'Went out of stock since the last check.');
     // Data
     for (const v of p.variants) if (v.sku && skuOwners.get(v.sku)?.size > 1) { add(p, 'data', 'minor', `SKU “${v.sku}” is also used by another product. Duplicate SKUs confuse inventory and fulfilment.`, { snippet: v.sku }); break; }
