@@ -1,5 +1,6 @@
 import { PRODUCTS, PLATFORMS, MARKETPLACES, STATUS } from './content.js';
 
+export const VERSION = Date.now().toString(36);
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 const P = {
@@ -36,13 +37,15 @@ function nav(path) {
     <div class="nv"><button type="button" class="nv-btn"${on('/features')} aria-expanded="false">Features ${icon('chevron', 15)}</button>
       <div class="mega wide"><p class="mega-intro">Everything below is included in your Tharam plan.</p><div class="mega-grid">${PRODUCTS.map((p) => item(`/features/${p.slug}`, p.icon, p.name, p.short, p.status)).join('')}</div>
         <div class="mega-foot two"><a href="/checks">See every check we run ${icon('arrow', 15)}</a><a href="/commerce-assurance">Why Tharam ${icon('arrow', 15)}</a></div></div></div>
-    <div class="nv"><button type="button" class="nv-btn"${on('/platforms')} aria-expanded="false">Platforms ${icon('chevron', 15)}</button>
-      <div class="mega"><p class="mega-label">Your own store</p><div class="mega-list">${PLATFORMS.map((p) => `<a href="/platforms/${p.slug}"><span>${esc(p.name)}</span>${badge(p.status)}</a>`).join('')}</div>
-        <a class="mega-foot" href="/platforms">Compare platforms ${icon('arrow', 15)}</a></div></div>
-    <div class="nv"><button type="button" class="nv-btn"${on('/marketplaces')} aria-expanded="false">Marketplaces ${icon('chevron', 15)}</button>
-      <div class="mega"><p class="mega-label">Where you also sell</p><div class="mega-list">${MARKETPLACES.map((m) => `<a href="/marketplaces/${m.slug}"><span>${esc(m.name)}</span>${badge(m.status)}</a>`).join('')}</div>
-        <a class="mega-foot" href="/marketplaces">How marketplace guard works ${icon('arrow', 15)}</a></div></div>
-    <a class="nv-link" href="/managed"${on('/managed')}>Managed service</a>
+    <div class="nv"><button type="button" class="nv-btn"${on('/platforms') || on('/marketplaces') || on('/managed')} aria-expanded="false">Solutions ${icon('chevron', 15)}</button>
+      <div class="mega solutions"><div class="sol-cols">
+        <div><p class="mega-label">Your store platform</p><div class="mega-list">${PLATFORMS.map((p) => `<a href="/platforms/${p.slug}"><span>${esc(p.name)}</span>${badge(p.status)}</a>`).join('')}</div>
+          <a class="mega-foot" href="/platforms">Compare platforms ${icon('arrow', 15)}</a></div>
+        <div><p class="mega-label">Also selling on</p><div class="mega-list">${MARKETPLACES.map((m) => `<a href="/marketplaces/${m.slug}"><span>${esc(m.name)}</span>${badge(m.status)}</a>`).join('')}</div>
+          <a class="mega-foot" href="/marketplaces">About marketplaces ${icon('arrow', 15)}</a></div>
+        <div><p class="mega-label">Done for you</p>${item('/managed', 'tool', 'Managed service', 'Our team watches your store, fixes what breaks and checks every change.')}
+          <p class="mega-label">Built for</p>${item('/demo', 'agency', 'Agencies and freelancers', 'Every client store in one place, with reports to share.')}${item('/demo', 'code', 'App and theme developers', 'Make sure your app or theme works on real stores.')}</div>
+      </div></div></div>
     <a class="nv-link" href="/pricing"${on('/pricing')}>Pricing</a>
     <a class="nv-link show-sm" href="/demo">Book a demo</a>
     <a class="nv-link show-sm" href="/app">Log in</a>
@@ -95,12 +98,12 @@ export function layout({ title, description = '', path = '/', body, noindex = fa
 ${noindex ? '<meta name="robots" content="noindex">' : `<link rel="canonical" href="https://tharam.store${path === '/' ? '/' : path}">`}
 <meta property="og:title" content="${esc(full)}"><meta property="og:description" content="${esc(description)}"><meta property="og:image" content="https://tharam.store/assets/og.png">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/fonts/fonts.css"><link rel="stylesheet" href="/assets/site.css"><link rel="stylesheet" href="/assets/www.css">${extraHead}</head>
+<link rel="stylesheet" href="/assets/fonts/fonts.css?v=${VERSION}"><link rel="stylesheet" href="/assets/site.css?v=${VERSION}"><link rel="stylesheet" href="/assets/www.css?v=${VERSION}">${extraHead}</head>
 <body class="www">
 <header class="site-top"><div class="wrap">
   <a class="brand" href="/" aria-label="Tharam home"><img src="/assets/brand/tharam-logo.svg" width="118" height="34" alt="Tharam"></a>
   ${nav(path)}
-  <div class="top-actions"><a class="nv-link hide-sm" href="/demo">Book a demo</a><a class="nv-link hide-sm" href="/app">Log in</a><a class="btn small" href="/#check">Free store check</a>
+  <div class="top-actions"><a class="nv-link hide-sm" href="/app">Log in</a><a class="btn small secondary hide-sm" href="/demo">Book a demo</a><a class="btn small" href="/#check">Free store check</a>
     <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="mainnav">${icon('menu', 22)}</button></div>
 </div></header>
 ${body}

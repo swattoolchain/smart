@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { layout, esc, icon, badge } from './layout.js';
+import { layout, esc, icon, badge, VERSION } from './layout.js';
+export { VERSION };
 import { PRODUCTS, PLATFORMS, MARKETPLACES, CAPS, FAQ, MANAGED, AUDIENCES, PROMISES } from './content.js';
 
 const checkForm = (id = 'check') => `<form class="check-form" id="check-form" novalidate><label for="${id}-url" class="sr-only">Your store address</label>

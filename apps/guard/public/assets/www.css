@@ -333,3 +333,11 @@ table.cmp.caps th a { color: var(--ink); text-decoration: none; }
 .mega-foot.two a { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
 .mock-verdict .mv-ic { background: #22a35a; }
 .mock-checks em { color: #a35b06; font-weight: 600; }
+.mega.solutions { width: 820px; left: -120px; }
+.sol-cols { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 8px; }
+.sol-cols > div { padding: 2px; }
+.sol-cols > div + div { border-left: 1px solid var(--line); padding-left: 10px; }
+.sol-cols .mega-label + .mm-item, .sol-cols .mm-item + .mega-label { margin-top: 4px; }
+.sol-cols .mm-item { padding: 10px; }
+.top-actions .btn.secondary { border: 1px solid #cfd4df; }
+@media (max-width: 980px) { .mega.solutions { width: auto; } .sol-cols { grid-template-columns: 1fr; } .sol-cols > div + div { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 8px; } }
