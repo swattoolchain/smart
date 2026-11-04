@@ -3,6 +3,7 @@ import path from 'node:path';
 import { layout, esc, icon, badge, VERSION } from './layout.js';
 export { VERSION };
 import { PRODUCTS, PLATFORMS, MARKETPLACES, CAPS, FAQ, MANAGED, AUDIENCES, PROMISES } from './content.js';
+import { demoMarkup, demoScript } from './demo.js';
 
 const checkForm = (id = 'check') => `<form class="check-form" id="check-form" novalidate><label for="${id}-url" class="sr-only">Your store address</label>
   <input id="${id}-url" name="url" type="text" inputmode="url" autocomplete="url" placeholder="yourstore.com" required><button class="btn" type="submit">Check my store free</button></form>
@@ -27,13 +28,6 @@ const heroVisual = `<div class="mock" aria-label="Example of the Tharam dashboar
   </ul>
   <div class="mock-verdict"><span class="mv-ic">${icon('check', 16)}</span><div><b>Safe to publish</b><span>Your new Diwali homepage won’t break anything</span></div></div>
 </div>`;
-
-const SHOTS = [
-  ['overview', 'Your store at a glance', 'Store health, what needs fixing, and when the next check runs.'],
-  ['publish', 'Safe to publish', 'Your new design tested next to your current store, with one clear answer.'],
-  ['catalog', 'Product and price checks', 'Every product checked, and every mistake listed with a link to fix it.'],
-  ['report', 'Reports', 'What broke, what got fixed, compared with any earlier day.'],
-];
 
 export function home() {
   const body = `<main>
@@ -63,11 +57,8 @@ export function home() {
   </div></section>
 
   <section class="band white"><div class="wrap">
-    <div class="sec-head"><p class="eyebrow">See it in action</p><h2 class="h2">Simple enough to understand in one look</h2></div>
-    <div class="showcase" data-tabs>
-      <div class="sc-tabs" role="tablist">${SHOTS.map(([k, t], i) => `<button type="button" role="tab" aria-selected="${i === 0}" data-tab="${k}">${esc(t)}</button>`).join('')}</div>
-      ${SHOTS.map(([k, t, d], i) => `<figure class="sc-pane" data-pane="${k}" ${i ? 'hidden' : ''}><img src="/assets/site/app-${k}.jpg" alt="${esc(t)}: ${esc(d)}" loading="${i ? 'lazy' : 'eager'}" width="1440" height="900"><figcaption>${esc(d)}</figcaption></figure>`).join('')}
-    </div>
+    <div class="sec-head center-h"><p class="eyebrow">Try it</p><h2 class="h2">Click around a sample store</h2><p class="body-l">This is what you see after Tharam checks your store. Open an issue, run a check, or try Safe to publish.</p></div>
+    ${demoMarkup}
   </div></section>
 
   <section class="band"><div class="wrap split">
@@ -125,7 +116,7 @@ export function home() {
   ${faq(FAQ)}
   ${cta()}
   </main>`;
-  return layout({ title: '', description: 'Tharam checks your online store every few hours like a real customer and tells you the moment customers can’t buy. Product and price checks, tests for design changes, and AI that looks at your pages like a shopper. Free during the beta.', path: '/', body });
+  return layout({ scripts: demoScript, title: '', description: 'Tharam checks your online store every few hours like a real customer and tells you the moment customers can’t buy. Product and price checks, tests for design changes, and AI that looks at your pages like a shopper. Free during the beta.', path: '/', body });
 }
 
 /* ---------- Why Tharam (the category page) ---------- */
