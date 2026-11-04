@@ -1,6 +1,6 @@
 # Tharam Shopify app configuration. Deployed with: shopify app deploy
 # client_id comes from the Dev Dashboard (Apps → Tharam → Client ID).
-client_id = "REPLACE_WITH_CLIENT_ID"
+client_id = "38c6887ba789fcebd7fae0b07d726f2f"
 name = "Tharam"
 handle = "tharam"
 application_url = "https://tharam.store/shopify"
