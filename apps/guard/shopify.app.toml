@@ -1,0 +1,33 @@
+# Tharam Shopify app configuration. Deployed with: shopify app deploy
+# client_id comes from the Dev Dashboard (Apps → Tharam → Client ID).
+client_id = "REPLACE_WITH_CLIENT_ID"
+name = "Tharam"
+handle = "tharam"
+application_url = "https://tharam.store/shopify"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = false
+include_config_on_deploy = true
+
+[access_scopes]
+# Read-only: themes (Safe to publish), products (product and price checks), discounts (discount code checks).
+scopes = "read_themes,read_products,read_discounts"
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = ["https://tharam.store/shopify"]
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled", "themes/publish", "products/create", "products/update", "app_subscriptions/update"]
+  uri = "https://tharam.store/shopify/webhooks"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "https://tharam.store/shopify/webhooks"
+
+[pos]
+embedded = false

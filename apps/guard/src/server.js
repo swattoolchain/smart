@@ -13,8 +13,11 @@ import { queueDepth, cancelRun } from './queue.js';
 import { liveView } from './live.js';
 import { scorecard, weekBuyability } from './scorecard.js';
 import crypto from 'node:crypto';
-import { entitlements, has, blockReason, licenseView, ensureLicense, notIncluded, plansWith, FEATURES, envAllowed } from './license.js';
+import { entitlements, has, blockReason, licenseView, ensureLicense, notIncluded, plansWith, FEATURES, envAllowed, listPlans } from './license.js';
 import { adminRoutes } from './admin.js';
+import * as shopify from './shopify.js';
+import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
+import { paymentRoutes, razorpayWebhook } from './payments.js';
 import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './release.js';
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
@@ -27,6 +30,9 @@ import { catalogReport } from './catalog-report.js';
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+// Webhooks need the raw body to check their signatures, so they are registered before the JSON parser.
+app.post('/shopify/webhooks', express.raw({ type: '*/*', limit: '1mb' }), shopifyWebhook);
+app.post('/api/payments/razorpay/webhook', express.raw({ type: '*/*', limit: '200kb' }), razorpayWebhook);
 app.use(express.json({ limit: '50kb' }));
 app.use(
   cookieSession({
@@ -40,7 +46,11 @@ app.use(
 );
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  // The Shopify app runs inside Shopify admin; everything else may only be framed by ourselves.
+  if (req.path === '/shopify' || req.path.startsWith('/shopify/')) {
+    const shop = String(req.query.shop || '').toLowerCase();
+    res.setHeader('Content-Security-Policy', `frame-ancestors https://admin.shopify.com${shopify.validShop(shop) ? ` https://${shop}` : ''};`);
+  } else res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
@@ -49,6 +59,20 @@ const ip = (req) => req.ip || req.socket.remoteAddress || 'unknown';
 const isEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s) && s.length < 200;
 
 function requireUser(req, res, next) {
+  // Inside Shopify admin there are no cookies: every request carries a Shopify session token.
+  const auth = req.get('authorization') || '';
+  if (/^Bearer\s+ey/i.test(auth) && shopify.shopifyEnabled() && !req.path.startsWith('/api/gate')) {
+    try {
+      const { shop } = shopify.verifySessionToken(auth.replace(/^Bearer\s+/i, ''));
+      const link = db.prepare('SELECT user_id FROM shopify_shops WHERE shop = ? AND uninstalled_at IS NULL').get(shop);
+      const u = link?.user_id && q.userById.get(link.user_id);
+      if (!u) return res.status(401).json({ error: 'Open Tharam from your Shopify admin again.', reauth: true });
+      req.user = u; req.shop = shop;
+      return next();
+    } catch (e) {
+      return res.status(401).json({ error: 'Your Shopify session has expired. Reload the page.', reauth: true });
+    }
+  }
   const u = req.session?.uid && q.userById.get(req.session.uid);
   if (!u) return res.status(401).json({ error: 'Please log in' });
   req.user = u;
@@ -89,9 +113,48 @@ app.post('/api/scan', async (req, res) => {
   res.json({ runId });
 });
 
+/** The signed-in user: a login cookie on the website, or a Shopify session token inside Shopify admin. */
+function currentUserId(req) {
+  if (req.session?.uid) return req.session.uid;
+  const auth = req.get('authorization') || '';
+  if (/^Bearer\s+ey/i.test(auth) && shopify.shopifyEnabled()) {
+    try {
+      const { shop } = shopify.verifySessionToken(auth.replace(/^Bearer\s+/i, ''));
+      return db.prepare('SELECT user_id FROM shopify_shops WHERE shop = ? AND uninstalled_at IS NULL').get(shop)?.user_id || null;
+    } catch { return null; }
+  }
+  return null;
+}
+// Images inside Shopify admin can't send a session token, so their links carry a short-lived signature
+// for that exact file. Links are signed only for the signed-in shop's own runs and stores, and the
+// signature is accepted only when serving that image.
+const fileSig = (file, exp) => crypto.createHmac('sha256', config.sessionSecret).update(`file:${file}:${exp}`).digest('base64url').slice(0, 32);
+const validFileSig = (file, t) => { const m = /^([\w-]{32})\.(\d{10})$/.exec(String(t || '')); return !!m && Number(m[2]) > Date.now() / 1000 && crypto.timingSafeEqual(Buffer.from(m[1]), Buffer.from(fileSig(file, Number(m[2])))); };
+function signFiles(obj, userId) {
+  const exp = Math.floor(Date.now() / 1000) + 6 * 3600;
+  const owns = new Map();
+  const ownsRun = (id) => { if (!owns.has(`r${id}`)) { const r = q.runById.get(id); const st = r?.store_id && q.storeById.get(r.store_id); owns.set(`r${id}`, !!st && st.user_id === userId); } return owns.get(`r${id}`); };
+  const ownsStore = (id) => { if (!owns.has(`s${id}`)) owns.set(`s${id}`, q.storeById.get(id)?.user_id === userId); return owns.get(`s${id}`); };
+  return JSON.parse(JSON.stringify(obj), (k, v) => {
+    if (typeof v !== 'string') return v;
+    let m = /^(\/shots\/run-(\d+)\/[\w.-]+)$/.exec(v);
+    if (m && ownsRun(Number(m[2]))) return `${m[1]}?t=${fileSig(m[1], exp)}.${exp}`;
+    m = /^(\/baselines\/(\d+)\/[\w.-]+)(\?v=\d+)?$/.exec(v);
+    if (m && ownsStore(Number(m[2]))) return `${m[1]}?${m[3] ? m[3].slice(1) + '&' : ''}t=${fileSig(m[1], exp)}.${exp}`;
+    return v;
+  });
+}
+app.use((req, res, next) => {
+  // Only for Shopify session requests; the signed-in user is checked when the response is sent.
+  if (/^Bearer\s+ey/i.test(req.get('authorization') || '')) {
+    const json = res.json.bind(res);
+    res.json = (body) => { const uid = req.user?.id || currentUserId(req); return json(uid ? signFiles(body, uid) : body); };
+  }
+  next();
+});
 function runVisibleTo(run, req) {
   if (run.kind === 'free') return true;
-  const uid = req.session?.uid;
+  const uid = currentUserId(req);
   const store = run.store_id && q.storeById.get(run.store_id);
   return !!(uid && store && store.user_id === uid);
 }
@@ -131,7 +194,9 @@ app.use('/shots/:dir', (req, res, next) => {
   const m = /^run-(\d+)$/.exec(req.params.dir);
   if (!m) return res.status(404).end();
   const run = q.runById.get(Number(m[1]));
-  if (!run || !runVisibleTo(run, req)) return res.status(404).end();
+  if (!run) return res.status(404).end();
+  const file = `/shots/${req.params.dir}${req.path}`;
+  if (!runVisibleTo(run, req) && !(/^\/[\w.-]+$/.test(req.path) && validFileSig(file, req.query.t))) return res.status(404).end();
   express.static(path.join(config.dataDir, 'shots', req.params.dir), { maxAge: '7d' })(req, res, next);
 });
 
@@ -290,7 +355,8 @@ function storeView(s) {
 }
 
 app.get('/api/stores', requireUser, (req, res) => {
-  res.json({ stores: q.storesByUser.all(req.user.id).map(storeView), queue: queueDepth(), license: licenseView(req.user.id) });
+  const sh = shopify.shopForUser(req.user.id);
+  res.json({ stores: q.storesByUser.all(req.user.id).map(storeView), queue: queueDepth(), license: { ...licenseView(req.user.id), shopify: sh ? { shop: sh.shop, pricingUrl: shopify.pricingUrl(sh.shop) } : null } });
 });
 
 app.get('/api/overview', requireUser, (req, res) => {
@@ -306,6 +372,8 @@ app.post('/api/stores', requireUser, async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }
+  // A Shopify-installed account checks its own Shopify store only; the store is set up by the app.
+  if (shopify.shopForUser(req.user.id)) return refuse(res, 'This account checks your Shopify store. To check another store, install Tharam on that store too.');
   const mine = q.storesByUser.all(req.user.id);
   const ent = entitlements(req.user.id);
   if (!ent.usable) return refuse(res, blockReason(ent));
@@ -361,6 +429,7 @@ app.patch('/api/stores/:id', requireUser, (req, res) => {
 app.delete('/api/stores/:id', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
+  if (shopify.shopForStore(s.id)) return res.status(400).json({ error: 'This is the store Tharam was installed on. To stop checking it, uninstall Tharam from your Shopify admin.' });
   q.deleteStore.run(s.id, req.user.id);
   fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
   res.json({ ok: true });
@@ -431,8 +500,11 @@ app.post('/api/stores/:id/releases', requireUser, (req, res) => {
     return res.json({ id: startRelease(s, { url: env.url, label, env }) });
   }
   let url;
-  try { url = previewUrlFor(s, String(req.body?.url || '').trim()); } catch (e) { return res.status(400).json({ error: e.message }); }
-  res.json({ id: startRelease(s, { url, label }) });
+  // From the Shopify app: a draft theme picked from the store's own theme list.
+  const themeId = req.body?.themeId ? String(req.body.themeId) : null;
+  if (themeId && !/^\d{1,20}$/.test(themeId)) return res.status(400).json({ error: 'Unknown theme' });
+  try { url = themeId ? `${s.url.replace(/\/$/, '')}/?preview_theme_id=${themeId}` : previewUrlFor(s, String(req.body?.url || '').trim()); } catch (e) { return res.status(400).json({ error: e.message }); }
+  res.json({ id: startRelease(s, { url, label: label || (req.body?.themeName ? String(req.body.themeName).slice(0, 120) : '') }) });
 });
 
 // ---------- Environments (staging themes and stores) and release gates ----------
@@ -618,9 +690,11 @@ app.get('/api/stores/:id/visual', requireUser, (req, res) => {
   });
 });
 
-app.get('/baselines/:sid/:file', requireUser, (req, res) => {
+app.get('/baselines/:sid/:file', (req, res) => {
   const s = q.storeById.get(Number(req.params.sid));
-  if (!s || s.user_id !== req.user.id || !/^(home|product)-(desktop|tablet|mobile)\.png$/.test(req.params.file)) return res.status(404).end();
+  if (!s || !/^(home|product)-(desktop|tablet|mobile)\.png$/.test(req.params.file)) return res.status(404).end();
+  // The owner's login, or (inside Shopify admin) a signed link for this exact file.
+  if (currentUserId(req) !== s.user_id && !validFileSig(`/baselines/${s.id}/${req.params.file}`, req.query.t)) return res.status(404).end();
   res.sendFile(path.join(config.dataDir, 'baselines', `store-${s.id}`, req.params.file));
 });
 
@@ -693,6 +767,11 @@ app.get('/api/admin/overview', requireUser, (req, res) => {
   });
 });
 
+// Public plans and prices, for the in-app plan picker (same data as the pricing page).
+app.get('/api/public/plans', (req, res) => {
+  res.json({ plans: listPlans().filter((p) => p.public && p.active).map(({ key, name, tagline, kind, prices, highlight, limits }) => ({ key, name, tagline, kind, prices, highlight, maxStores: limits.maxStores })) });
+});
+
 app.get('/healthz', (req, res) => res.json({ ok: true, queue: queueDepth() }));
 app.get('/api/public-config', (req, res) => res.json({ calLink: config.calLink, contactEmail: config.contactEmail }));
 
@@ -721,6 +800,8 @@ app.get(['/sale-ready', '/black-friday'], html(() => site.saleReady()));
 app.get('/scan/:id', old('report.html', { title: 'Store check report', noindex: true }));
 const appHtml = fs.readFileSync(path.join(config.publicDir, 'app.html'), 'utf8').replace(/(\/assets\/[\w./-]+\.(?:css|js))"/g, `$1?v=${site.VERSION}"`);
 app.get('/app', (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(appHtml));
+shopifyRoutes(app, { requireUser, appHtml });
+paymentRoutes(app, { requireUser });
 app.get('/privacy', old('privacy.html', { path: '/privacy' }));
 app.get('/terms', old('terms.html', { path: '/terms' }));
 app.get('/bot', old('bot.html', { path: '/bot' }));

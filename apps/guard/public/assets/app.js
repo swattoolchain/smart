@@ -8,9 +8,14 @@
   const S = { me: null, admin: false, stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
 
   // ---------- Helpers ----------
+  // Inside Shopify admin (the Shopify app) there are no cookies: each request carries a fresh Shopify session token.
+  const EMB = !!window.THARAM_EMBEDDED;
   async function api(path, opts = {}) {
-    const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined });
+    const headers = { 'Content-Type': 'application/json' };
+    if (EMB) headers.Authorization = `Bearer ${await window.shopify.idToken()}`;
+    const r = await fetch(path, { headers, credentials: 'same-origin', ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined });
     const j = await r.json().catch(() => ({}));
+    if (r.status === 401 && EMB) throw Object.assign(new Error(j.error || 'Reload the page to continue.'), { status: 401 });
     if (r.status === 401 && !path.startsWith('/api/auth')) { S.me = null; authView('login'); throw new Error('Please log in'); }
     if (!r.ok) throw Object.assign(new Error(j.error || 'Something went wrong. Try again.'), { status: r.status });
     return j;
@@ -219,7 +224,9 @@
   }
   function railPref() { try { return localStorage.getItem('tg.rail') === 'collapsed'; } catch { return false; } }
   function shell() {
-    document.body.className = 'app' + (railPref() ? ' rail-collapsed' : '');
+    // Shopify's App Bridge reads its nav menu from the page, so keep it when the shell is drawn.
+    const navMenu = document.querySelector('ui-nav-menu');
+    document.body.className = 'app' + (EMB ? ' embedded' : '') + (railPref() ? ' rail-collapsed' : '');
     document.body.innerHTML = `
       <div class="layout">
         <aside class="rail" id="rail" aria-label="Main navigation">
@@ -254,6 +261,7 @@
           <main class="main" id="main" tabindex="-1"></main>
         </div>
       </div>`;
+    if (navMenu) document.body.prepend(navMenu);
     const userBtn = $('#user-btn'), userPop = $('#user-pop');
     userBtn.onclick = (e) => { e.stopPropagation(); const open = userPop.hidden; closePops(); userPop.hidden = !open; userBtn.setAttribute('aria-expanded', String(open)); };
     $('#logout').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); S.me = null; location.hash = ''; authView('login'); };
@@ -1336,7 +1344,7 @@
       ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Safe to publish')}${upsell('publish', 'Check every change before your customers see it', 'Test a new theme, sale banner or app change next to your live store, on computer, tablet and phone, and get a clear answer: safe to publish, have a look first, or don’t publish yet.')}</div>`;
       return;
     }
-    const [d, ev] = await Promise.all([api(`/api/stores/${s.id}/releases`), api(`/api/stores/${s.id}/environments`)]);
+    const [d, ev, th] = await Promise.all([api(`/api/stores/${s.id}/releases`), api(`/api/stores/${s.id}/environments`), S.license?.shopify ? api(`/api/stores/${s.id}/shopify/themes`).catch(() => ({ themes: null, failed: true })) : Promise.resolve({ themes: null })]);
     if (!ctx.alive()) return;
     const shopify = !s.platform || /shopify/i.test(s.platform);
     const busyStore = !!s.active_run_id;
@@ -1383,7 +1391,17 @@
         <td><span class="cell-main">${esc(what)}</span>${r.label || (r.environment && th) ? `<div class="cell-sub">${esc([r.environment && th, r.label].filter(Boolean).join(' · '))}</div>` : ''}</td><td>${pubPill(r)}</td>
         <td class="cell-sub">${c ? [c.blockers && plural(c.blockers, 'break'), c.reviews && plural(c.reviews, 'warning'), c.visual && `${plural(c.visual, 'page')} changed`, c.fixes && `${plural(c.fixes, 'fix', 'fixes')}`].filter(Boolean).join(' · ') || 'No differences' : esc(r.summary?.error || '–')}</td>
         <td class="go">${icon('right', 16)}</td></tr>`; }).join('')}</tbody></table></div></section>` : '';
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Safe to publish')}${envPanel}${form}${list}</div>`;
+    // Shopify app: the store's own draft themes, one click each. No preview links to copy.
+    const themesPanel = th.themes ? `<section class="panel"><div class="panel-head"><div><h2>Your draft themes</h2><p class="sub" style="margin:2px 0 0">Check a theme before you publish it. We test it next to your live theme and tell you if anything would break.</p></div></div>
+      ${th.themes.length ? `<ul class="env-list">${th.themes.map((t) => `<li class="env"><span class="env-icon">${icon('layers', 18)}</span><div class="env-main"><div class="env-name"><b>${esc(t.name)}</b>${t.role === 'DEVELOPMENT' ? '<span class="chip">Development</span>' : ''}</div><div class="cell-sub">Edited ${time(t.updatedAt)}</div></div><div></div>
+        <div class="env-actions"><button type="button" class="btn small" data-theme="${esc(t.id)}" data-name="${esc(t.name)}" ${busyStore ? 'disabled title="A test is running"' : ''}>${icon('play', 14)}Check this theme</button></div></li>`).join('')}</ul>`
+        : '<div class="env-empty"><p>You have no draft themes right now. Duplicate your live theme in <b>Online Store → Themes</b>, make your changes there, and check it here before publishing.</p></div>'}</section>` : th.failed ? '<div class="notice warn-n"><p>We couldn’t load your themes from Shopify just now. Reload the page to try again.</p></div>' : '';
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Safe to publish')}${themesPanel}${envPanel}${th.themes ? `<details class="panel more-ways"><summary>Use a preview link instead</summary>${form}</details>` : form}${list}</div>`;
+    $$('[data-theme]', ctx.main).forEach((b) => (b.onclick = async () => {
+      const done = busy(b, 'Starting');
+      try { const r = await api(`/api/stores/${s.id}/releases`, { method: 'POST', body: { themeId: b.dataset.theme, themeName: b.dataset.name } }); location.hash = `#/s/${s.id}/publish/${r.id}`; }
+      catch (ex) { done(); toast(ex.message, 'error'); }
+    }));
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
     $('#env-add').onclick = async () => { if (await envDialog(s)) render({ silent: true }); };
     $$('li.env', ctx.main).forEach((li) => {
@@ -1602,7 +1620,7 @@
 
   PAGES.account = async (ctx) => {
     const tab = ['password', 'billing'].includes(ctx.r.a) ? ctx.r.a : null;
-    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password']], tab);
+    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing']] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password']], tab);
     if (tab === 'billing') return billingPage(ctx, head);
     if (tab === 'password') {
       ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="pwf"><div class="form-section"><div><h3>Change password</h3><p class="explain">Use at least 8 characters. You'll stay logged in on this device.</p></div>
@@ -1651,12 +1669,71 @@
           <dl class="bill-facts"><div><dt>Price</dt><dd>${price}</dd></div><div><dt>Renewal</dt><dd>${esc(when)}</dd></div>
           <div><dt>Stores</dt><dd>${L.storesUsed} of ${L.maxStores} in use<div class="meter"><i style="width:${pct}%"></i></div></dd></div>
           <div><dt>Checks</dt><dd>Shopping checks as often as ${esc((EVERY[L.limits.journeyMinInterval] || '').toLowerCase())} · full check ${esc((FULL_EVERY[L.limits.fullMinInterval] || '').toLowerCase())}</dd></div></dl></section>
-        <section class="panel"><h2>Pay, renew or change plan</h2><p class="sub">${esc(L.note || '')}</p>
-          <div class="inline-row" style="margin-top:12px"><a class="btn" href="mailto:hello@tharam.store?subject=${encodeURIComponent(`Tharam plan: ${S.me.email}`)}">Email us</a><a class="btn secondary" href="/pricing" target="_blank" rel="noopener">Compare plans</a></div>
-          <p class="hint" style="margin-top:12px">Need more stores? Each extra store is added at your plan’s price per store.</p></section>
+        ${S.license?.shopify ? `<section class="panel"><h2>Change your plan</h2><p class="sub">Your plan is billed through Shopify, on your Shopify invoice. You can upgrade, downgrade or cancel at any time.</p>
+          <div class="inline-row" style="margin-top:12px"><a class="btn" href="${esc(S.license.shopify.pricingUrl)}" target="_top">${icon('arrow', 16)}Choose a plan</a></div></section>`
+        : `<section class="panel"><h2>Pay, renew or change plan</h2><p class="sub">${L.plan.kind === 'paid' ? 'Renew, add stores, or move to another plan. Unused time on your current plan is added to the new one.' : 'Choose a plan and pay online. It starts straight away.'}</p>
+          <div class="inline-row" style="margin-top:12px"><button type="button" class="btn" id="change-plan">${icon('arrow', 16)}${L.plan.kind === 'paid' ? 'Renew or change plan' : 'Choose a plan'}</button><a class="btn secondary" href="/pricing" target="_blank" rel="noopener">Compare plans</a></div>
+          <p class="hint" style="margin-top:12px">${esc(L.note || '')}</p></section>`}
       </div>
       <section class="panel"><h2>What your plan includes</h2><ul class="feat-list">${feats}</ul></section>
       <section class="panel"><h2>Payments</h2>${pays}</section></div>`;
+    $('#change-plan')?.addEventListener('click', () => planPicker(L));
+  }
+
+  // ---------- Choose and pay for a plan (website customers) ----------
+  function loadScript(src) {
+    return new Promise((res, rej) => { if ([...document.scripts].some((x) => x.src === src)) return res(); const el = document.createElement('script'); el.src = src; el.onload = res; el.onerror = () => rej(new Error('Couldn’t load the payment window. Check your connection.')); document.head.appendChild(el); });
+  }
+  async function planPicker(L) {
+    const pl = await api('/api/public/plans');
+    const plans = pl.plans.filter((p) => p.kind === 'paid');
+    const curs = [...new Set(plans.flatMap((p) => Object.keys(p.prices)))];
+    const cur0 = curs.includes(L.currency) ? L.currency : curs.includes('INR') && Intl.DateTimeFormat().resolvedOptions().timeZone === 'Asia/Calcutta' ? 'INR' : curs[0];
+    const sel = { plan_key: plans.find((p) => p.key === L.plan.key)?.key || plans.find((p) => p.highlight)?.key || plans[1]?.key || plans[0].key, seats: Math.max(1, L.storesUsed, L.plan.kind === 'paid' ? L.seats : 1), period: L.billing === 'year' ? 'year' : 'month', currency: cur0 };
+    const body = `<div class="pp-plans">${plans.map((p) => `<label class="pp-plan"><input type="radio" name="plan" value="${p.key}" ${p.key === sel.plan_key ? 'checked' : ''}><span><b>${esc(p.name)}</b><small>${esc(p.tagline || '')}</small><em data-price="${p.key}"></em></span></label>`).join('')}</div>
+      <div class="form-grid" style="margin-top:14px"><div class="field"><label for="pp-seats">Stores</label><input id="pp-seats" name="seats" type="number" min="1" max="1000" value="${sel.seats}"></div>
+        <div class="field"><label>Billing</label><div class="seg" role="radiogroup">${[['month', 'Monthly'], ['year', 'Yearly · 2 months free']].map(([k, l]) => `<label><input type="radio" name="period" value="${k}" ${k === sel.period ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
+        ${curs.length > 1 ? `<div class="field"><label for="pp-cur">Currency</label><select id="pp-cur" name="currency">${curs.map((c) => `<option ${c === sel.currency ? 'selected' : ''}>${c}</option>`).join('')}</select></div>` : ''}</div>
+      <div class="pp-quote" id="pp-quote"><span class="spinner"></span></div>`;
+    let last = null, online = false;
+    const ok = await formDialog({ title: L.plan.kind === 'paid' ? 'Renew or change your plan' : 'Choose your plan', body, submit: 'Continue to payment', wide: true,
+      onOpen: (dl) => {
+        const f = dl.querySelector('form');
+        const read = () => ({ plan_key: f.plan.value, seats: Number(f.seats.value), period: f.period.value, currency: f.currency?.value || sel.currency });
+        let t;
+        const refresh = () => {
+          const v = read();
+          plans.forEach((p) => { const pr = p.prices[v.currency]?.[v.period]; dl.querySelector(`[data-price="${p.key}"]`).textContent = pr != null ? `${minorMoney(pr, v.currency)} per store / ${v.period === 'year' ? 'year' : 'month'}` : 'Not offered'; });
+          clearTimeout(t);
+          t = setTimeout(async () => {
+            const box = dl.querySelector('#pp-quote');
+            try {
+              const r = await api('/api/account/quote', { method: 'POST', body: v });
+              last = r.quote; online = r.online;
+              const qd = r.quote;
+              box.innerHTML = `<div class="pq-amount"><span>You pay now</span><b>${minorMoney(qd.amount, qd.currency)}</b></div>
+                <p>${qd.kind === 'renew' ? `Renews ${esc(qd.plan.name)} for another ${qd.period}.` : `${esc(qd.plan.name)} for ${qd.seats} store${qd.seats === 1 ? '' : 's'}, starting today.`} Paid until <b>${esc(dateOnly(qd.to))}</b>.${qd.creditDays ? ` Includes ${qd.creditDays} extra days for the unused time on your current plan.` : ''}</p>
+                ${online ? '' : '<p class="hint">Online payment isn’t switched on yet. Continue and we’ll email you an invoice for this.</p>'}`;
+              f.querySelector('button[type=submit]').disabled = false;
+            } catch (ex) { last = null; box.innerHTML = `<p class="error-msg">${esc(ex.message)}</p>`; f.querySelector('button[type=submit]').disabled = true; }
+          }, 250);
+        };
+        f.addEventListener('input', refresh); f.addEventListener('change', refresh); refresh();
+      },
+      onSubmit: async () => {
+        if (!last) throw new Error('Choose a plan first');
+        if (!online) { location.href = `mailto:hello@tharam.store?subject=${encodeURIComponent(`Tharam ${last.plan.name}: ${S.me.email}`)}&body=${encodeURIComponent(`Please send me an invoice for ${last.plan.name}, ${last.seats} store(s), ${last.period === 'year' ? 'yearly' : 'monthly'}: ${minorMoney(last.amount, last.currency)}.`)}`; return 'mail'; }
+        const co = await api('/api/account/checkout', { method: 'POST', body: { plan_key: last.plan.key, seats: last.seats, period: last.period, currency: last.currency } });
+        await loadScript('https://checkout.razorpay.com/v1/checkout.js');
+        return new Promise((resolve, reject) => {
+          const rz = new window.Razorpay({ key: co.key, order_id: co.orderId, amount: co.amount, currency: co.currency, name: co.name, description: co.description, prefill: { email: co.email }, theme: { color: '#3346d3' },
+            handler: async (resp) => { try { await api('/api/account/checkout/verify', { method: 'POST', body: resp }); resolve('paid'); } catch (ex) { reject(ex); } },
+            modal: { ondismiss: () => reject(new Error('Payment was cancelled. Nothing was charged.')) } });
+          rz.on('payment.failed', (r) => reject(new Error(r.error?.description || 'The payment didn’t go through. Nothing was charged.')));
+          rz.open();
+        });
+      } });
+    if (ok === 'paid') { toast('Payment received. Your plan is updated.'); await loadStores(); render({ silent: true }); }
   }
 
   async function adminLeads(ctx, head) {
@@ -2072,7 +2149,29 @@
   }
 
   // ---------- Boot ----------
+  async function bootEmbedded() {
+    document.body.classList.add('embedded');
+    $('body').insertAdjacentHTML('beforeend', '<div class="emb-loading" id="emb-loading"><span class="spinner"></span><p>Connecting to your store…</p></div>');
+    try {
+      const sec = location.pathname.replace(/^\/shopify\/?/, '').split('/')[0] || 'overview';
+      const sess = await api('/shopify/api/session', { method: 'POST', body: { welcome: sec === 'welcome' } });
+      const me = await api('/api/me'); S.me = me.user; S.admin = false;
+      S.shop = sess;
+      if (!location.hash || location.hash === '#/' || location.hash === '#') {
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
+        location.replace(sec === 'plan' ? '#/account/billing' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
+      }
+      if (sess.created) setTimeout(() => toast('Welcome to Tharam. Your first check has started.'), 600);
+    } catch (e) {
+      $('#emb-loading').innerHTML = `<p><b>We couldn’t open Tharam.</b></p><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Try again</button>`;
+      return;
+    }
+    $('#emb-loading')?.remove();
+    shell();
+    render();
+  }
   async function boot() {
+    if (EMB) return bootEmbedded();
     try { const r = await api('/api/me'); S.me = r.user; S.admin = r.admin; }
     catch { return authView(location.hash === '#signup' ? 'signup' : 'login'); }
     shell();

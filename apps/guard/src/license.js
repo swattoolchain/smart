@@ -292,7 +292,7 @@ export function mrrOf(l) {
 // ---------- founder actions (all audited, all validated) ----------
 const STATUSES = ['trial', 'active', 'suspended', 'cancelled'];
 const CURRENCIES = ['USD', 'EUR', 'INR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'];
-const BILLING = ['month', 'year', 'custom'];
+const BILLING = ['month', 'year', 'custom', 'shopify'];
 /** A real calendar date (2027-02-31 is refused), optionally with a time. */
 const isDate = (s) => {
   if (!/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/.test(s)) return false;
@@ -460,3 +460,99 @@ export function markNotice(l, kind) {
 }
 
 export { CURRENCIES, sqlNow };
+
+// ---------- online checkout (website customers) ----------
+db.exec(`CREATE TABLE IF NOT EXISTS checkouts (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  order_id TEXT UNIQUE,
+  plan_key TEXT NOT NULL,
+  seats INTEGER NOT NULL,
+  period TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'created',   -- created | paid | failed
+  payment_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  paid_at TEXT
+);`);
+
+const PERIOD_DAYS = { month: 30, year: 365 };
+/**
+ * What a plan change or renewal costs and what it gives. Renewing the same plan continues from the current
+ * end date. Changing plan, stores or billing period starts today, and unused paid time on the current plan
+ * (same currency) is turned into extra days on the new one, so nobody pays twice.
+ */
+export function quote(userId, input) {
+  const l = ensureLicense(userId);
+  const plan = getPlan(String(input.plan_key || ''));
+  if (!plan || plan.kind !== 'paid' || !plan.active || !plan.public) throw new Error('Choose one of the plans on the pricing page');
+  const period = input.period === 'year' ? 'year' : 'month';
+  const currency = String(input.currency || l.currency || 'USD');
+  const unit = plan.prices[currency]?.[period];
+  if (unit == null) throw new Error(`${plan.name} isn’t offered ${period === 'year' ? 'yearly' : 'monthly'} in ${currency}`);
+  const seats = Number(input.seats);
+  const ent = entitlements(userId);
+  if (!Number.isInteger(seats) || seats < 1 || seats > 1000) throw new Error('Choose how many stores, from 1 to 1000');
+  if (plan.limits.maxStores != null && seats > plan.limits.maxStores) throw new Error(`${plan.name} covers up to ${plan.limits.maxStores} stores`);
+  if (seats < ent.storesUsed) throw new Error(`You have ${ent.storesUsed} stores. Remove some first, or choose at least ${ent.storesUsed}.`);
+  const amount = unit * seats;
+  const now = Date.now();
+  const exp = toMs(l.expires_at);
+  const state = stateOf(l);
+  const curPlan = getPlan(l.plan_key);
+  if (l.status === 'suspended') throw new Error('Your account is paused. Contact us to turn it back on.');
+  // Paid time can't be carried across currencies, so currency changes wait for the end of the current period.
+  if (curPlan?.kind === 'paid' && exp != null && exp - now > 864e5 && ['active', 'grace'].includes(state) && currency !== l.currency) throw new Error(`Your plan is paid in ${l.currency} until ${toSql(exp).slice(0, 10)}. Choose ${l.currency}, or contact us to switch currency.`);
+  const same = curPlan?.key === plan.key && l.seats === seats && l.billing === period && l.currency === currency && curPlan.kind === 'paid';
+  let from = now, kind = curPlan?.kind === 'paid' ? 'change' : 'new', creditDays = 0;
+  if (same && exp != null && (exp > now || state === 'grace')) { from = exp; kind = 'renew'; }
+  else if (curPlan?.kind === 'paid' && ['active', 'grace'].includes(state) && exp != null && exp > now && l.currency === currency) {
+    const cur = priceOf(l, curPlan);
+    if (cur && cur.period !== 'custom') {
+      const curDays = PERIOD_DAYS[cur.period] || 30;
+      const remainingValue = cur.amount * ((exp - now) / (curDays * 864e5));
+      creditDays = Math.max(0, Math.floor(remainingValue / (amount / PERIOD_DAYS[period])));
+    }
+  }
+  const to = addPeriods(from, period, 1) + creditDays * 864e5;
+  return { plan: { key: plan.key, name: plan.name }, seats, period, currency, amount, kind, creditDays, from: toSql(from), to: toSql(to) };
+}
+
+export function createCheckout(userId, qt, provider) {
+  const id = Number(db.prepare('INSERT INTO checkouts (user_id, provider, plan_key, seats, period, currency, amount) VALUES (?, ?, ?, ?, ?, ?, ?)').run(userId, provider, qt.plan.key, qt.seats, qt.period, qt.currency, qt.amount).lastInsertRowid);
+  return id;
+}
+export const setCheckoutOrder = (id, orderId) => db.prepare('UPDATE checkouts SET order_id = ? WHERE id = ?').run(orderId, id);
+export const checkoutByOrder = (orderId) => db.prepare('SELECT * FROM checkouts WHERE order_id = ?').get(orderId);
+
+/**
+ * Applies a paid checkout exactly once: records the payment and updates the licence, using a fresh quote
+ * so the dates are right even if the payment took a while. Returns the licence, or null if already applied.
+ */
+export const applyCheckout = db.transaction((orderId, paymentId, paidAmount, paidCurrency, provider) => {
+  const ck = checkoutByOrder(orderId);
+  if (!ck) throw new Error('Unknown order');
+  if (ck.status === 'paid') return null;
+  if (Number(paidAmount) !== ck.amount || paidCurrency !== ck.currency) throw new Error(`Paid amount ${paidAmount} ${paidCurrency} does not match the order (${ck.amount} ${ck.currency})`);
+  const won = db.prepare("UPDATE checkouts SET status = 'paid', payment_id = ?, paid_at = datetime('now') WHERE id = ? AND status != 'paid'").run(paymentId, ck.id);
+  if (!won.changes) return null;
+  const l = ensureLicense(ck.user_id);
+  let qt;
+  try { qt = quote(ck.user_id, { plan_key: ck.plan_key, seats: ck.seats, period: ck.period, currency: ck.currency }); }
+  catch {
+    // Paid is paid: never refuse money already taken, and never lose time already paid for.
+    const base = Math.max(Date.now(), toMs(l.expires_at) || 0);
+    qt = { from: toSql(base), to: toSql(addPeriods(base, ck.period, 1)), creditDays: 0, kind: 'fallback' };
+    audit(provider, ck.user_id, 'note', { text: `Online payment applied without a fresh quote (plan or stores changed since checkout). Please review.` });
+  }
+  const ref = String(paymentId).replace(/\s+/g, '').toUpperCase();
+  db.prepare('INSERT INTO payments (license_id, user_id, amount, currency, method, reference, period, periods, covers_from, covers_to, note, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)')
+    .run(l.id, ck.user_id, ck.amount, ck.currency, provider, ref, ck.period, qt.from, qt.to, qt.creditDays ? `Includes ${qt.creditDays} days credit from the previous plan` : null, provider);
+  db.prepare("UPDATE licenses SET plan_key = ?, seats = ?, status = 'active', billing = ?, currency = ?, price_override = NULL, expires_at = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(ck.plan_key, ck.seats, ck.period, ck.currency, qt.to, l.id);
+  audit(provider, ck.user_id, 'payment.record', { amount: ck.amount, currency: ck.currency, method: provider, reference: ref, period: ck.period, periods: 1,
+    plan_before: l.plan_key, plan: ck.plan_key, seats_before: l.seats, seats: ck.seats, expires_before: l.expires_at, expires_after: qt.to, status_before: l.status, credit_days: qt.creditDays, online: true });
+  return S.licById.get(l.id);
+});

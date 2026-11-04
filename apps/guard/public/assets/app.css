@@ -854,3 +854,27 @@ dialog.form-dialog form { max-height: calc(100vh - 80px); overflow-y: auto; }
 .code-row .icon-btn { margin-bottom: 12px; }
 .suffix { display: flex; align-items: center; gap: 8px; } .suffix input { flex: 1; min-width: 0; } .suffix span { color: var(--muted); font-size: 13px; white-space: nowrap; }
 @media (max-width: 640px) { .code-row { grid-template-columns: minmax(0, 1fr) auto; } .code-row .field:nth-child(2) { grid-column: 1; } }
+
+/* ---------- Inside Shopify admin ---------- */
+body.embedded .rail, body.embedded .topbar, body.embedded .rail-scrim { display: none !important; }
+body.embedded .app-shell, body.embedded .shell { grid-template-columns: minmax(0, 1fr) !important; padding-left: 0 !important; }
+body.embedded .main { padding: 20px 24px 64px; }
+.emb-loading { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; background: var(--paper); font-size: 14px; }
+.emb-loading p { margin: 0; }
+body.embedded .layout { grid-template-columns: minmax(0, 1fr); }
+/* Plan picker */
+.pp-plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 640px) { .pp-plans { grid-template-columns: 1fr; } }
+.pp-plan { position: relative; cursor: pointer; }
+.pp-plan input { position: absolute; opacity: 0; }
+.pp-plan > span { display: flex; flex-direction: column; gap: 3px; height: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 12px; }
+.pp-plan b { font-size: 15px; } .pp-plan small { color: var(--muted); font-size: 12px; line-height: 1.4; } .pp-plan em { font-style: normal; font-size: 12.5px; font-weight: 600; margin-top: auto; padding-top: 6px; }
+.pp-plan input:checked + span { border-color: var(--action); background: var(--action-soft); box-shadow: 0 0 0 1px var(--action); }
+.pp-plan input:focus-visible + span { outline: 2px solid var(--action); outline-offset: 2px; }
+.pp-quote { margin-top: 6px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-height: 64px; }
+.pp-quote p { margin: 6px 0 0; font-size: 13.5px; color: var(--ink-soft); }
+.pq-amount { display: flex; justify-content: space-between; align-items: baseline; } .pq-amount span { color: var(--muted); font-size: 13px; } .pq-amount b { font-size: 22px; }
+details.more-ways > summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+details.more-ways[open] > summary { margin-bottom: 12px; }
+details.more-ways .pub-start { border: 0; padding: 0; margin: 0; box-shadow: none; }
+ui-nav-menu { display: none !important; }

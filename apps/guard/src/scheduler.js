@@ -7,6 +7,7 @@ import { enqueue } from './queue.js';
 import { dueEnvironmentChecks } from './release.js';
 import { entitlements, blockReason } from './license.js';
 import { sendLicenseNotices } from './billing-mail.js';
+import { syncAllBilling } from './shopify.js';
 
 export function minutesSince(ts) {
   if (!ts) return Infinity;
@@ -77,6 +78,8 @@ export function startScheduler() {
     sendLicenseNotices().catch((e) => console.error('licence notices failed', e));
     pruneOldRuns();
   });
+  // Once a day: keep Shopify-billed plans in step with Shopify (managed pricing sends no webhooks).
+  cron.schedule('17 3 * * *', () => syncAllBilling().catch((e) => console.error('billing sync failed', e)));
   console.log(`scheduler on: default journeys every ${config.journeyIntervalMin}m, full every ${config.fullScanIntervalMin}m`);
 }
 
