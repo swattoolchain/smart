@@ -14,6 +14,9 @@ const runsSince = db.prepare(
 );
 const alertsSince = db.prepare("SELECT check_id, state, created_at FROM alerts WHERE store_id = ? AND created_at > datetime('now', '-60 days') ORDER BY id");
 const openCore = db.prepare(`SELECT check_id, since FROM check_state WHERE store_id = ? AND status = 'failing' AND check_id IN (${CORE.map(() => '?').join(',')})`);
+// Homepage speed on a phone from the latest check that measured it.
+const lastSpeed = db.prepare(`SELECT id, created_at, json_extract(result_json, '$.metrics.home.lcp') AS lcp, json_extract(result_json, '$.metrics.home.load') AS load
+  FROM runs WHERE store_id = ? AND status = 'done' AND (trigger IS NULL OR trigger != 'release') AND json_extract(result_json, '$.metrics.home.load') IS NOT NULL ORDER BY id DESC LIMIT 1`);
 const lastCatalog = db.prepare("SELECT result_json FROM runs WHERE store_id = ? AND status = 'done' AND kind = 'full' AND (trigger IS NULL OR trigger != 'release') AND result_json LIKE '%\"catalog\":{%' ORDER BY id DESC LIMIT 1");
 const lastRegional = db.prepare("SELECT id, created_at, result_json FROM runs WHERE store_id = ? AND status = 'done' AND kind = 'full' AND (trigger IS NULL OR trigger != 'release') AND (result_json LIKE '%\"de.%' OR result_json LIKE '%\"eu.%' OR result_json LIKE '%\"ax.%' OR result_json LIKE '%\"us.%') ORDER BY id DESC LIMIT 10");
 const releasesSince = db.prepare("SELECT verdict FROM releases WHERE store_id = ? AND status = 'done' AND created_at > datetime('now', '-30 days')");
@@ -130,6 +133,7 @@ export function scorecard(store) {
     revenueAtRisk: { hours: Math.round(hours * 10) / 10, amount: daySales ? Math.round((hours * daySales) / 24) : null, dailySales: daySales, currency },
     catalog,
     rules: rulesMet(store, cfg),
+    speed: (() => { const r = lastSpeed.get(store.id); return r ? { ms: r.lcp || r.load, run: r.id, at: r.created_at } : null; })(),
     publishing: { checked: rel.length, caught: rel.filter((r) => r.verdict === 'blocked').length, reviewed: rel.filter((r) => r.verdict === 'review').length },
   };
 }

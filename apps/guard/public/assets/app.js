@@ -575,6 +575,7 @@
   // ---------- Store pages ----------
   const STORE_PAGES = {};
 
+  // ---------- Home: the store at a glance, and what owners do every day ----------
   STORE_PAGES.overview = async (ctx, s) => {
     const data = await api(`/api/stores/${s.id}/runs?limit=60`);
     if (!ctx.alive()) return;
@@ -585,49 +586,77 @@
     if (!ctx.alive()) return;
     const res = latest?.result;
     const problems = problemsFrom(res);
-    const done = runs.filter((r) => r.status === 'done');
-    const ok = done.filter((r) => r.verdict !== 'critical').length;
+    const fails = problems.filter((c) => c.status === 'fail'), warns = problems.filter((c) => c.status === 'warn');
+    const base = `#/s/${s.id}`;
     let body = '';
     if (activeRun && (activeRun.status === 'queued' || activeRun.status === 'running')) body += liveCard(activeRun, s);
     if (!res && !active) {
-      body += `<section class="panel empty"><h2>Ready for its first check</h2><p>Your store is set up. The first full check tests the shopping journey, speed, SEO and accessibility, and saves today's look for visual comparisons. ${s.monitoring ? 'Scheduled monitoring starts after it finishes.' : 'Monitoring is paused, so only checks you start will run.'}</p>${runLink(s, 'Run first check')}</section>`;
+      body += `<section class="panel empty"><h2>Ready for its first check</h2><p>The first full check tests the shopping journey, speed, Google, accessibility and every product, and saves today’s look. ${s.monitoring ? 'Scheduled checks start after it.' : 'Monitoring is paused, so only checks you start will run.'}</p>${runLink(s, 'Run first check')}</section>`;
     }
     if (res) {
-      const cats = (res.categories || []).filter((c) => c.tested && c.weight > 0);
-      body += `<section class="panel hero" data-tour="hero">
-        <div class="dial" style="--v:${res.score ?? 0};--c:${{ healthy: 'var(--pass)', warning: 'var(--warn)', critical: 'var(--fail)', locked: 'var(--warn)', blocked: 'var(--warn)' }[res.verdict] || 'var(--skip)'}"><div><span><b>${res.score ?? '–'}</b><small>health</small></span></div></div>
-        <div><span class="pill ${esc(res.verdict)}">${esc(VERDICT[res.verdict] || res.verdict)}</span><h2>${esc(res.summary)}</h2>
-          <p class="when">${esc(KIND[lastDone.kind])} ${time(lastDone.finished_at || lastDone.created_at)} · <a href="#/s/${s.id}/reports/${lastDone.id}">Open report</a></p></div>
-        <div class="cat-bars">${cats.map((c) => `<div class="cat-bar"><span>${esc(c.label)}</span><span class="track"><i class="${scoreClass(c.score)}" style="width:${c.score}%"></i></span><b>${c.score}</b></div>`).join('')}</div>
+      // 1. The answer to "can customers buy right now?"
+      const tone = { healthy: 'ok', warning: 'warn', critical: 'bad', locked: 'warn', blocked: 'warn' }[res.verdict] || 'warn';
+      const headline = { healthy: 'Customers can buy', warning: 'Customers can buy', critical: 'Customers may not be able to buy', locked: 'We couldn’t get into your store', blocked: 'We were stopped at the door' }[res.verdict] || VERDICT[res.verdict];
+      body += `<section class="panel status ${tone}" data-tour="hero">
+        <span class="st-ic">${icon(tone === 'ok' ? 'check' : tone === 'bad' ? 'stop' : 'alerts', 24)}</span>
+        <div class="st-main"><h2>${esc(headline)}</h2><p>${esc(res.summary)}</p>
+          <p class="st-when">Checked ${time(lastDone.finished_at || lastDone.created_at)}${s.monitoring && s.last_run_at && !active ? ` · next check ${esc(inMin(s.next_run_in))}` : ''}${s.monitoring ? '' : ' · monitoring paused'} · <a href="${base}/reports/${lastDone.id}">Latest report</a></p></div>
+        <div class="st-score"><div class="dial" style="--v:${res.score ?? 0};--c:${{ healthy: 'var(--pass)', warning: 'var(--warn)', critical: 'var(--fail)' }[res.verdict] || 'var(--skip)'}"><div><span><b>${res.score ?? '–'}</b><small>health</small></span></div></div></div>
       </section>`;
       if (res.verdict === 'blocked') { const bc = res.checks.find((c) => c.id === 'fn.blocked'); body += `<div class="notice"><p><b>${esc(bc?.evidence?.vendor || 'Bot protection')} stopped our test browser.</b> ${esc(bc?.fix || '')}</p></div>`; }
       if (res.verdict === 'locked') body += `<form class="notice pw-inline" id="pw-inline" novalidate><p><b>Your store is password protected.</b> Enter the storefront password so we can shop it like a customer. ${EMB ? 'In Shopify: Online Store → Preferences → Password protection.' : ''}</p>
         <div class="inline-row"><input name="password" type="password" autocomplete="off" placeholder="Storefront password" required aria-label="Storefront password"><button class="btn" type="submit">${icon('play', 16)}Save and run the check</button></div>
         <p class="error-msg" role="alert"></p><p class="hint">We use it only to open your store for testing, and never show it again.</p></form>`;
+
+      // 2. The numbers owners look at every day.
+      const pct = (v) => (v == null ? '–' : `${v}%`);
+      const toneOf = (v) => (v == null ? '' : v >= 99 ? 'good' : v >= 95 ? 'mid' : 'bad');
+      const b = sc?.buyability, t = sc?.timeToFix, rr = sc?.revenueAtRisk, cat = sc?.catalog, pb = sc?.publishing, rules = sc?.rules;
+      const bars = b ? b.daily.slice(-14).map((d) => `<i class="${d.pct == null ? 'none' : toneOf(d.pct)}" style="--h:${d.pct ?? 8}" title="${esc(d.day)}: ${d.pct == null ? 'no checks' : d.pct + '%'}"></i>`).join('') : '';
+      const speed = sc?.speed?.ms ?? null;
+      const sp = speed ? Math.round(speed / 100) / 10 : null;
+      const tile = (href, label, value, sub, cls = '', extra = '') => `<a class="kpi ${cls}" href="${href}"><span class="k-l">${label}</span><b class="k-v">${value}</b><span class="k-s">${sub}</span>${extra}</a>`;
+      const tiles = [
+        tile(`${base}/reports`, 'Customers could buy · 7 days', `<span class="${toneOf(b?.week.pct)}">${pct(b?.week.pct)}</span>`, b ? `Today ${pct(b.day.pct)} · 30 days ${pct(b.month.pct)}` : 'After a few checks', 'lead', `<div class="sc-bars">${bars}</div>`),
+        tile(`${base}/reports/${lastDone.id}`, 'Needs fixing', `<span class="${fails.length ? 'bad' : 'good'}">${fails.length}</span>`, warns.length ? `${plural(warns.length, 'more thing')} worth a look` : fails.length ? 'Nothing else to look at' : 'Nothing to fix'),
+        tile(`${base}/settings`, 'Money at risk · 30 days', rr?.amount != null ? moneyTxt(rr.amount, rr.currency) : `${rr?.hours ?? 0} h`, rr?.amount != null ? `${rr.hours} h when customers couldn’t buy` : rr?.hours ? 'when customers couldn’t buy · add daily sales' : 'No lost buying time'),
+        tile(`${base}/reports/${sc?.speed?.run || lastDone.id}`, 'Homepage on phones', sp != null ? `<span class="${sp <= 2.5 ? 'good' : sp <= 4 ? 'mid' : 'bad'}">${sp} s</span>` : '–', sp == null ? 'After a full check' : sp <= 2.5 ? 'Fast' : sp <= 4 ? 'A little slow' : 'Slow: shoppers may leave'),
+        tile(`${base}/catalog`, 'Products', cat ? `<span class="${cat.withIssues ? 'mid' : 'good'}">${cat.withIssues}</span>` : '–', cat ? (cat.withIssues ? `of ${cat.products} need fixing` : `All ${cat.products} look right`) : 'After a full check'),
+        tile(`${base}/alerts`, 'Time to fix', durTxt(t?.medianMinutes), t?.open ? `<span class="t-fail">${plural(t.open, 'problem')} still open</span>` : t?.incidents ? `typical, ${plural(t.incidents, 'incident')}` : 'No buying problems'),
+        rules?.markets?.length ? tile(`${base}/reports/${rules.run?.id || lastDone.id}`, 'Laws where you sell', (() => { const ms = rules.markets.filter((m) => !m.pending); const met = ms.reduce((a, m) => a + m.met, 0), tot = ms.reduce((a, m) => a + m.total, 0); return tot ? `<span class="${met === tot ? 'good' : 'mid'}">${met}/${tot}</span>` : '–'; })(), rules.markets.map((m) => `${esc(m.label)}${m.pending ? '' : ` ${m.met}/${m.total}`}`).join(' · ') + ' rules met') : '',
+        tile(`${base}/publish`, 'Changes checked · 30 days', String(pb?.checked ?? 0), pb?.checked ? (pb.caught ? `${plural(pb.caught, 'risky change')} caught` : 'All safe to publish') : 'Check a design before publishing'),
+      ].filter(Boolean).join('');
+      body += `<section class="kpis" data-tour="scorecard">${tiles}</section>`;
     }
-    if (sc && (res || done.length)) body += scorecardPanel(sc, s);
-    if (res || done.length) {
-      body += `<div class="grid-2">
-        <section class="panel" data-tour="fix"><div class="panel-head"><h2>What needs fixing</h2>${lastDone ? `<a href="#/s/${s.id}/reports/${lastDone.id}">Full report ${icon('right', 14)}</a>` : ''}</div>
-          ${problems.length ? `<ul class="list">${problems.slice(0, 6).map((c) => `<li><a class="row" href="#/s/${s.id}/reports/${lastDone.id}" data-focus="${esc(c.id)}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.detail)}</span></span><span></span></a></li>`).join('')}</ul>${problems.length > 6 ? `<p class="muted" style="margin:10px 4px 0">and ${problems.length - 6} more in the report</p>` : ''}`
-            : `<p class="muted" style="margin:0">Nothing to fix in the latest check.</p>`}
-        </section>
-        <section class="panel"><div class="panel-head"><h2>Recent tests</h2><a href="#/s/${s.id}/runs">All runs ${icon('right', 14)}</a></div>
-          ${strip(runs)}<div class="strip-legend"><span>Older</span><span>Latest</span></div>${LEGEND}
-          <div class="figures" style="margin:18px 0 0;grid-template-columns:repeat(2,minmax(0,1fr))">
-            <div class="figure"><b>${sc?.buyability.week.runs ?? '–'}</b><span>checks in the last 7 days</span></div>
-            <div class="figure"><b>${s.monitoring && s.last_run_at ? esc(inMin(s.next_run_in).replace(/^in /, '')) : '–'}</b><span>${s.monitoring ? (s.last_run_at ? 'until the next test' : 'monitoring starts after first check') : 'monitoring paused'}</span></div>
-          </div>
-        </section>
-      </div>`;
-      if (data.alerts.length) {
-        body += `<section class="panel"><div class="panel-head"><h2>Recent alerts</h2><a href="#/s/${s.id}/alerts">All alerts ${icon('right', 14)}</a></div><ul class="list">${data.alerts.slice(0, 5).map((a) => `<li><div class="row"><span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span><span class="t">${esc(a.title || (a.state === 'failing' ? 'Check failed' : 'Check recovered'))}</span><span class="d" style="-webkit-line-clamp:1">${esc(a.message || a.check_id)}</span></span><span class="r">${time(a.created_at)}</span></div></li>`).join('')}</ul></section>`;
-      }
+    if (res || runs.length) {
+      // 3. What to do today, and the things owners do most.
+      const attention = problems.slice(0, 5).map((c) => `<li><a class="row" href="${base}/reports/${lastDone.id}" data-focus="${esc(c.id)}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fix' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.fix || c.detail)}</span></span>${icon('right', 15)}</a></li>`).join('');
+      const action = (href, ic, t, d, attrs = '') => `<a class="qa" href="${href}" ${attrs}><span class="qa-ic">${icon(ic, 18)}</span><span><b>${t}</b><small>${d}</small></span>${icon('right', 15)}</a>`;
+      const actions = [
+        action(`${base}/run`, 'play', 'Run a check now', 'Shopping journey, full suite or pick checks'),
+        action(`${base}/publish`, 'publish', 'Check a design before publishing', 'Your draft themes, side by side with live'),
+        action(`${base}/run`, 'sparkle', 'Sale readiness check', 'Before Black Friday or a big sale', 'data-preset="sale"'),
+        action(`${base}/suite/codes`, 'catalog', 'Test discount codes', s.config.discountCodes?.length ? `${plural(s.config.discountCodes.length, 'code')} checked daily` : 'Make sure your sale codes work'),
+        action(`${base}/alerts`, 'alerts', 'Alerts', `Sent to ${esc(s.alert_email || 'your email')}`),
+      ].join('');
+      const feed = [
+        ...(data.alerts || []).slice(0, 8).map((a) => ({ at: a.created_at, html: `<span class="sev ${a.state === 'failing' ? 'fail' : 'ok'}">${a.state === 'failing' ? 'Broke' : 'Fixed'}</span><span class="d">${esc(a.title || a.check_id)}</span>` })),
+        ...runs.filter((r) => r.status === 'done' || r.status === 'error').slice(0, 8).map((r) => ({ at: r.finished_at || r.created_at, html: `<span class="dot ${esc(r.verdict || 'paused')}"></span><span class="d"><a href="${base}/reports/${r.id}">${esc(kindLabel(r))}${r.seq ? ` #${r.seq}` : ''}</a> · ${esc(VERDICT[r.verdict] || (r.status === 'error' ? 'Didn’t finish' : ''))}</span>` })),
+      ].sort((x, y) => (y.at || '').localeCompare(x.at || '')).slice(0, 8);
+      body += `<div class="dash-grid"><div class="dash-col">
+        <section class="panel" data-tour="fix"><div class="panel-head"><h2>Needs your attention</h2>${lastDone ? `<a href="${base}/reports/${lastDone.id}">Full report ${icon('right', 14)}</a>` : ''}</div>
+          ${attention ? `<ul class="list">${attention}</ul>${problems.length > 5 ? `<p class="muted" style="margin:10px 4px 0">and ${problems.length - 5} more in the report</p>` : ''}` : `<div class="all-clear">${icon('check', 20)}<p><b>Nothing needs your attention.</b> We’ll email you if that changes.</p></div>`}</section>
+        <section class="panel"><div class="panel-head"><h2>Recent activity</h2><a href="${base}/runs">All runs ${icon('right', 14)}</a></div>
+          ${feed.length ? `<ul class="act-feed">${feed.map((f) => `<li>${f.html}<span class="r">${time(f.at)}</span></li>`).join('')}</ul>` : '<p class="muted" style="margin:0">Nothing yet.</p>'}</section>
+        </div><div class="dash-col">
+        <section class="panel"><div class="panel-head"><h2>Quick actions</h2></div><div class="qa-list">${actions}</div></section>
+        <section class="panel"><div class="panel-head"><h2>Check history</h2></div>${strip(runs)}<div class="strip-legend"><span>Older</span><span>Latest</span></div>${LEGEND}</section>
+      </div></div>`;
     }
-    const st = storeStatus(s);
-    const meta = `${res ? '' : `<span class="pill ${esc(st.key)}">${esc(st.label)}</span>`}<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(host(s.url))}</a>${s.platform ? `<span class="sep"></span><span>${esc(s.platform)}</span>` : ''}<span class="sep"></span><span>${esc(monitoringLine(s))}</span>`;
+    const meta = `<span>${esc(host(s.url))}</span>${s.platform ? `<span class="sep"></span><span>${esc(s.platform)}</span>` : ''}<span class="sep"></span><span>${esc(monitoringLine(s))}</span>`;
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, s.name || host(s.url), { crumb: 'Overview', meta, actions: openStore(s) + runButtons(s) })}${body}</div>`;
     $$('[data-focus]', ctx.main).forEach((a) => a.addEventListener('click', () => (S.focus = a.dataset.focus)));
+    $$('[data-preset]', ctx.main).forEach((a) => a.addEventListener('click', () => (S.runPreset = a.dataset.preset)));
     $('#pw-inline')?.addEventListener('submit', async (e) => {
       e.preventDefault();
       const f = e.currentTarget, pw = f.password.value;
@@ -642,9 +671,10 @@
     });
     // The first time a store has results, show the owner around once.
     if (res && !active && s.config.toured === false && !S.touring) { startTour(s); return; }
-    if (active || s.active_run_id) poll(S.stopping.size ? 1500 : 3000); // also refresh once if the run ended between loads
+    if (active || s.active_run_id) poll(S.stopping.size ? 1500 : 3000);
     else if (s.monitoring && s.last_run_at) poll(60000);
   };
+
 
   // Run validations: choose what to check, see the plan, then start. Nothing runs without this preview.
   function availability(g, s) {
@@ -671,6 +701,7 @@
       { key: 'all', title: 'Everything', desc: 'Every validation available, including ones switched off in your suite.', keys: keys(usable) },
     ].filter((p, i, all) => p.key !== 'all' || !same(p.keys, all[1].keys));
     let sel = [...suite];
+    if (S.runPreset) { const p = PRESETS.find((x) => x.key === S.runPreset); if (p) sel = [...p.keys]; S.runPreset = null; }
     let saveSuite = false;
 
     const presetCards = PRESETS.map((p) => `<label class="preset"><input type="radio" name="preset" value="${p.key}">
@@ -1228,10 +1259,19 @@
         <div class="seg" role="radiogroup" aria-label="Device">${DEV.map(([d, l], i) => `<label><input type="radio" name="dev" value="${d}" ${i === 0 ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
       <p class="sub">${b ? 'Screenshots from this report and the compared one. Difference highlights changed pixels in red.' : 'Screenshots from this report.'}</p>
       <div class="shots" id="dev-shots"></div></section>` : '';
-    const jumps = [['changes', 'What changed', changes], ['areas', 'Validation areas', areas], ['catalog', 'Catalog', catPanel], ['ai', 'AI review', aiPanel], ['speed', 'Speed', metrics], ['timings', 'Step timings', timings], ['devices', 'Devices', visual]].filter((x) => x[2]);
-    const jumpBar = `<nav class="jump no-print" aria-label="Sections of this report">${jumps.map(([id, l]) => `<button type="button" data-jump="${id}">${esc(l)}</button>`).join('')}</nav>`;
-    ctx.main.innerHTML = `<div class="main-inner report-page">${storeHead(s, 'Reports', { actions: runButtons(s) })}${controls}${summary}${jumpBar}${changes}${areas}${catPanel}${aiPanel}${metrics}${timings}${visual}</div>`;
-    $$('[data-jump]', ctx.main).forEach((b) => (b.onclick = () => document.getElementById(b.dataset.jump)?.scrollIntoView({ behavior: 'smooth', block: 'start' })));
+    // One section at a time, as tabs: no long scrolling page. The chosen tab is remembered between reports.
+    const issueCount = c.areas.reduce((n, a) => n + a.counts.fail + a.counts.warn, 0);
+    const tabsList = [['changes', 'What changed', changes], ['areas', 'All checks', areas, issueCount], ['catalog', 'Products', catPanel], ['ai', 'AI review', aiPanel], ['speed', 'Speed', metrics], ['devices', 'Screenshots', visual], ['timings', 'Step timings', timings]].filter((x) => x[2]);
+    if (S.focus) S.reportTab = 'areas';
+    const cur = tabsList.some((x) => x[0] === S.reportTab) ? S.reportTab : tabsList[0]?.[0];
+    const tabBar = `<nav class="rtabs no-print" role="tablist" aria-label="Report sections">${tabsList.map(([id, l, , n]) => `<button type="button" role="tab" data-rtab="${id}" aria-selected="${id === cur}">${esc(l)}${n ? `<span class="tab-count">${n}</span>` : ''}</button>`).join('')}</nav>`;
+    const panes = tabsList.map(([id, , html]) => `<div class="rtab-pane" data-pane="${id}" role="tabpanel" ${id === cur ? '' : 'hidden'}>${html}</div>`).join('');
+    ctx.main.innerHTML = `<div class="main-inner report-page">${storeHead(s, 'Reports', { actions: runButtons(s) })}${controls}${summary}${tabBar}${panes}</div>`;
+    $$('[data-rtab]', ctx.main).forEach((b) => (b.onclick = () => {
+      S.reportTab = b.dataset.rtab;
+      $$('[data-rtab]', ctx.main).forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+      $$('[data-pane]', ctx.main).forEach((p) => (p.hidden = p.dataset.pane !== b.dataset.rtab));
+    }));
     if (S.focus) {
       const row = ctx.main.querySelector(`[data-check="${CSS.escape(S.focus)}"]`);
       S.focus = null;
@@ -1241,7 +1281,7 @@
     const go = (runId, base) => (location.hash = `#/s/${s.id}/reports/${runId}/${base}`);
     $('#rep-run').onchange = (e) => go(e.target.value, /^\d+$/.test(baseParam) ? 'prev' : baseParam);
     $('#rep-base').onchange = (e) => go(run.id, e.target.value);
-    $('#print').onclick = () => { $$('details', ctx.main).forEach((d) => (d.open = true)); window.print(); };
+    $('#print').onclick = () => { $$('details', ctx.main).forEach((d) => (d.open = true)); const hidden = $$('[data-pane][hidden]', ctx.main); hidden.forEach((p) => (p.hidden = false)); window.print(); hidden.forEach((p) => (p.hidden = true)); };
     $$('[data-shot]', ctx.main).forEach((x) => (x.onclick = () => lightbox(x.dataset.shot, 'Screenshot')));
     const PAGE = { home: 'Homepage', product: 'Product page' };
     const drawDevice = (dev) => {
