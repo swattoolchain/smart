@@ -36,8 +36,10 @@ export function scoreChecks(checks) {
     weight += cat.weight;
   }
   let score = weight ? Math.round(total / weight) : 0;
-  const criticalFails = checks.filter((c) => c.status === 'fail' && c.severity === 'critical');
-  const majorFails = checks.filter((c) => c.status === 'fail' && c.severity === 'major');
+  // Legal rule checks are reported as "rules met" and never change the health score or verdict.
+  const scored = checks.filter((c) => !CATEGORIES[c.category]?.rules);
+  const criticalFails = scored.filter((c) => c.status === 'fail' && c.severity === 'critical');
+  const majorFails = scored.filter((c) => c.status === 'fail' && c.severity === 'major');
   const locked = checks.some((c) => c.id === 'fn.home' && c.status === 'warn');
   const blocked = checks.some((c) => c.id === 'fn.blocked');
   if (criticalFails.length) score = Math.min(score, 45);

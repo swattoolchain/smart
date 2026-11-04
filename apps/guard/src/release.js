@@ -7,6 +7,7 @@ import { comparePair } from './compare.js';
 import { startRun, storeConfig } from './scheduler.js';
 import { config } from './config.js';
 import { effectiveDisabled } from './engine/catalog.js';
+import { entitlements, has, blockReason, envAllowed } from './license.js';
 import { sendMail, sendSlack } from './alerts.js';
 
 const SKIP = ['catalog', 'ai.copy', 'ai.visual']; // the catalog is the same for both themes
@@ -131,7 +132,8 @@ async function notifyRelease(r, j) {
 <ul>${items.map((l) => `<li>${e(l.slice(2))}</li>`).join('')}</ul>
 <p><a href="${link}" style="background:#14532d;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Open the side-by-side report</a></p></div>`;
   const to = store.alert_email || q.userById.get(store.user_id)?.email;
-  await Promise.allSettled([sendMail({ to, subject, text, html }), sendSlack(store.slack_webhook, `*${subject}*\n${text}`)]);
+  const slack = has(entitlements(store.user_id), 'slack') ? store.slack_webhook : null;
+  await Promise.allSettled([sendMail({ to, subject, text, html }), sendSlack(slack, `*${subject}*\n${text}`)]);
 }
 
 /** Once a day, check environments that asked for it. Runs from the scheduler. */
@@ -139,6 +141,8 @@ export function dueEnvironmentChecks() {
   for (const env of q.autoEnvs.all()) {
     const store = q.storeById.get(env.store_id);
     if (!store || !store.last_run_at || q.activeRunForStore.get(store.id)) continue;
+    const ent = entitlements(store.user_id);
+    if (!envAllowed(ent, store.id, env.id) || blockReason(ent, store.id)) continue;
     const last = q.lastReleaseForEnv.get(env.id);
     if (last && (last.status === 'running' || Date.now() - new Date(last.created_at.replace(' ', 'T') + 'Z').getTime() < 23.5 * 3600e3)) continue;
     startRelease(store, { url: env.url, label: `Daily check of ${env.name}`, env, trigger: 'schedule' });

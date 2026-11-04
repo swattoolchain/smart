@@ -41,7 +41,7 @@
     const s = Math.max(0, Math.round((parseTs(b) - parseTs(a)) / 1000));
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
   }
-  const EVERY = { 60: 'Every hour', 180: 'Every 3 hours', 360: 'Every 6 hours', 720: 'Every 12 hours', 1440: 'Once a day' };
+  const EVERY = { 30: 'Every 30 minutes', 60: 'Every hour', 180: 'Every 3 hours', 360: 'Every 6 hours', 720: 'Every 12 hours', 1440: 'Once a day' };
   const FULL_EVERY = { 720: 'Twice a day', 1440: 'Once a day', 10080: 'Once a week' };
   const VERDICT = { healthy: 'Healthy', warning: 'Needs attention', critical: "Customers can't buy", locked: 'Password protected', blocked: 'Blocked by bot protection' };
   const KIND = { full: 'Full check', journeys: 'Journey test', free: 'Free check' };
@@ -164,6 +164,7 @@
     code: '<path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13"/>',
     trash: '<path d="M4.5 7h15M10 11v6M14 11v6"/><path d="M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12M9.5 7V4.5h5V7"/>',
     edit: '<path d="M4.5 19.5h4l10-10a2.1 2.1 0 0 0-4-4l-10 10z"/><path d="m13.5 6.5 4 4"/>',
+    lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
     close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
     copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
     layers: '<path d="m12 4 8.5 4.5L12 13 3.5 8.5z"/><path d="m3.5 12.5 8.5 4.5 8.5-4.5"/><path d="m3.5 16.5 8.5 4.5 8.5-4.5"/>',
@@ -243,11 +244,13 @@
               <div class="pop right" id="user-pop" role="menu" hidden>
                 <div class="pop-head"><b>${esc(S.me.name || 'Your account')}</b><span>${esc(S.me.email)}</span></div>
                 <a href="#/account" role="menuitem">${icon('user', 16)}Account settings</a>
-                ${S.admin ? `<a href="#/admin" role="menuitem">${icon('founder', 16)}Founder view</a>` : ''}
+                <a href="#/account/billing" role="menuitem">${icon('reports', 16)}Plan and billing</a>
+                ${S.admin ? `<a href="#/admin" role="menuitem">${icon('founder', 16)}Founder console</a>` : ''}
                 <hr><button type="button" id="logout" role="menuitem">${icon('logout', 16)}Log out</button>
               </div>
             </div>
           </header>
+          <div id="plan-banner"></div>
           <main class="main" id="main" tabindex="-1"></main>
         </div>
       </div>`;
@@ -304,7 +307,7 @@
       <div class="rail-label">Workspace</div>
       ${item('#/stores', 'stores', 'All stores', active.page === 'stores')}
       ${item('#/add', 'add', 'Add a store', active.page === 'add')}
-      ${S.admin ? item('#/admin', 'founder', 'Founder view', active.page === 'admin') : ''}`;
+      ${S.admin ? item('#/admin', 'founder', 'Founder console', active.page === 'admin') : ''}`;
     const slot = $('#switch-slot');
     if (!cur) { slot.innerHTML = ''; }
     else {
@@ -327,16 +330,18 @@
 
   // ---------- Router ----------
   async function loadStores() {
-    S.stores = (await api('/api/stores')).stores;
+    const d = await api('/api/stores');
+    S.stores = d.stores;
+    S.license = d.license;
   }
   function parseRoute(hash) {
-    const h = hash.replace(/^#/, '') || '/';
+    const h = hash.replace(/^#/, '').split('?')[0] || '/';
     let m;
     if ((m = /^\/s\/(\d+)(?:\/([a-z]+))?(?:\/([\w-]+))?(?:\/([\w-]+))?$/.exec(h))) return { store: Number(m[1]), module: m[2] || 'overview', a: m[3] || null, b: m[4] || null };
-    if ((m = /^\/account(?:\/(password))?$/.exec(h))) return { page: 'account', a: m[1] || null };
+    if ((m = /^\/account(?:\/(password|billing))?$/.exec(h))) return { page: 'account', a: m[1] || null };
     if (h === '/stores') return { page: 'stores' };
     if (h === '/add') return { page: 'add' };
-    if (h === '/admin') return { page: 'admin' };
+    if ((m = /^\/admin(?:\/([a-z]+))?(?:\/(\d+))?$/.exec(h))) return { page: 'admin', a: m[1] || null, b: m[2] ? Number(m[2]) : null };
     return { page: 'home' };
   }
   function poll(ms) {
@@ -367,6 +372,7 @@
         if (S.storeId) { location.replace('#/s/' + S.storeId); return; }
       }
       sidebar(r);
+      planBanner();
       const main = $('#main');
       if (!silent) { main.innerHTML = skeleton(); window.scrollTo(0, 0); }
       const ctx = { alive, main, r };
@@ -396,16 +402,53 @@
       .join('')}</nav>`;
   }
   // Page header. The store's name and status live in the top bar, so pages show a breadcrumb and title.
+  // ---------- Plan awareness. The server enforces everything; this only explains it. ----------
+  // Check intervals the plan doesn't include are shown but can't be chosen.
+  const belowPlan = (name, k) => !!S.license && ((name === 'journeyIntervalMin' && Number(k) < S.license.limits.journeyMinInterval) || (name === 'fullIntervalMin' && Number(k) < S.license.limits.fullMinInterval));
+  const can = (f) => !!S.license?.usable && S.license.features.includes(f);
+  const featureOf = (group) => S.catalog?.features?.find((f) => f.groups.includes(group))?.key || null;
+  const groupAllowed = (g) => { const f = featureOf(g.key); return !f || can(f); };
+  const plansFor = (f) => S.catalog?.features?.find((x) => x.key === f)?.plans || 'a higher';
+  const minorMoney = (minor, cur) => { try { return new Intl.NumberFormat(cur === 'INR' ? 'en-IN' : 'en-US', { style: 'currency', currency: cur, maximumFractionDigits: minor % 100 ? 2 : 0 }).format(minor / 100); } catch { return `${(minor / 100).toFixed(2)} ${cur}`; } };
+  const dateOnly = (sql) => new Date(sql.replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  /** A panel that explains a feature isn't in the plan, and how to get it. */
+  function upsell(f, title, body) {
+    return `<section class="panel upsell"><span class="up-ic">${icon('lock', 20)}</span><div><h2>${esc(title)}</h2><p>${esc(body)}</p>
+      <p class="muted" style="margin:6px 0 0">Included in the ${esc(plansFor(f))} plan${/ and /.test(plansFor(f)) ? 's' : ''}.</p></div>
+      <div class="up-actions"><a class="btn" href="#/account/billing">See plans</a></div></section>`;
+  }
+  const storesFull = () => !!S.license && (!S.license.usable || S.license.storesUsed >= S.license.maxStores);
+  const addStoreBtn = () => storesFull()
+    ? `<a class="btn secondary" href="#/account/billing" title="${S.license.usable ? 'All stores on your plan are in use' : 'Your plan is not active'}">${icon('lock', 16)}Add a store</a>`
+    : `<a class="btn" href="#/add">${icon('add', 16)}Add a store</a>`;
+  function planBanner() {
+    const el = $('#plan-banner');
+    const L = S.license;
+    if (!el || !L) return;
+    const railPlan = $('.rail .plan');
+    if (railPlan) railPlan.innerHTML = `<a href="#/account/billing">${esc(L.plan.name)}${L.state === 'trial' && L.daysLeft != null ? ` · ${L.daysLeft} days left` : ''}</a>`;
+    let msg = null, tone = 'warn';
+    if (L.state === 'trial' && L.daysLeft != null && L.daysLeft <= 7) msg = `Your free trial ends ${L.daysLeft <= 1 ? 'tomorrow' : `in ${L.daysLeft} days`}. Choose a plan to keep your stores checked.`;
+    else if (L.state === 'active' && L.plan.kind === 'paid' && L.daysLeft != null && L.daysLeft <= 7) msg = `Your ${L.plan.name} plan renews ${L.daysLeft <= 1 ? 'tomorrow' : `in ${L.daysLeft} days`}. Pay before then to avoid a gap.`;
+    else if (L.state === 'grace') msg = `Your plan expired on ${dateOnly(L.expires_at)}. Checks continue until ${dateOnly(L.graceEnds)}. Renew to keep them running.`;
+    else if (L.state === 'expired') { tone = 'fail'; msg = L.status === 'trial' ? 'Your free trial has ended. Checks and alerts have stopped; your reports are kept.' : 'Your plan has expired. Checks and alerts have stopped; your reports are kept.'; }
+    else if (L.state === 'suspended') { tone = 'fail'; msg = 'Your account is paused. Checks and alerts have stopped. Contact us to turn it back on.'; }
+    else if (L.state === 'cancelled') { tone = 'fail'; msg = 'Your plan has ended. Your reports are kept. Choose a plan to start again.'; }
+    el.className = msg ? `plan-banner ${tone}` : '';
+    el.innerHTML = msg ? `<span>${icon(tone === 'fail' ? 'stop' : 'alerts', 16)}${esc(msg)}</span><a class="btn small ${tone === 'fail' ? '' : 'secondary'}" href="#/account/billing">${L.state === 'suspended' ? 'Contact us' : 'See your plan'}</a>` : '';
+  }
+
   function storeHead(s, title, { actions = '', crumb = '', meta = '' } = {}) {
     const name = esc(s.name || host(s.url));
     return `<div class="page-head"><div><div class="crumbs">${crumb || `<a href="#/s/${s.id}">${name}</a>`}</div><h1>${esc(title)}</h1>${meta ? `<div class="meta">${meta}</div>` : ''}</div>
-      ${actions ? `<div class="actions">${actions}</div>` : ''}</div>`;
+      ${actions ? `<div class="actions">${actions}</div>` : ''}</div>${s.blocked ? `<div class="notice warn-n"><p>${icon('lock', 16)} ${esc(s.blocked)} <a href="#/account/billing">See your plan</a></p></div>` : ''}`;
   }
   const openStore = (s) => `<a class="icon-btn bordered" href="${esc(s.url)}" target="_blank" rel="noopener" data-tip="Open store" aria-label="Open store in a new tab">${icon('external', 17)}</a>`;
   // Every way of starting a test goes through the Run validations page, so nothing starts without a preview.
   const runLink = (s, label = 'Run validations', cls = 'btn') => `<a class="${cls}" href="#/s/${s.id}/run">${label}</a>`;
   function runButtons(s) {
     if (s.active_run_id) return `<a class="btn secondary" href="#/s/${s.id}/runs/${s.active_run_id}"><span class="pulse" aria-hidden="true"></span>View running test</a>`;
+    if (s.blocked) return `<button class="btn" type="button" disabled title="${esc(s.blocked)}">${icon('play', 16)}Run validations</button>`;
     return `<a class="btn" href="#/s/${s.id}/run">${icon('play', 16)}Run validations</a>`;
   }
   function bindRunButtons() {} // Stop buttons are handled by one listener below.
@@ -536,7 +579,7 @@
       body += `<section class="panel empty"><h2>Ready for its first check</h2><p>Your store is set up. The first full check tests the shopping journey, speed, SEO and accessibility, and saves today's look for visual comparisons. ${s.monitoring ? 'Scheduled monitoring starts after it finishes.' : 'Monitoring is paused, so only checks you start will run.'}</p>${runLink(s, 'Run first check')}</section>`;
     }
     if (res) {
-      const cats = (res.categories || []).filter((c) => c.tested);
+      const cats = (res.categories || []).filter((c) => c.tested && c.weight > 0);
       body += `<section class="panel hero">
         <div class="dial" style="--v:${res.score ?? 0};--c:${{ healthy: 'var(--pass)', warning: 'var(--warn)', critical: 'var(--fail)', locked: 'var(--warn)', blocked: 'var(--warn)' }[res.verdict] || 'var(--skip)'}"><div><span><b>${res.score ?? '–'}</b><small>health</small></span></div></div>
         <div><span class="pill ${esc(res.verdict)}">${esc(VERDICT[res.verdict] || res.verdict)}</span><h2>${esc(res.summary)}</h2>
@@ -577,6 +620,7 @@
   function availability(g, s) {
     const shopify = !s.platform || /shopify/i.test(s.platform);
     if (!shopify && ((g.key.startsWith('journey.') && !g.locked) || g.key === 'catalog' || g.key === 'ai.copy')) return 'Shopify stores only for now';
+    if (!groupAllowed(g)) return `In ${plansFor(featureOf(g.key))}`;
     return null;
   }
   STORE_PAGES.run = async (ctx, s) => {
@@ -693,11 +737,12 @@
     const tone = (v) => (v == null ? '' : v >= 99 ? 'good' : v >= 95 ? 'mid' : 'bad');
     const bars = b.daily.slice(-14).map((d) => `<i class="${d.pct == null ? 'none' : tone(d.pct)}" style="--h:${d.pct ?? 8}" title="${esc(d.day)}: ${d.pct == null ? 'no checks' : d.pct + '%'}"></i>`).join('');
     const tile = (label, value, sub, extra = '', cls = '') => `<div class="sc-tile ${cls}"><span class="sc-l">${label}</span><b class="sc-v">${value}</b><span class="sc-s">${sub}</span>${extra}</div>`;
-    return `<section class="panel scorecard"><div class="panel-head"><h2>Scorecard</h2><span class="muted" style="font-size:12.5px">Last 30 days</span></div><div class="sc-grid">
+    return `<section class="panel scorecard"><div class="panel-head"><h2>Scorecard</h2><span class="muted" style="font-size:12.5px">Last 30 days</span></div><div class="sc-grid ${sc.rules?.markets.length ? 'six' : ''}">
       ${tile('Buyability · 7 days', `<span class="${tone(b.week.pct)}">${pctTxt(b.week.pct)}</span>`, `How often customers could buy. Today ${pctTxt(b.day.pct)} · 30 days ${pctTxt(b.month.pct)}`, `<div class="sc-bars" aria-label="Buyability by day, last 14 days">${bars}</div>`, 'lead')}
       ${tile('Time to fix', durTxt(t.medianMinutes), t.open ? `<span class="t-fail">${plural(t.open, 'problem')} still open</span>` : t.incidents ? `Typical, across ${plural(t.incidents, 'incident')}` : 'No buying problems in 30 days')}
       ${tile('Revenue at risk', r.amount != null ? moneyTxt(r.amount, r.currency) : `${r.hours} h`, r.amount != null ? `${r.hours} h when customers couldn’t buy` : r.hours ? `when customers couldn’t buy · <a href="#/s/${s.id}/settings">add daily sales</a> to see the amount` : `No lost buying time · <a href="#/s/${s.id}/settings">add daily sales</a>`)}
       ${tile('Product accuracy', c ? pctTxt(c.pct) : '–', c ? (c.withIssues ? `${c.withIssues} of ${c.products} products need fixing` : `All ${c.products} products look right`) : 'After the first full check')}
+      ${sc.rules?.markets.length ? tile('Rules met', sc.rules.run ? sc.rules.markets.filter((m) => !m.pending).map((m) => `<span class="${m.total && m.met === m.total ? 'good' : 'mid'}">${m.met}/${m.total}</span>`).join(' · ') || '–' : '–', sc.rules.run ? sc.rules.markets.map((m) => `${esc(m.label)}: ${m.pending ? 'after the next full check' : m.open.length ? `${m.open.length} to fix` : 'all met'}`).join(' · ') + ` · <a href="#/s/${s.id}/reports/${sc.rules.run.id}">details</a>` : 'After the next full check') : ''}
       ${tile('Changes checked', String(pb.checked), pb.checked ? (pb.caught ? `${plural(pb.caught, 'risky change')} caught before publishing` : 'All safe to publish') : `<a href="#/s/${s.id}/publish">Check a design before publishing</a>`)}
     </div></section>`;
   }
@@ -711,11 +756,12 @@
     return areas.map((area) => `<section class="suite-area"><h3>${esc(area)}</h3><div class="rows">${list.filter((g) => g.area === area).map((g) => {
       const journeyOnly = g.key.startsWith('journey.') && !g.locked && !shopify;
       const outside = markets && !inMarket(g, markets);
-      const on = g.locked || (!disabled.includes(g.key) && !journeyOnly && !outside);
+      const notPlan = !groupAllowed(g);
+      const on = g.locked || (!disabled.includes(g.key) && !journeyOnly && !outside && !notPlan);
       return `<label class="check-row ${on ? '' : 'off'}">
-        <span class="switch"><input type="checkbox" name="g" value="${esc(g.key)}" ${on ? 'checked' : ''} ${g.locked || journeyOnly || outside ? 'disabled' : ''} aria-label="${esc(g.label)}"><span></span></span>
-        <span><b>${esc(g.label)}</b><p>${esc(g.description)}</p>${journeyOnly ? '<p class="unavailable">Available for Shopify stores. Other platforms are coming.</p>' : ''}${g.markets ? `<p class="${outside ? 'unavailable' : 'muted'}" style="font-size:12.5px">For stores selling in ${esc(marketNames(g.markets).join(', '))}.${outside ? (storeId ? ` <a href="#/s/${storeId}/settings">Add where you sell</a> to turn it on.` : ' Choose one of these countries above to turn it on.') : ''}</p>` : ''}</span>
-        <span class="when">${g.locked ? 'Always on' : g.run === 'journeys' ? 'Every test' : 'Full check'}</span></label>`;
+        <span class="switch"><input type="checkbox" name="g" value="${esc(g.key)}" ${on ? 'checked' : ''} ${g.locked || journeyOnly || outside || notPlan ? 'disabled' : ''} aria-label="${esc(g.label)}"><span></span></span>
+        <span><b>${esc(g.label)}</b><p>${esc(g.description)}</p>${journeyOnly ? '<p class="unavailable">Available for Shopify stores. Other platforms are coming.</p>' : ''}${g.markets && !notPlan ? `<p class="${outside ? 'unavailable' : 'muted'}" style="font-size:12.5px">For stores selling in ${esc(marketNames(g.markets).join(', '))}.${outside ? (storeId ? ` <a href="#/s/${storeId}/settings">Add where you sell</a> to turn it on.` : ' Choose one of these countries above to turn it on.') : ''}</p>` : ''}</span>
+        <span class="when">${notPlan ? `<a class="plan-tag" href="#/account/billing" title="Included in ${esc(plansFor(featureOf(g.key)))}">${icon('lock', 12)}${esc(plansFor(featureOf(g.key)))}</a>` : g.locked ? 'Always on' : g.run === 'journeys' ? 'Every test' : 'Full check'}</span></label>`;
     }).join('')}</div></section>`).join('');
   }
   function readDisabled(root) {
@@ -868,7 +914,7 @@
       return;
     }
     const g = S.catalog.groups.filter((x) => !s.config.disabled.includes(x.key));
-    const radios = (name, map, val) => `<div class="seg" role="radiogroup">${Object.entries(map).map(([k, l]) => `<label><input type="radio" name="${name}" value="${k}" ${Number(k) === val ? 'checked' : ''}><span>${esc(l)}</span></label>`).join('')}</div>`;
+    const radios = (name, map, val) => `<div class="seg" role="radiogroup">${Object.entries(map).map(([k, l]) => `<label ${belowPlan(name, k) ? `title="Not included in your plan" class="na"` : ''}><input type="radio" name="${name}" value="${k}" ${Number(k) === val ? 'checked' : ''} ${belowPlan(name, k) ? 'disabled' : ''}><span>${esc(l)}</span></label>`).join('')}</div>`;
     ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="mon">
       <div class="form-section"><div><h3>Automatic monitoring</h3><p class="explain">When this is on, Store Guard tests your store on the schedule below and alerts you when something breaks or recovers.</p></div>
         <div class="controls"><label class="toggle-line"><span class="switch"><input type="checkbox" name="monitoring" ${s.monitoring ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Monitor this store</b><span>${s.last_run_at ? (s.monitoring ? `Next test ${esc(inMin(s.next_run_in))}.` : 'Paused. Only checks you start will run.') : 'Starts after the first check.'}</span></span></label></div></div>
@@ -903,7 +949,7 @@
         <div class="form-section"><div><h3>Email</h3><p class="explain">The address that receives alerts for this store.</p></div>
           <div class="controls"><div class="field"><label for="ae">Alert email</label><input id="ae" name="alertEmail" type="email" value="${esc(s.alert_email || '')}" autocomplete="email"></div></div></div>
         <div class="form-section"><div><h3>Slack</h3><p class="explain">Post alerts to a Slack channel. In Slack, open Apps, add <b>Incoming Webhooks</b>, choose a channel, and paste the webhook URL here.</p></div>
-          <div class="controls"><div class="field"><label for="sl">Slack webhook URL <span class="muted" style="font-weight:400">(optional)</span></label><input id="sl" name="slack" placeholder="https://hooks.slack.com/services/…" value="${esc(s.slack_webhook || '')}"></div></div></div>
+          <div class="controls"><div class="field"><label for="sl">Slack webhook URL <span class="muted" style="font-weight:400">(optional)</span></label><input id="sl" name="slack" placeholder="https://hooks.slack.com/services/…" value="${esc(s.slack_webhook || '')}" ${can('slack') ? '' : 'disabled'}>${can('slack') ? '' : `<p class="hint">${icon('lock', 12)} Slack alerts are in the ${esc(plansFor('slack'))} plans. <a href="#/account/billing">See plans</a></p>`}</div></div></div>
         <div class="form-section"><div><h3>Test your setup</h3><p class="explain">Sends a sample alert to the saved email and Slack channel.</p></div>
           <div class="controls"><div class="inline-row"><button type="button" class="btn secondary" id="test-alert">Send test alert</button><span id="test-result" class="muted" role="status"></span></div></div></div>
       </form></div>`;
@@ -1093,7 +1139,7 @@
         const issues = a.counts.fail + a.counts.warn;
         return `<details class="area" ${issues ? 'open' : ''}><summary>
           <span class="area-name">${esc(a.label)}</span>
-          <span class="area-score">${a.a ?? '–'}${b ? ` ${delta(a.a, a.b)}` : ''}</span>
+          <span class="area-score">${a.rules ? `<span class="rules-met">${a.counts.pass} of ${a.checks.filter((x) => x.a && x.a !== 'skip').length} rules met</span>` : `${a.a ?? '–'}${b ? ` ${delta(a.a, a.b)}` : ''}`}</span>
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
@@ -1259,6 +1305,10 @@
   STORE_PAGES.publish = async (ctx, s) => {
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (ctx.r.a && /^\d+$/.test(ctx.r.a)) return publishDetail(ctx, s, Number(ctx.r.a));
+    if (!can('publish')) {
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Safe to publish')}${upsell('publish', 'Check every change before your customers see it', 'Test a new theme, sale banner or app change next to your live store, on computer, tablet and phone, and get a clear answer: safe to publish, have a look first, or don’t publish yet.')}</div>`;
+      return;
+    }
     const [d, ev] = await Promise.all([api(`/api/stores/${s.id}/releases`), api(`/api/stores/${s.id}/environments`)]);
     if (!ctx.alive()) return;
     const shopify = !s.platform || /shopify/i.test(s.platform);
@@ -1274,12 +1324,12 @@
         <div class="env-last">${last}</div>
         <div class="env-actions">
           ${e.last ? `<a class="icon-btn" href="#/s/${s.id}/publish/${e.last.id}" data-tip="Last result" aria-label="Open last result">${icon('reports', 17)}</a>` : ''}
-          <button type="button" class="icon-btn" data-act="pipe" data-tip="Check from your deploy pipeline" aria-label="Deploy pipeline setup">${icon('code', 17)}</button>
+          ${can('pipeline') ? `<button type="button" class="icon-btn" data-act="pipe" data-tip="Check from your deploy pipeline" aria-label="Deploy pipeline setup">${icon('code', 17)}</button>` : `<a class="icon-btn" href="#/account/billing" data-tip="Deploy pipeline checks: ${esc(plansFor('pipeline'))}" aria-label="Deploy pipeline checks are not in your plan">${icon('lock', 16)}</a>`}
           <button type="button" class="icon-btn" data-act="edit" data-tip="Edit" aria-label="Edit environment">${icon('edit', 17)}</button>
           <button type="button" class="icon-btn" data-act="del" data-tip="Remove" aria-label="Remove environment">${icon('trash', 17)}</button>
           <button type="button" class="btn small" data-act="run" ${busyStore ? 'disabled title="A test is running"' : ''}>${icon('play', 14)}Check now</button></div></li>`;
     };
-    const envPanel = `<section class="panel"><div class="panel-head stack-sm"><div><h2>Environments</h2><p class="sub" style="margin:2px 0 0">Your staging themes and staging stores, saved once. Each check compares it with your live store.</p></div>
+    const envPanel = !can('environments') ? upsell('environments', 'Save your staging theme or staging store', 'Check it with one click or every day, and stop a bad update from your deploy pipeline.') : `<section class="panel"><div class="panel-head stack-sm"><div><h2>Environments</h2><p class="sub" style="margin:2px 0 0">Your staging themes and staging stores, saved once. Each check compares it with your live store.</p></div>
         <button type="button" class="btn secondary" id="env-add">${icon('add', 16)}Add environment</button></div>
       ${envs.length ? `<ul class="env-list">${envs.map(envRow).join('')}</ul>`
         : `<div class="env-empty"><p><b>Do you test changes somewhere before they go live?</b> Save it here, for example a <b>staging theme</b> your developer works on, a theme connected to GitHub, or a <b>separate staging store</b>. Then check it with one click, every day, or automatically after each deploy.</p></div>`}</section>`;
@@ -1512,7 +1562,7 @@
     const d = await api('/api/overview');
     if (!ctx.alive()) return;
     if (!d.stores.length) return PAGES.home(ctx);
-    ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>All stores</h1><div class="meta">${d.stores.length} of 5 stores in the beta</div></div><div class="actions"><a class="btn" href="#/add">${icon('add', 16)}Add a store</a></div></div>
+    ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>All stores</h1><div class="meta">${d.stores.length} of ${S.license.maxStores} store${S.license.maxStores === 1 ? '' : 's'} on your ${esc(S.license.plan.name)} plan · <a href="#/account/billing">Plan and billing</a></div></div><div class="actions">${addStoreBtn()}</div></div>
       <div class="table-wrap"><table class="data"><thead><tr><th>Store</th><th>Status</th><th class="num">Buyability, 7 days</th><th class="num">Health</th><th>Last test</th><th>Next test</th><th aria-label="Open"></th></tr></thead><tbody>
       ${d.stores.map((s) => { const st = storeStatus(s); return `<tr class="link" data-href="#/s/${s.id}" tabindex="0"><td><div class="cell-main">${esc(s.name || host(s.url))}</div><div class="cell-sub">${esc(host(s.url))}${s.platform ? ` · ${esc(s.platform)}` : ''}</div></td>
         <td><span class="status-inline"><span class="dot ${esc(st.key)}"></span>${esc(st.label)}</span>${s.failing.length ? `<div class="cell-sub">${s.failing.length} open problem${s.failing.length > 1 ? 's' : ''}</div>` : ''}</td>
@@ -1524,8 +1574,9 @@
   };
 
   PAGES.account = async (ctx) => {
-    const tab = ctx.r.a === 'password' ? 'password' : null;
-    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', [[null, 'Profile'], ['password', 'Password']], tab);
+    const tab = ['password', 'billing'].includes(ctx.r.a) ? ctx.r.a : null;
+    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password']], tab);
+    if (tab === 'billing') return billingPage(ctx, head);
     if (tab === 'password') {
       ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="pwf"><div class="form-section"><div><h3>Change password</h3><p class="explain">Use at least 8 characters. You'll stay logged in on this device.</p></div>
         <div class="controls"><div class="field"><label for="cur">Current password</label><input id="cur" name="current" type="password" autocomplete="current-password" required></div>
@@ -1544,8 +1595,8 @@
       <div class="form-section"><div><h3>Profile</h3><p class="explain">Your name appears in emails from us.</p></div>
         <div class="controls"><div class="field"><label for="pn">Name</label><input id="pn" name="name" value="${esc(S.me.name || '')}" autocomplete="name"></div>
         <div class="field"><label for="pe">Email</label><input id="pe" value="${esc(S.me.email)}" readonly><p class="hint">To change your login email, write to hello@tharam.store.</p></div></div></div>
-      <div class="form-section"><div><h3>Plan</h3><p class="explain">Store Guard is free during the beta. We'll give at least 30 days' notice before any charge, and beta users keep a founding discount.</p></div>
-        <div class="controls"><div><span class="pill healthy">Beta · free</span></div><p class="muted" style="margin:0">Up to 5 stores, journey tests as often as hourly, daily full checks.</p></div></div></form></div>`;
+      <div class="form-section"><div><h3>Plan</h3><p class="explain">What your plan includes, when it renews, and your payments.</p></div>
+        <div class="controls"><div><span class="pill ${S.license?.usable ? 'healthy' : 'critical'}">${esc(S.license?.plan.name || '')}</span></div><p style="margin:0"><a href="#/account/billing">Plan and billing</a></p></div></div></form></div>`;
     const form = $('#prof');
     const mark = savebar($('.main-inner', ctx.main), {
       onSave: async () => { await api('/api/account', { method: 'PATCH', body: { name: new FormData(form).get('name') } }); S.me = (await api('/api/me')).user; },
@@ -1554,20 +1605,286 @@
     form.addEventListener('input', mark);
   };
 
-  PAGES.admin = async (ctx) => {
-    if (!S.admin) { location.hash = '#/'; return; }
+  const STATE = { trial: ['Free trial', 'running'], active: ['Active', 'healthy'], grace: ['Payment due', 'warning'], expired: ['Expired', 'critical'], suspended: ['Paused', 'critical'], cancelled: ['Ended', 'critical'] };
+  async function billingPage(ctx, head) {
+    const d = await api('/api/account/billing');
+    if (!ctx.alive()) return;
+    S.catalog = S.catalog || (await api('/api/catalog'));
+    const L = d.license;
+    const [stLabel, stKey] = STATE[L.state] || [L.state, ''];
+    const price = L.price ? `${minorMoney(L.price.amount, L.price.currency)} <span class="muted">per ${L.price.period === 'year' ? 'year' : 'month'}${L.price.custom ? '' : ` · ${minorMoney(L.price.perStore, L.price.currency)} per store`}</span>` : L.plan.kind === 'paid' ? '<span class="muted">Price agreed with you</span>' : '<span class="muted">Free</span>';
+    const when = L.expires_at ? (L.state === 'grace' ? `Expired ${dateOnly(L.expires_at)} · checks continue until ${dateOnly(L.graceEnds)}` : L.state === 'expired' ? `Expired ${dateOnly(L.expires_at)}` : `${L.plan.kind === 'paid' ? 'Paid until' : 'Ends'} ${dateOnly(L.expires_at)}${L.daysLeft != null && L.daysLeft >= 0 ? ` · ${L.daysLeft} day${L.daysLeft === 1 ? '' : 's'} left` : ''}`) : 'No end date';
+    const pct = Math.min(100, Math.round((L.storesUsed / Math.max(1, L.maxStores)) * 100));
+    const feats = S.catalog.features.map((f) => `<li class="${L.features.includes(f.key) ? '' : 'off'}">${icon(L.features.includes(f.key) ? 'check' : 'lock', 15)}<span>${esc(f.label)}</span>${L.features.includes(f.key) ? '' : `<span class="muted">${esc(f.plans)}</span>`}</li>`).join('');
+    const pays = d.payments.length ? `<div class="table-wrap flat"><table class="data"><thead><tr><th>Date</th><th class="num">Amount</th><th>For</th><th>Reference</th></tr></thead><tbody>
+      ${d.payments.map((p) => `<tr><td>${esc(dateOnly(p.created_at))}</td><td class="num"><b>${minorMoney(p.amount, p.currency)}</b></td><td class="cell-sub">${p.periods} ${p.period}${p.periods > 1 ? 's' : ''} · until ${esc(dateOnly(p.covers_to))}</td><td class="cell-sub">${esc(p.reference || '–')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No payments yet.</p>';
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <div class="bill-grid">
+        <section class="panel bill-plan"><div class="bp-top"><div><p class="kicker">Your plan</p><h2>${esc(L.plan.name)}</h2><p class="muted" style="margin:2px 0 0">${esc(L.plan.tagline || '')}</p></div><span class="pill ${stKey}">${esc(stLabel)}</span></div>
+          <dl class="bill-facts"><div><dt>Price</dt><dd>${price}</dd></div><div><dt>Renewal</dt><dd>${esc(when)}</dd></div>
+          <div><dt>Stores</dt><dd>${L.storesUsed} of ${L.maxStores} in use<div class="meter"><i style="width:${pct}%"></i></div></dd></div>
+          <div><dt>Checks</dt><dd>Shopping checks as often as ${esc((EVERY[L.limits.journeyMinInterval] || '').toLowerCase())} · full check ${esc((FULL_EVERY[L.limits.fullMinInterval] || '').toLowerCase())}</dd></div></dl></section>
+        <section class="panel"><h2>Pay, renew or change plan</h2><p class="sub">${esc(L.note || '')}</p>
+          <div class="inline-row" style="margin-top:12px"><a class="btn" href="mailto:hello@tharam.store?subject=${encodeURIComponent(`Tharam plan: ${S.me.email}`)}">Email us</a><a class="btn secondary" href="/pricing" target="_blank" rel="noopener">Compare plans</a></div>
+          <p class="hint" style="margin-top:12px">Need more stores? Each extra store is added at your plan’s price per store.</p></section>
+      </div>
+      <section class="panel"><h2>What your plan includes</h2><ul class="feat-list">${feats}</ul></section>
+      <section class="panel"><h2>Payments</h2>${pays}</section></div>`;
+  }
+
+  async function adminLeads(ctx, head) {
     const d = await api('/api/admin/overview');
     if (!ctx.alive()) return;
     const t = (rows, cols, map = (r, c) => esc(r[c] ?? '')) => rows.length ? `<div class="table-wrap"><table class="data"><thead><tr>${cols.map((c) => `<th>${esc(c[1])}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td>${map(r, c[0])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nothing yet.</p>';
-    ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder view</h1><div class="meta">Only visible to ${esc(S.me.email)}</div></div></div>
+    ctx.main.innerHTML = `<div class="main-inner">${head}
       <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))"><div class="figure"><b>${d.users}</b><span>accounts</span></div><div class="figure"><b>${d.stores}</b><span>stores added</span></div><div class="figure"><b>${d.freeScans24h}</b><span>free checks, 24 h</span></div><div class="figure"><b>${d.queue.active} / ${d.queue.waiting}</b><span>running / waiting</span></div></div>
       <section class="panel"><h2>Signups</h2>${t(d.signups, [['email', 'Email'], ['name', 'Name'], ['stores', 'Stores'], ['created_at', 'Joined']], (r, c) => (c === 'created_at' ? time(r[c]) : esc(r[c] ?? '')))}</section>
       <section class="panel"><h2>Leads</h2>${t(d.leads, [['email', 'Email'], ['store_url', 'Store'], ['source', 'Source'], ['created_at', 'When']], (r, c) => (c === 'created_at' ? time(r[c]) : esc(r[c] ?? '')))}</section>
       <section class="panel"><h2>Free checks</h2>${t(d.recentScans, [['url', 'Store'], ['score', 'Score'], ['verdict', 'Result'], ['created_at', 'When'], ['id', 'Report']], (r, c) => (c === 'created_at' ? time(r[c]) : c === 'id' ? `<a href="/scan/${r.id}" target="_blank" rel="noopener">Open</a>` : c === 'verdict' ? esc(VERDICT[r.verdict] || r.status) : esc(r[c] ?? '')))}</section></div>`;
   };
 
+  // ---------- Founder console ----------
+  const STATE_PILL = (st) => { const [l, k] = STATE[st] || [st, '']; return `<span class="pill ${k}">${esc(l)}</span>`; };
+  const sumMoney = (obj) => Object.entries(obj || {}).map(([c, v]) => minorMoney(v, c)).join(' + ') || '0';
+  const toMinor = (v) => (v === '' || v == null ? '' : Math.round(Number(v) * 100));
+  const toMajor = (v) => (v == null || v === '' ? '' : (v / 100).toString());
+  const METHODS = { bank: 'Bank transfer', upi: 'UPI', card: 'Card', razorpay: 'Razorpay', stripe: 'Stripe', shopify: 'Shopify billing', cash: 'Cash', other: 'Other' };
+  const CURS = ['USD', 'EUR', 'INR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'];
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(v) === String(cur ?? '') ? 'selected' : ''}>${esc(l)}</option>`;
+  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed' };
+  function auditText(a) {
+    const d = a.detail_json ? JSON.parse(a.detail_json) : {};
+    if (a.action === 'note') return esc(d.text);
+    if (a.action === 'payment.record') return `${minorMoney(d.amount, d.currency)} by ${esc(METHODS[d.method] || d.method)}${d.reference ? ` (${esc(d.reference)})` : ''} · ${d.periods} ${d.period}${d.periods > 1 ? 's' : ''} · expiry ${esc(d.expires_before || 'none')} → ${esc(d.expires_after)}`;
+    if (a.action === 'license.update') return Object.entries(d).map(([k, v]) => `${esc(k.replace('_', ' '))}: ${esc(v.before ?? '–')} → <b>${esc(v.after ?? '–')}</b>`).join(' · ');
+    if (a.action === 'license.create') return `${esc(d.plan)}, ${d.seats} store${d.seats === 1 ? '' : 's'}${d.expires_at ? `, until ${esc(d.expires_at)}` : ''}`;
+    if (a.action === 'setting.change') return `${esc(d.key)}: ${esc(d.before)} → <b>${esc(d.after)}</b>`;
+    if (a.action.startsWith('plan.')) return esc(d.key);
+    return '';
+  }
+  const rowsLink = (root) => $$('tr.link', root).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
+
+  PAGES.admin = async (ctx) => {
+    if (!S.admin) { location.hash = '#/'; return; }
+    const tab = ctx.r.a;
+    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder console</h1><div class="meta">Customers, plans and revenue · only visible to founders</div></div></div>`
+      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['leads', 'Leads and free checks']], tab);
+    if (tab === 'customers' && ctx.r.b) return adminCustomer(ctx, head, ctx.r.b);
+    if (tab === 'customers') return adminCustomers(ctx, head);
+    if (tab === 'plans') return adminPlans(ctx, head);
+    if (tab === 'payments') return adminPayments(ctx, head);
+    if (tab === 'audit') return adminAudit(ctx, head);
+    if (tab === 'settings') return adminSettings(ctx, head);
+    if (tab === 'leads') return adminLeads(ctx, head);
+    const d = await api('/api/admin/billing');
+    if (!ctx.alive()) return;
+    const c = d.counts;
+    const fig = (v, l, href) => `<a class="figure link-fig" href="${href}"><b>${v}</b><span>${esc(l)}</span></a>`;
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        ${fig(sumMoney(d.mrr), 'Monthly recurring revenue', '#/admin/customers')}
+        ${fig(d.rev30.length ? d.rev30.map((x) => minorMoney(x.amount, x.currency)).join(' + ') : '0', 'Received, last 30 days', '#/admin/payments')}
+        ${fig(c.paying, 'Paying customers', '#/admin/customers')}
+        ${fig(c.customers, 'Accounts', '#/admin/customers')}</div>
+      <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        ${fig(c.trial, 'On free trial', '#/admin/customers?state=trial')}
+        ${fig(c.grace, 'Payment due (grace)', '#/admin/customers?state=grace')}
+        ${fig(c.expired, 'Expired', '#/admin/customers?state=expired')}
+        ${fig(c.suspended + c.cancelled, 'Paused or ended', '#/admin/customers')}</div>
+      <div class="grid-2 tight"><section class="panel"><h2>Ending in the next 14 days</h2>
+        ${d.expiringSoon.length ? `<div class="table-wrap flat"><table class="data"><thead><tr><th>Customer</th><th>Plan</th><th>Ends</th></tr></thead><tbody>${d.expiringSoon.map((x) => `<tr class="link" data-href="#/admin/customers/${x.id}" tabindex="0"><td><span class="cell-main">${esc(x.email)}</span></td><td>${esc(x.plan)} ${STATE_PILL(x.state)}</td><td>${esc(dateOnly(x.expires_at))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">Nothing ends in the next two weeks.</p>'}</section>
+      <section class="panel"><h2>Latest payments</h2>
+        ${d.recentPayments.length ? `<div class="table-wrap flat"><table class="data"><thead><tr><th>Customer</th><th class="num">Amount</th><th>When</th></tr></thead><tbody>${d.recentPayments.map((p) => `<tr class="link" data-href="#/admin/customers/${p.user_id}" tabindex="0"><td>${esc(p.email)}</td><td class="num"><b>${minorMoney(p.amount, p.currency)}</b></td><td>${time(p.created_at)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No payments recorded yet.</p>'}</section></div>
+      <section class="panel"><h2>Customers by plan</h2><div class="chips-row">${Object.entries(d.plans).map(([k, n]) => `<span class="chip">${esc(k)} · ${n}</span>`).join('')}</div></section></div>`;
+    rowsLink(ctx.main);
+  };
+
+  async function adminCustomers(ctx, head) {
+    const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+    const d = await api(`/api/admin/customers?${qs}`);
+    if (!ctx.alive()) return;
+    const st = qs.get('state') || '';
+    const filters = [['', 'All'], ['trial', 'Trial'], ['active', 'Active'], ['grace', 'Payment due'], ['expired', 'Expired'], ['suspended', 'Paused'], ['cancelled', 'Ended']];
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <div class="toolbar"><input id="cq" type="search" placeholder="Search by email or name" value="${esc(qs.get('q') || '')}" style="max-width:320px">
+        <div class="seg">${filters.map(([k, l]) => `<label><input type="radio" name="st" value="${k}" ${k === st ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
+      <div class="table-wrap"><table class="data"><thead><tr><th>Customer</th><th>Plan</th><th>Status</th><th class="num">Stores</th><th>Ends</th><th class="num">MRR</th><th>Last test</th><th aria-label="Open"></th></tr></thead><tbody>
+      ${d.customers.map((x) => `<tr class="link" data-href="#/admin/customers/${x.id}" tabindex="0"><td><span class="cell-main">${esc(x.email)}</span><div class="cell-sub">${esc(x.name || '')} · joined ${esc(dateOnly(x.created_at))}</div></td>
+        <td>${esc(x.plan)}<div class="cell-sub">${x.price ? `${minorMoney(x.price.amount, x.price.currency)} / ${x.price.period}` : x.plan_kind === 'paid' ? 'No price set' : 'Free'}</div></td><td>${STATE_PILL(x.state)}</td>
+        <td class="num">${x.stores} / ${x.seats}</td><td>${x.expires_at ? esc(dateOnly(x.expires_at)) : '<span class="muted">No end</span>'}</td><td class="num">${x.mrr ? minorMoney(x.mrr, x.currency) : '–'}</td>
+        <td class="cell-sub">${x.last_run ? time(x.last_run) : 'Never'}</td><td class="go">${icon('right', 16)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No customers match.</td></tr>'}</tbody></table></div></div>`;
+    rowsLink(ctx.main);
+    const go = () => { const p = new URLSearchParams(); const q = $('#cq').value.trim(); const v = $('input[name=st]:checked')?.value; if (q) p.set('q', q); if (v) p.set('state', v); location.hash = `#/admin/customers${p.toString() ? '?' + p : ''}`; };
+    $$('input[name=st]', ctx.main).forEach((i) => (i.onchange = go));
+    $('#cq').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  }
+
+  async function adminCustomer(ctx, head, uid) {
+    const [d, pl] = await Promise.all([api(`/api/admin/customers/${uid}`), api('/api/admin/plans')]);
+    if (!ctx.alive()) return;
+    const L = d.license;
+    const v = d.view;
+    const exp = L.expires_at ? L.expires_at.slice(0, 10) : '';
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <div class="page-head" style="margin-top:4px"><div><div class="crumbs"><a href="#/admin/customers">Customers</a></div><h1 style="font-size:20px">${esc(d.user.email)}</h1><div class="meta">${esc(d.user.name || '')} · joined ${esc(dateOnly(d.user.created_at))} · ${STATE_PILL(L.state)}</div></div>
+        <div class="actions"><button class="btn" id="pay">${icon('add', 16)}Record payment</button>
+          ${L.state === 'suspended' ? '<button class="btn secondary" id="resume">Turn back on</button>' : '<button class="btn secondary" id="pause">Pause account</button>'}</div></div>
+      <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="figure"><b>${esc(v.plan.name)}</b><span>Plan</span></div>
+        <div class="figure"><b>${L.price ? minorMoney(L.price.amount, L.price.currency) : v.plan.kind === 'paid' ? 'No price' : 'Free'}</b><span>${L.price ? `per ${L.price.period}${L.price.custom ? ' (custom)' : ''}` : 'Price'}</span></div>
+        <div class="figure"><b>${v.storesUsed} / ${v.maxStores}</b><span>Stores in use</span></div>
+        <div class="figure"><b>${L.expires_at ? esc(dateOnly(L.expires_at)) : 'No end'}</b><span>${L.state === 'grace' ? `Grace until ${esc(dateOnly(v.graceEnds))}` : 'Paid until / ends'}</span></div></div>
+      <form class="settings-card" id="licf"><div class="form-section"><div><h3>Licence</h3><p class="explain">What this customer gets. Every change is saved to the audit log with your name.</p></div>
+        <div class="controls"><div class="form-grid">
+          <div class="field"><label>Plan</label><select name="plan_key">${pl.plans.map((p) => opt(p.key, `${p.name}${p.active ? '' : ' (retired)'}`, L.plan_key)).join('')}</select></div>
+          <div class="field"><label>Stores (seats)</label><input name="seats" type="number" min="1" max="1000" value="${L.seats}"></div>
+          <div class="field"><label>Status</label><select name="status">${[['trial', 'Free trial'], ['active', 'Active'], ['suspended', 'Paused'], ['cancelled', 'Ended']].map(([k, l]) => opt(k, l, L.status)).join('')}</select></div>
+          <div class="field"><label>Paid until / ends</label><input name="expires_at" type="date" value="${esc(exp)}"><p class="hint">Empty means no end date.</p></div>
+          <div class="field"><label>Billing</label><select name="billing">${[['month', 'Monthly'], ['year', 'Yearly'], ['custom', 'Custom']].map(([k, l]) => opt(k, l, L.billing)).join('')}</select></div>
+          <div class="field"><label>Currency</label><select name="currency">${CURS.map((c) => opt(c, c, L.currency)).join('')}</select></div>
+          <div class="field"><label>Custom price per period</label><input name="price_override" type="number" min="0" step="0.01" value="${esc(toMajor(L.price_override))}" placeholder="Plan price × stores"><p class="hint">For the whole licence. Empty uses the plan price.</p></div>
+          <div class="field"><label>Grace days</label><input name="grace_days" type="number" min="0" max="90" value="${L.grace_days ?? ''}" placeholder="Default"></div></div>
+          <div class="field"><label>Private notes</label><textarea name="notes" rows="2">${esc(L.notes || '')}</textarea></div>
+          <p class="error-msg" id="lic-err" role="alert"></p><div><button class="btn" type="submit">Save licence</button></div></div></div></form>
+      <section class="panel"><h2>Stores</h2>${d.stores.length ? `<div class="table-wrap flat"><table class="data"><thead><tr><th>Store</th><th>Status</th><th>Last test</th><th>Plan</th></tr></thead><tbody>${d.stores.map((x) => `<tr><td><span class="cell-main">${esc(x.name || host(x.url))}</span><div class="cell-sub">${esc(x.url)}${x.platform ? ` · ${esc(x.platform)}` : ''}</div></td><td>${esc(VERDICT[x.last_status] || 'Not tested')}${x.monitoring ? '' : ' · paused'}</td><td>${x.last_run_at ? time(x.last_run_at) : '–'}</td><td class="cell-sub">${x.blocked ? `<span class="t-fail">${esc(x.blocked)}</span>` : 'Covered'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No stores yet.</p>'}</section>
+      <section class="panel"><h2>Payments</h2>${d.payments.length ? `<div class="table-wrap flat"><table class="data"><thead><tr><th>Recorded</th><th class="num">Amount</th><th>Method</th><th>Covers</th><th>By</th></tr></thead><tbody>${d.payments.map((p) => `<tr><td>${esc(dateOnly(p.created_at))}</td><td class="num"><b>${minorMoney(p.amount, p.currency)}</b></td><td>${esc(METHODS[p.method] || p.method)}${p.reference ? `<div class="cell-sub">${esc(p.reference)}</div>` : ''}</td><td class="cell-sub">${esc(dateOnly(p.covers_from))} → ${esc(dateOnly(p.covers_to))}</td><td class="cell-sub">${esc(p.recorded_by)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No payments yet.</p>'}</section>
+      <section class="panel"><div class="panel-head"><h2>History</h2><button class="btn small secondary" id="note">Add note</button></div>
+        <ul class="list">${d.audit.map((a) => `<li><div class="row"><span class="sev ${a.action === 'payment.record' ? 'ok' : a.action === 'note' ? '' : 'warn'}">${esc(ACTION[a.action] || a.action)}</span><span><span class="d">${auditText(a)}</span><span class="d muted">${esc(a.actor)}</span></span><span class="r">${time(a.created_at)}</span></div></li>`).join('')}</ul></section></div>`;
+    $('#licf').onsubmit = async (e) => {
+      e.preventDefault();
+      const f = e.target, b = Object.fromEntries(new FormData(f));
+      b.seats = Number(b.seats);
+      b.price_override = b.price_override === '' ? null : toMinor(b.price_override);
+      b.grace_days = b.grace_days === '' ? null : Number(b.grace_days);
+      // Only send the date if it was changed, so saving notes never moves an exact expiry time.
+      if ((b.expires_at || '') === exp) delete b.expires_at; else b.expires_at = b.expires_at || null;
+      const done = busy(f.querySelector('button[type=submit]'), 'Saving');
+      try { await api(`/api/admin/customers/${uid}/license`, { method: 'PATCH', body: b }); toast('Licence saved'); render({ silent: true }); } catch (ex) { done(); $('#lic-err').textContent = ex.message; }
+    };
+    const setStatus = async (status, title, body, confirm) => {
+      if (!(await confirmDialog({ title, body, confirm, danger: status === 'suspended' }))) return;
+      try { await api(`/api/admin/customers/${uid}/license`, { method: 'PATCH', body: { status } }); toast('Saved'); render({ silent: true }); } catch (ex) { toast(ex.message, 'error'); }
+    };
+    $('#pause')?.addEventListener('click', () => setStatus('suspended', `Pause ${d.user.email}?`, 'Their checks and alerts stop at once. They can still log in and see reports.', 'Pause account'));
+    $('#resume')?.addEventListener('click', () => setStatus('active', 'Turn this account back on?', L.expires_at && new Date(L.expires_at.replace(' ', 'T') + 'Z') < Date.now() ? 'Their paid-until date has passed, so they will still show as expired. Record a payment or set a new date too.' : 'Checks and alerts start again.', 'Turn back on'));
+    $('#note').onclick = async () => {
+      if (await formDialog({ title: 'Add a note', body: '<div class="field"><label for="nt">Note</label><textarea id="nt" name="text" rows="4" maxlength="1000" required></textarea></div>', submit: 'Add note', onSubmit: (f) => api(`/api/admin/customers/${uid}/note`, { method: 'POST', body: { text: f.text.value } }) })) render({ silent: true });
+    };
+    $('#pay').onclick = async () => {
+      const plan = pl.plans.find((p) => p.key === L.plan_key);
+      const cur = L.currency, per = L.billing === 'year' ? 'year' : 'month';
+      const suggested = L.price?.amount ?? (plan?.prices?.[cur]?.[per] != null ? plan.prices[cur][per] * L.seats : '');
+      const body = `<p>Records money received and extends the licence. ${L.state === 'grace' ? 'The payment is late, so the new period continues from the old end date.' : L.state === 'expired' || L.state === 'suspended' ? 'This also turns the account back on.' : ''}</p>
+        <div class="form-grid"><div class="field"><label>Amount</label><input name="amount" type="number" min="0" step="0.01" value="${esc(toMajor(suggested))}" required></div>
+        <div class="field"><label>Currency</label><select name="currency">${CURS.map((c) => opt(c, c, cur)).join('')}</select></div>
+        <div class="field"><label>Paid for</label><input name="periods" type="number" min="1" max="36" value="1"></div>
+        <div class="field"><label>Period</label><select name="period">${opt('month', 'Months', per)}${opt('year', 'Years', per)}</select></div>
+        <div class="field"><label>Method</label><select name="method">${Object.entries(METHODS).map(([k, l]) => opt(k, l, 'upi')).join('')}</select></div>
+        <div class="field"><label>Reference</label><input name="reference" placeholder="UTR, transaction or invoice number"></div>
+        <div class="field"><label>Plan paid for</label><select name="plan_key">${pl.plans.filter((p) => p.kind === 'paid').map((p) => opt(p.key, p.name, plan?.kind === 'paid' ? L.plan_key : '')).join('')}</select></div>
+        <div class="field"><label>Stores paid for</label><input name="seats" type="number" min="1" max="1000" value="${plan?.kind === 'paid' ? L.seats : ''}" placeholder="e.g. 1" required></div></div>
+        <div class="field"><label>Note</label><input name="note" maxlength="500"></div>
+        <label class="check-line"><input type="checkbox" name="sendReceipt" checked><span>Email a receipt to ${esc(d.user.email)}</span></label>
+        <label class="check-line"><input type="checkbox" name="confirmDuplicate"><span>This is a second payment of the same amount (not a repeat entry)</span></label>`;
+      const ok = await formDialog({ title: 'Record payment', body, submit: 'Record payment', wide: true, onSubmit: (f) => api(`/api/admin/customers/${uid}/payments`, { method: 'POST', body: {
+        amount: f.amount.value === '' ? '' : toMinor(f.amount.value), currency: f.currency.value, periods: Number(f.periods.value), period: f.period.value, method: f.method.value, reference: f.reference.value, plan_key: f.plan_key.value, seats: f.seats.value === '' ? '' : Number(f.seats.value), note: f.note.value, sendReceipt: f.sendReceipt.checked, confirmDuplicate: f.confirmDuplicate.checked } }) });
+      if (ok) { toast(`Payment recorded. Active until ${dateOnly(ok.view.expires_at)}`); render({ silent: true }); }
+    };
+  }
+
+  async function adminPlans(ctx, head) {
+    const d = await api('/api/admin/plans');
+    if (!ctx.alive()) return;
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <div class="toolbar"><p class="muted" style="margin:0">Plans decide what each store gets. Prices are per store. Public plans appear on the pricing page, in this order.</p><button class="btn" id="newp">${icon('add', 16)}New plan</button></div>
+      <div class="table-wrap"><table class="data"><thead><tr><th>Plan</th><th>Price per store</th><th>Includes</th><th>Limits</th><th class="num">Customers</th><th>Shown</th><th aria-label="Edit"></th></tr></thead><tbody>
+      ${d.plans.map((p) => `<tr><td><span class="cell-main">${esc(p.name)}</span><div class="cell-sub">${esc(p.key)} · ${esc(p.kind)}</div></td>
+        <td class="cell-sub">${p.kind === 'paid' ? Object.entries(p.prices).map(([c, v]) => `${v.month != null ? minorMoney(v.month, c) + '/mo' : ''}${v.year != null ? ` · ${minorMoney(v.year, c)}/yr` : ''}`).join('<br>') : 'Free'}</td>
+        <td class="cell-sub">${p.features.length} of ${d.features.length} features</td>
+        <td class="cell-sub">${esc(EVERY[p.limits.journeyMinInterval] || '')} · ${p.limits.maxStores ? `max ${p.limits.maxStores} stores` : 'any stores'} · ${p.limits.environments} env.</td>
+        <td class="num">${p.customers}</td><td>${!p.active ? '<span class="pill">Retired</span>' : p.public ? '<span class="pill healthy">Public</span>' : '<span class="pill">Hidden</span>'}</td>
+        <td><button class="icon-btn" data-edit="${esc(p.key)}" aria-label="Edit ${esc(p.name)}" data-tip="Edit">${icon('edit', 17)}</button></td></tr>`).join('')}</tbody></table></div></div>`;
+    const edit = async (p) => {
+      const isNew = !p;
+      p = p || { key: '', name: '', tagline: '', kind: 'paid', prices: {}, features: ['journeys'], limits: { journeyMinInterval: 60, fullMinInterval: 1440, environments: 0, maxStores: null }, public: false, highlight: false, active: true, sort: 10 };
+      const priceRows = ['USD', 'EUR', 'INR', 'GBP'].map((c) => `<tr><td>${c}</td><td><input name="pm_${c}" type="number" min="0" step="0.01" value="${esc(toMajor(p.prices[c]?.month))}"></td><td><input name="py_${c}" type="number" min="0" step="0.01" value="${esc(toMajor(p.prices[c]?.year))}"></td></tr>`).join('');
+      const body = `<div class="form-grid">
+          ${isNew ? '<div class="field"><label>Key</label><input name="key" placeholder="e.g. agency" pattern="[a-z][a-z0-9-]{1,30}" required><p class="hint">Can’t be changed later.</p></div>' : ''}
+          <div class="field"><label>Name</label><input name="name" value="${esc(p.name)}" required maxlength="40"></div>
+          <div class="field"><label>Kind</label><select name="kind">${[['paid', 'Paid'], ['free', 'Free'], ['trial', 'Trial']].map(([k, l]) => opt(k, l, p.kind)).join('')}</select></div>
+          <div class="field"><label>Order on pricing page</label><input name="sort" type="number" min="0" max="999" value="${p.sort}"></div></div>
+        <div class="field"><label>One-line description</label><input name="tagline" value="${esc(p.tagline || '')}" maxlength="120"></div>
+        <div class="field"><label>Price per store</label><table class="mini"><thead><tr><th></th><th>Monthly</th><th>Yearly</th></tr></thead><tbody>${priceRows}</tbody></table><p class="hint">Leave a currency empty to not offer it.</p></div>
+        <fieldset class="field"><legend>Includes</legend><div class="feat-checks">${d.features.map((f) => `<label class="check-line"><input type="checkbox" name="f" value="${f.key}" ${p.features.includes(f.key) || f.always ? 'checked' : ''} ${f.always ? 'disabled' : ''}><span>${esc(f.label)}</span></label>`).join('')}</div></fieldset>
+        <div class="form-grid">
+          <div class="field"><label>Shopping checks, at most</label><select name="journeyMinInterval">${Object.entries(EVERY).map(([k, l]) => opt(k, l, p.limits.journeyMinInterval)).join('')}</select></div>
+          <div class="field"><label>Full check, at most</label><select name="fullMinInterval">${Object.entries(FULL_EVERY).map(([k, l]) => opt(k, l, p.limits.fullMinInterval)).join('')}</select></div>
+          <div class="field"><label>Environments per store</label><input name="environments" type="number" min="0" max="50" value="${p.limits.environments ?? 0}"></div>
+          <div class="field"><label>Max stores</label><input name="maxStores" type="number" min="1" max="1000" value="${p.limits.maxStores ?? ''}" placeholder="No limit"></div>
+          <div class="field"><label>Tests a customer can start, per store per day</label><input name="manualRunsPerDay" type="number" min="1" max="500" value="${p.limits.manualRunsPerDay ?? 20}"></div></div>
+        <label class="check-line"><input type="checkbox" name="public" ${p.public ? 'checked' : ''}><span>Show on the pricing page</span></label>
+        <label class="check-line"><input type="checkbox" name="highlight" ${p.highlight ? 'checked' : ''}><span>Highlight it</span></label>
+        <label class="check-line"><input type="checkbox" name="active" ${p.active ? 'checked' : ''}><span>Available (untick to retire; existing customers keep it)</span></label>
+        ${!isNew && p.customers ? `<p class="hint">${p.customers} customer${p.customers === 1 ? ' is' : 's are'} on this plan. Changes apply to them straight away.</p>` : ''}`;
+      const saved = await formDialog({ title: isNew ? 'New plan' : `Edit ${p.name}`, body, submit: 'Save plan', wide: true, onSubmit: (f) => {
+        const prices = {};
+        for (const c of ['USD', 'EUR', 'INR', 'GBP']) { const m = f[`pm_${c}`].value, y = f[`py_${c}`].value; if (m !== '' || y !== '') prices[c] = { month: m === '' ? null : toMinor(m), year: y === '' ? null : toMinor(y) }; }
+        const b = { name: f.name.value, tagline: f.tagline.value, kind: f.kind.value, sort: Number(f.sort.value), prices, features: $$('input[name=f]:checked', f).map((x) => x.value),
+          limits: { journeyMinInterval: Number(f.journeyMinInterval.value), fullMinInterval: Number(f.fullMinInterval.value), environments: Number(f.environments.value || 0), maxStores: f.maxStores.value === '' ? null : Number(f.maxStores.value), manualRunsPerDay: Number(f.manualRunsPerDay.value || 20) },
+          public: f.public.checked, highlight: f.highlight.checked, active: f.active.checked };
+        return isNew ? api('/api/admin/plans', { method: 'POST', body: { ...b, key: f.key.value.trim() } }) : api(`/api/admin/plans/${p.key}`, { method: 'PATCH', body: b });
+      } });
+      if (saved) { toast('Plan saved'); S.catalog = null; render({ silent: true }); }
+    };
+    $('#newp').onclick = () => edit(null);
+    $$('[data-edit]', ctx.main).forEach((b) => (b.onclick = () => edit(d.plans.find((p) => p.key === b.dataset.edit))));
+  }
+
+  async function adminPayments(ctx, head) {
+    const d = await api('/api/admin/payments');
+    if (!ctx.alive()) return;
+    ctx.main.innerHTML = `<div class="main-inner">${head}<div class="table-wrap"><table class="data"><thead><tr><th>Recorded</th><th>Customer</th><th class="num">Amount</th><th>Method</th><th>Covers</th><th>By</th></tr></thead><tbody>
+      ${d.payments.map((p) => `<tr class="link" data-href="#/admin/customers/${p.user_id}" tabindex="0"><td>${esc(dateOnly(p.created_at))}</td><td>${esc(p.email)}</td><td class="num"><b>${minorMoney(p.amount, p.currency)}</b></td><td>${esc(METHODS[p.method] || p.method)}${p.reference ? `<div class="cell-sub">${esc(p.reference)}</div>` : ''}</td><td class="cell-sub">${esc(dateOnly(p.covers_from))} → ${esc(dateOnly(p.covers_to))}</td><td class="cell-sub">${esc(p.recorded_by)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No payments yet.</td></tr>'}</tbody></table></div></div>`;
+    rowsLink(ctx.main);
+  }
+
+  async function adminAudit(ctx, head) {
+    const d = await api('/api/admin/audit');
+    if (!ctx.alive()) return;
+    ctx.main.innerHTML = `<div class="main-inner">${head}<p class="muted">Every change to licences, payments, plans and settings. This log can’t be edited or deleted.</p>
+      <div class="table-wrap"><table class="data"><thead><tr><th>When</th><th>What</th><th>Customer</th><th>Details</th><th>By</th></tr></thead><tbody>
+      ${d.audit.map((a) => `<tr ${a.user_id ? `class="link" data-href="#/admin/customers/${a.user_id}" tabindex="0"` : ''}><td class="nowrap">${esc(exact(a.created_at))}</td><td>${esc(ACTION[a.action] || a.action)}</td><td>${esc(a.email || '–')}</td><td class="cell-sub">${auditText(a)}</td><td class="cell-sub">${esc(a.actor)}</td></tr>`).join('')}</tbody></table></div></div>`;
+    rowsLink(ctx.main);
+  }
+
+  async function adminSettings(ctx, head) {
+    const d = await api('/api/admin/settings');
+    if (!ctx.alive()) return;
+    const st = d.settings;
+    ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="setf">
+      <div class="form-section"><div><h3>New accounts</h3><p class="explain">The plan every new signup starts on. Choose the trial plan when the beta ends.</p></div>
+        <div class="controls"><div class="field"><label>Plan for new signups</label><select name="signup_plan">${d.plans.map((p) => opt(p.key, `${p.name} (${p.kind})`, st.signup_plan)).join('')}</select></div>
+        <div class="field"><label>Trial length, days</label><input name="trial_days" type="number" min="1" max="90" value="${esc(st.trial_days)}"></div></div></div>
+      <div class="form-section"><div><h3>Late payments</h3><p class="explain">How long checks keep running after a paid plan’s end date, so a late payment never stops a store.</p></div>
+        <div class="controls"><div class="field"><label>Grace days</label><input name="grace_days" type="number" min="0" max="90" value="${esc(st.grace_days)}"></div></div></div>
+      <div class="form-section"><div><h3>How customers pay</h3><p class="explain">Shown on every customer’s Plan and billing page and in reminder emails.</p></div>
+        <div class="controls"><div class="field"><label>Payment instructions</label><textarea name="payment_note" rows="4" maxlength="2000">${esc(st.payment_note)}</textarea></div></div></div>
+      <div class="form-section"><div></div><div class="controls"><p class="error-msg" id="set-err" role="alert"></p><div><button class="btn" type="submit">Save settings</button></div></div></div></form></div>`;
+    $('#setf').onsubmit = async (e) => {
+      e.preventDefault();
+      const b = Object.fromEntries(new FormData(e.target));
+      b.trial_days = Number(b.trial_days); b.grace_days = Number(b.grace_days);
+      const done = busy(e.target.querySelector('button[type=submit]'), 'Saving');
+      try { await api('/api/admin/settings', { method: 'PATCH', body: b }); toast('Settings saved'); done(); } catch (ex) { done(); $('#set-err').textContent = ex.message; }
+    };
+  }
+
   // ---------- Add a store (setup) ----------
   PAGES.add = async (ctx) => {
+    if (storesFull() && !S.wizard?.found) {
+      ctx.main.innerHTML = `<div class="main-inner"><div class="page-head"><div><div class="crumbs">Workspace</div><h1>Add a store</h1></div></div>${upsell('journeys', S.license.usable ? `All ${S.license.maxStores} store${S.license.maxStores === 1 ? '' : 's'} on your plan are in use` : 'Your plan is not active', S.license.usable ? 'Add a store to your plan, or remove a store you no longer need, to add another.' : 'Renew your plan to add stores and start checks again.').replace(/<p class="muted"[^]*?<\/p>/, '')}</div>`;
+      return;
+    }
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (!ctx.alive()) return;
     if (!S.wizard) S.wizard = { step: 1, url: '', password: '', locked: false, found: null, disabled: [], testProduct: '', journeyIntervalMin: S.catalog.defaults.journeyIntervalMin, fullIntervalMin: S.catalog.defaults.fullIntervalMin, alertEmail: S.me.email, slack: '', monitoring: true };
@@ -1661,13 +1978,13 @@
     }
 
     if (w.step === 3) {
-      const radios = (name, map, val) => `<div class="seg" role="radiogroup">${Object.entries(map).map(([k, l]) => `<label><input type="radio" name="${name}" value="${k}" ${Number(k) === val ? 'checked' : ''}><span>${esc(l)}</span></label>`).join('')}</div>`;
+      const radios = (name, map, val) => `<div class="seg" role="radiogroup">${Object.entries(map).map(([k, l]) => `<label ${belowPlan(name, k) ? `title="Not included in your plan" class="na"` : ''}><input type="radio" name="${name}" value="${k}" ${Number(k) === val ? 'checked' : ''} ${belowPlan(name, k) ? 'disabled' : ''}><span>${esc(l)}</span></label>`).join('')}</div>`;
       wrap(`<form class="settings-card" id="w3" novalidate>
         <div class="form-section"><div><h3>Journey tests</h3><p class="explain">How often we shop your store. If a test fails, we re-test every 30 minutes until it's fixed.</p></div><div class="controls">${radios('journeyIntervalMin', EVERY, w.journeyIntervalMin)}</div></div>
         <div class="form-section"><div><h3>Full check</h3><p class="explain">The journey plus speed, SEO, accessibility, links, catalog and visual changes.</p></div><div class="controls">${radios('fullIntervalMin', FULL_EVERY, w.fullIntervalMin)}</div></div>
         <div class="form-section"><div><h3>Alerts</h3><p class="explain">We alert once when something breaks and once when it recovers.</p></div>
           <div class="controls"><div class="field"><label for="wae">Email</label><input id="wae" name="alertEmail" type="email" value="${esc(w.alertEmail)}" required></div>
-          <div class="field"><label for="wsl">Slack webhook URL <span class="muted" style="font-weight:400">(optional)</span></label><input id="wsl" name="slack" value="${esc(w.slack)}" placeholder="https://hooks.slack.com/services/…"><p class="hint">You can add this later under Alerts.</p></div></div></div>
+          ${can('slack') ? `<div class="field"><label for="wsl">Slack webhook URL <span class="muted" style="font-weight:400">(optional)</span></label><input id="wsl" name="slack" value="${esc(w.slack)}" placeholder="https://hooks.slack.com/services/…"><p class="hint">You can add this later under Alerts.</p></div>` : '<input type="hidden" name="slack" value="">'}</div></div>
         <div class="form-section"><div><h3>Monitoring</h3><p class="explain">You can pause monitoring at any time.</p></div>
           <div class="controls"><label class="toggle-line"><span class="switch"><input type="checkbox" name="monitoring" ${w.monitoring ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Start monitoring after the first check</b><span>Off means only checks you start will run.</span></span></label></div></div>
         <p class="error-msg" id="w-err" role="alert"></p>

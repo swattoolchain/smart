@@ -4,6 +4,7 @@
  */
 import { db } from './db.js';
 import { storeConfig } from './scheduler.js';
+import { GROUPS, MARKETS, groupOf } from './engine/catalog.js';
 
 // Checks that decide whether a customer could buy. An incident on one of these means lost sales.
 const CORE = ['fn.home', 'fn.pdp', 'fn.atc', 'fn.cart', 'fn.checkout'];
@@ -14,6 +15,7 @@ const runsSince = db.prepare(
 const alertsSince = db.prepare("SELECT check_id, state, created_at FROM alerts WHERE store_id = ? AND created_at > datetime('now', '-60 days') ORDER BY id");
 const openCore = db.prepare(`SELECT check_id, since FROM check_state WHERE store_id = ? AND status = 'failing' AND check_id IN (${CORE.map(() => '?').join(',')})`);
 const lastCatalog = db.prepare("SELECT result_json FROM runs WHERE store_id = ? AND status = 'done' AND kind = 'full' AND (trigger IS NULL OR trigger != 'release') AND result_json LIKE '%\"catalog\":{%' ORDER BY id DESC LIMIT 1");
+const lastRegional = db.prepare("SELECT id, created_at, result_json FROM runs WHERE store_id = ? AND status = 'done' AND kind = 'full' AND (trigger IS NULL OR trigger != 'release') AND (result_json LIKE '%\"de.%' OR result_json LIKE '%\"eu.%' OR result_json LIKE '%\"ax.%' OR result_json LIKE '%\"us.%') ORDER BY id DESC LIMIT 10");
 const releasesSince = db.prepare("SELECT verdict FROM releases WHERE store_id = ? AND status = 'done' AND created_at > datetime('now', '-30 days')");
 
 const ts = (s) => new Date(s.replace(' ', 'T') + 'Z').getTime();
@@ -63,6 +65,44 @@ function brokenHours(list) {
   return total / 3600e3;
 }
 
+/**
+ * Rules met per country the store sells in, from the latest full check that ran the regional packs.
+ * Germany and Austria share one pack, so they are reported together.
+ */
+function rulesMet(store, cfg) {
+  const markets = cfg.markets || [];
+  if (!markets.length) return { markets: [], run: null };
+  // Each rule group comes from the latest full check that actually ran it (a hand-picked run may cover only some).
+  const rows = lastRegional.all(store.id);
+  const byGroup = new Map();
+  let row = null;
+  for (const r of rows) {
+    const list = (JSON.parse(r.result_json).checks || []).filter((c) => c.status !== 'skip');
+    for (const c of list) {
+      const g = groupOf(c.id);
+      if (!g || !GROUPS.find((x) => x.key === g)?.markets) continue;
+      if (!byGroup.has(g)) byGroup.set(g, { run: r.id, checks: [] });
+      if (byGroup.get(g).run === r.id) byGroup.get(g).checks.push(c);
+    }
+    row = row || r;
+  }
+  const checks = [...byGroup.values()].flatMap((x) => x.checks);
+  const shown = [];
+  const seen = new Set();
+  for (const m of markets) {
+    const groups = GROUPS.filter((g) => g.markets?.includes(m)).map((g) => g.key);
+    if (!groups.length) continue;
+    const key = groups.sort().join(',');
+    const label = MARKETS.find((x) => x.code === m)?.label || m;
+    if (seen.has(key)) { shown.find((x) => x.key === key).label += ` and ${label}`; continue; }
+    seen.add(key);
+    const list = checks.filter((c) => groups.includes(groupOf(c.id)));
+    if (!list.length) { shown.push({ key, code: m, label, met: 0, total: 0, open: [], pending: true }); continue; }
+    shown.push({ key, code: m, label, met: list.filter((c) => c.status === 'pass').length, total: list.length, open: list.filter((c) => c.status !== 'pass').map((c) => c.title) });
+  }
+  return { markets: shown.map(({ key, ...x }) => x), run: row ? { id: row.id, created_at: row.created_at } : null };
+}
+
 export function scorecard(store) {
   const cfg = storeConfig(store);
   const inc = incidents(store.id);
@@ -89,6 +129,7 @@ export function scorecard(store) {
     timeToFix: { medianMinutes: median == null ? null : Math.round(median), incidents: recent.length, open: inc.filter((i) => !i.end).length },
     revenueAtRisk: { hours: Math.round(hours * 10) / 10, amount: daySales ? Math.round((hours * daySales) / 24) : null, dailySales: daySales, currency },
     catalog,
+    rules: rulesMet(store, cfg),
     publishing: { checked: rel.length, caught: rel.filter((r) => r.verdict === 'blocked').length, reviewed: rel.filter((r) => r.verdict === 'review').length },
   };
 }

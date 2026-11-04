@@ -6,6 +6,14 @@ import { storeConfig } from './scheduler.js';
 import { live } from './live.js';
 import { settleRelease } from './release.js';
 import { effectiveDisabled } from './engine/catalog.js';
+import { entitlements, lockedGroups, blockReason, has } from './license.js';
+
+/** Groups switched off for this run: the store's choices, markets, and anything the owner's plan doesn't include. */
+function planDisabled(store, cfg, picked) {
+  const base = effectiveDisabled(cfg, picked);
+  if (!store) return base;
+  return [...new Set([...base, ...lockedGroups(entitlements(store.user_id))])];
+}
 
 const waiting = [];
 const running = new Map(); // runId -> AbortController
@@ -15,7 +23,7 @@ let active = 0;
 export function enqueue(job) {
   // Resolve what this run will test now, so a queued run can already show its plan.
   const store = job.storeId ? q.storeById.get(job.storeId) : null;
-  const disabled = effectiveDisabled(store ? storeConfig(store) : {}, job.disabled);
+  const disabled = planDisabled(store, store ? storeConfig(store) : {}, job.disabled);
   live.set(job.runId, { phase: 'queued', kind: job.kind, disabled, rec: null });
   waiting.push(job);
   pump();
@@ -71,12 +79,18 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     // Use the store's latest settings (test suite, test product, password) at the moment the run starts.
     const store = storeId ? q.storeById.get(storeId) : null;
     if (storeId && !store) throw new Error('Store was removed');
+    // The licence is checked again here, at the moment the run starts: every way of starting a test passes through this line.
+    if (store) {
+      const ent = entitlements(store.user_id);
+      const why = blockReason(ent, store.id) || (release && !has(ent, 'publish') ? 'Safe to publish is not included in your plan.' : null);
+      if (why) throw new Error(why);
+    }
     const cfg = store ? storeConfig(store) : {};
     // A staging environment brings its own password; everything else uses the live store's latest one.
     if (store && !ownPassword) password = store.storefront_password || password;
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
-      runScan({ runId, origin, kind, password, storeId, disabled: effectiveDisabled(cfg, disabled), testProduct: cfg.testProduct || null, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
+      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.

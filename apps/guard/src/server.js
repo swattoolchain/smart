@@ -13,6 +13,8 @@ import { queueDepth, cancelRun } from './queue.js';
 import { liveView } from './live.js';
 import { scorecard, weekBuyability } from './scorecard.js';
 import crypto from 'node:crypto';
+import { entitlements, has, blockReason, licenseView, ensureLicense, notIncluded, plansWith, FEATURES, envAllowed } from './license.js';
+import { adminRoutes } from './admin.js';
 import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './release.js';
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
@@ -64,7 +66,11 @@ function publicStore(s) {
   const { storefront_password, config_json, ...rest } = s;
   return { ...rest, has_password: !!storefront_password };
 }
-const isAdmin = (u) => !!config.adminEmail && u.email === config.adminEmail.toLowerCase();
+// ADMIN_EMAIL may list several founders, separated by commas.
+const ADMINS = new Set(String(config.adminEmail || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean));
+const isAdmin = (u) => !!u && ADMINS.has(String(u.email).toLowerCase());
+/** Refuses with a plain message when the account's plan doesn't allow something. */
+function refuse(res, message, code = 403) { res.status(code).json({ error: message, upgrade: true }); }
 
 // ---------- Public free scan ----------
 app.post('/api/scan', async (req, res) => {
@@ -137,6 +143,8 @@ app.post('/api/auth/signup', async (req, res) => {
   if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: 'Use a password of at least 8 characters' });
   const e = email.toLowerCase();
   if (q.userByEmail.get(e)) return res.status(409).json({ error: 'An account with this email already exists. Log in instead.' });
+  // Founder accounts get console access by email, so they are created on the server (scripts/create-user.js), never by signing up.
+  if (ADMINS.has(e)) return res.status(403).json({ error: 'This email can’t be used to sign up here.' });
   const hash = await bcrypt.hash(password, 10);
   const info = q.insertUser.run(e, hash, String(name || '').slice(0, 80));
   req.session.uid = Number(info.lastInsertRowid);
@@ -185,7 +193,12 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', requireUser, (req, res) => {
-  res.json({ user: req.user, admin: isAdmin(req.user) });
+  res.json({ user: req.user, admin: isAdmin(req.user), license: licenseView(req.user.id) });
+});
+
+// The customer's own plan and payment history.
+app.get('/api/account/billing', requireUser, (req, res) => {
+  res.json({ license: licenseView(req.user.id), payments: db.prepare('SELECT id, amount, currency, method, reference, period, periods, covers_from, covers_to, created_at FROM payments WHERE user_id = ? ORDER BY id DESC').all(req.user.id) });
 });
 
 app.patch('/api/account', requireUser, (req, res) => {
@@ -204,7 +217,7 @@ app.post('/api/account/password', requireUser, async (req, res) => {
 
 // ---------- Test suite catalog ----------
 app.get('/api/catalog', (req, res) => {
-  res.json({ groups: GROUPS, markets: MARKETS, intervals: INTERVALS, fullIntervals: FULL_INTERVALS, aiEnabled: aiEnabled(), defaults: { journeyIntervalMin: config.journeyIntervalMin, fullIntervalMin: config.fullScanIntervalMin } });
+  res.json({ groups: GROUPS, markets: MARKETS, features: FEATURES.map((f) => ({ key: f.key, label: f.label, groups: f.groups || [], plans: plansWith(f.key) })), intervals: INTERVALS, fullIntervals: FULL_INTERVALS, aiEnabled: aiEnabled(), defaults: { journeyIntervalMin: config.journeyIntervalMin, fullIntervalMin: config.fullScanIntervalMin } });
 });
 
 // Looks at a store before it is added: platform, products, collections, password lock.
@@ -264,8 +277,10 @@ function storeView(s) {
   const cfg = storeConfig(s);
   const iv = intervals(s);
   const active = q.activeRunForStore.get(s.id);
+  const ent = entitlements(s.user_id);
   return {
     ...publicStore(s),
+    blocked: blockReason(ent, s.id),
     config: { disabled: cfg.disabled || [], markets: cfg.markets || [], testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
@@ -275,7 +290,7 @@ function storeView(s) {
 }
 
 app.get('/api/stores', requireUser, (req, res) => {
-  res.json({ stores: q.storesByUser.all(req.user.id).map(storeView), queue: queueDepth() });
+  res.json({ stores: q.storesByUser.all(req.user.id).map(storeView), queue: queueDepth(), license: licenseView(req.user.id) });
 });
 
 app.get('/api/overview', requireUser, (req, res) => {
@@ -292,7 +307,10 @@ app.post('/api/stores', requireUser, async (req, res) => {
     return res.status(400).json({ error: e.message });
   }
   const mine = q.storesByUser.all(req.user.id);
-  if (mine.length >= 5) return res.status(400).json({ error: 'The beta allows up to 5 stores per account.' });
+  const ent = entitlements(req.user.id);
+  if (!ent.usable) return refuse(res, blockReason(ent));
+  if (mine.length >= ent.maxStores) return refuse(res, `Your plan covers ${ent.maxStores} store${ent.maxStores === 1 ? '' : 's'}, and all are in use. Add a store to your plan to add another.`);
+  if (slack && !has(ent, 'slack')) return refuse(res, notIncluded('slack', 'Slack alerts') + ' Leave the Slack field empty, or upgrade.');
   if (mine.some((s) => s.url === origin)) return res.status(409).json({ error: 'This store is already in your account.' });
   if (alertEmail && !isEmail(alertEmail)) return res.status(400).json({ error: 'Alert email is not valid' });
   if (slack && !/^https:\/\/hooks\.slack\.com\//.test(slack)) return res.status(400).json({ error: 'Slack webhook must start with https://hooks.slack.com/' });
@@ -319,6 +337,10 @@ app.patch('/api/stores/:id', requireUser, (req, res) => {
   if (b.alertEmail && !isEmail(b.alertEmail)) return res.status(400).json({ error: 'Alert email is not valid' });
   if (b.slack && !/^https:\/\/hooks\.slack\.com\//.test(b.slack)) return res.status(400).json({ error: 'Slack webhook must start with https://hooks.slack.com/' });
   if (b.name !== undefined && !String(b.name).trim()) return res.status(400).json({ error: 'Give the store a name' });
+  const ent = entitlements(req.user.id);
+  if (b.slack && b.slack !== s.slack_webhook && !has(ent, 'slack')) return refuse(res, notIncluded('slack', 'Slack alerts'));
+  if (b.config?.journeyIntervalMin && Number(b.config.journeyIntervalMin) < ent.limits.journeyMinInterval) return refuse(res, 'Your plan doesn\'t include checks this often. Choose a longer interval or upgrade.');
+  if (b.config?.fullIntervalMin && Number(b.config.fullIntervalMin) < ent.limits.fullMinInterval) return refuse(res, 'Your plan doesn\'t include full checks this often.');
   q.updateStoreSettings.run(
     b.name === undefined ? s.name : String(b.name).trim().slice(0, 80),
     b.password === undefined ? s.storefront_password : b.password || null,
@@ -348,7 +370,12 @@ app.get('/api/stores/:id/scorecard', requireUser, (req, res) => {
 app.post('/api/stores/:id/run', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
+  const entRun = entitlements(s.user_id);
+  const why = blockReason(entRun, s.id);
+  if (why) return refuse(res, why);
   if (q.activeRunForStore.get(s.id)) return res.status(409).json({ error: 'A test is already running for this store.' });
+  const today = db.prepare("SELECT COUNT(*) AS n FROM runs WHERE store_id = ? AND trigger = 'manual' AND created_at > datetime('now', '-1 day')").get(s.id).n;
+  if (today >= entRun.limits.manualRunsPerDay) return refuse(res, `You’ve started ${today} tests for this store in the last 24 hours, the most your plan allows. Scheduled checks keep running.`, 429);
   // A run can be limited to chosen validation groups. Anything not chosen is skipped for this run only.
   let kind = req.body?.kind === 'journeys' ? 'journeys' : 'full';
   let disabled;
@@ -387,6 +414,10 @@ app.get('/api/stores/:id/releases', requireUser, (req, res) => {
 app.post('/api/stores/:id/releases', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
+  const ent = entitlements(s.user_id);
+  if (blockReason(ent, s.id)) return refuse(res, blockReason(ent, s.id));
+  if (!has(ent, 'publish')) return refuse(res, notIncluded('publish', 'Safe to publish'));
+  if (req.body?.environmentId && !envAllowed(ent, s.id, Number(req.body.environmentId))) return refuse(res, has(ent, 'environments') ? `Your plan covers ${ent.limits.environments} environment${ent.limits.environments === 1 ? '' : 's'} per store. Remove one to check this one.` : notIncluded('environments', 'Saved environments'));
   if (q.activeRunForStore.get(s.id)) return res.status(409).json({ error: 'A test is running for this store. Start the publish check when it finishes.' });
   const label = String(req.body?.label || '').trim().slice(0, 120);
   if (req.body?.environmentId) {
@@ -417,7 +448,9 @@ app.get('/api/stores/:id/environments', requireUser, (req, res) => {
 app.post('/api/stores/:id/environments', requireUser, async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
-  if (q.envsByStore.all(s.id).length >= 10) return res.status(400).json({ error: 'A store can have up to 10 environments.' });
+  const ent = entitlements(s.user_id);
+  if (!has(ent, 'environments')) return refuse(res, notIncluded('environments', 'Saved environments'));
+  if (q.envsByStore.all(s.id).length >= ent.limits.environments) return refuse(res, `Your plan allows ${ent.limits.environments} environment${ent.limits.environments === 1 ? '' : 's'} per store.`);
   let e;
   try { e = cleanEnvironment(s, req.body || {}); await checkEnvTarget(e); } catch (x) { return res.status(400).json({ error: x.message }); }
   const info = q.insertEnv.run(s.id, e.name, e.kind, e.url, e.password, e.auto, newToken());
@@ -433,6 +466,7 @@ const ownEnv = (req, res) => {
 app.patch('/api/stores/:id/environments/:eid', requireUser, async (req, res) => {
   const o = ownEnv(req, res);
   if (!o) return;
+  if (!has(entitlements(o.s.user_id), 'environments')) return refuse(res, notIncluded('environments', 'Saved environments'));
   let e;
   try { e = cleanEnvironment(o.s, req.body || {}, o.env); await checkEnvTarget(e); } catch (x) { return res.status(400).json({ error: x.message }); }
   q.updateEnv.run(e.name, e.kind, e.url, e.password, e.auto, o.env.id);
@@ -466,6 +500,9 @@ const gateEnv = (req, res) => {
   if (!env) { res.status(401).json({ error: 'Unknown key. Copy it again from Safe to publish → Environments.' }); return null; }
   const store = q.storeById.get(env.store_id);
   if (!store) { res.status(404).json({ error: 'Store not found.' }); return null; }
+  const ent = entitlements(store.user_id);
+  const why = blockReason(ent, store.id) || (!has(ent, 'pipeline') ? notIncluded('pipeline', 'Deploy pipeline checks') : !envAllowed(ent, store.id, env.id) ? 'This environment is beyond what your plan covers.' : null);
+  if (why) { res.status(402).json({ error: why }); return null; }
   return { env, store };
 };
 app.post(['/api/gate', '/api/gate/:token'], async (req, res) => {
@@ -474,7 +511,7 @@ app.post(['/api/gate', '/api/gate/:token'], async (req, res) => {
   // A pipeline may send a fresh preview link for the theme it just pushed.
   let url = g.env.url;
   if (req.body?.url) {
-    try { url = cleanEnvironment(g.store, { url: req.body.url }, g.env).url; } catch (e) { return res.status(400).json({ error: e.message }); }
+    try { url = cleanEnvironment(g.store, { url: req.body.url }, g.env).url; await checkEnvTarget({ ...g.env, url }); } catch (e) { return res.status(400).json({ error: e.message }); }
   }
   const running = q.lastReleaseForEnv.get(g.env.id);
   if (running?.status === 'running') return res.json(gateView(running));
@@ -518,6 +555,7 @@ app.post('/api/stores/:id/releases/:rid/cancel', requireUser, (req, res) => {
 app.post('/api/stores/:id/discover', requireUser, async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
+  if (!entitlements(s.user_id).usable) return refuse(res, blockReason(entitlements(s.user_id)));
   try {
     res.json(await discoverStore(s.url, s.storefront_password));
   } catch {
@@ -539,7 +577,7 @@ app.post('/api/stores/:id/test-alert', requireUser, async (req, res) => {
   const text = `This is a test alert for ${name} from Tharam Store Guard. Real alerts look like this, with what broke, how to fix it, and a link to the report.\n\n${config.baseUrl}/app#/s/${s.id}`;
   const [mail, slack] = await Promise.all([
     sendMail({ to: s.alert_email, subject: `Test alert for ${name}`, text }).catch(() => false),
-    s.slack_webhook ? sendSlack(s.slack_webhook, `*Test alert for ${name}*\n${text}`).catch(() => false) : Promise.resolve(null),
+    s.slack_webhook && has(entitlements(s.user_id), 'slack') ? sendSlack(s.slack_webhook, `*Test alert for ${name}*\n${text}`).catch(() => false) : Promise.resolve(null),
   ]);
   res.json({ email: mail, slack, emailConfigured: !!config.smtp.host });
 });
@@ -607,6 +645,9 @@ app.post('/api/stores/:id/explain-change', requireUser, async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   if (!aiEnabled()) return res.status(400).json({ error: 'AI review is not set up on this server.' });
+  const entAi = entitlements(s.user_id);
+  if (blockReason(entAi, s.id)) return refuse(res, blockReason(entAi, s.id));
+  if (!has(entAi, 'ai')) return refuse(res, notIncluded('ai', 'AI review'));
   const { runId, baseRunId, key } = req.body || {};
   if (!SHOT_KEYS.includes(key)) return res.status(400).json({ error: 'Unknown screenshot' });
   const own = (id) => q.runById.get(Number(id))?.store_id === s.id;
@@ -629,6 +670,9 @@ app.post('/api/stores/:id/approve-visual', requireUser, (req, res) => {
   const n = approveBaseline(path.join(config.dataDir, 'shots', `run-${run.id}`), path.join(config.dataDir, 'baselines', `store-${s.id}`));
   res.json({ ok: true, approved: n });
 });
+
+// ---------- Founder console: customers, licences, payments, plans ----------
+adminRoutes(app, { requireUser, isAdmin });
 
 // ---------- Founder view ----------
 app.get('/api/admin/overview', requireUser, (req, res) => {

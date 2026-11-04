@@ -7,7 +7,8 @@ export const CATEGORIES = {
   accessibility: { label: 'Accessibility', weight: 10 },
   reliability: { label: 'Errors & visuals', weight: 12 },
   trust: { label: 'Catalog & products', weight: 10 },
-  compliance: { label: 'Legal and compliance', weight: 8 },
+  // Shown as "rules met", not as a score: legal rules don't change whether customers can buy.
+  compliance: { label: 'Legal and compliance', weight: 0, rules: true },
 };
 
 export function check(id, category, title, status, { severity = 'major', detail = '', evidence = null, fix = '' } = {}) {

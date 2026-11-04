@@ -8,7 +8,7 @@ export const config = {
   baseUrl: (process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, ''),
   dataDir: process.env.DATA_DIR || path.join(root, 'data'),
   publicDir: path.join(root, 'public'),
-  sessionSecret: process.env.SESSION_SECRET || 'dev-only-change-me',
+  sessionSecret: process.env.SESSION_SECRET || (process.env.BASE_URL?.startsWith('https://') ? (() => { throw new Error('SESSION_SECRET must be set in production'); })() : 'dev-only-change-me'),
   chromePath: process.env.CHROME_PATH || undefined,
   // Optional outbound proxy for the test browser, e.g. http://user:pass@proxy:port (helps with strict bot protection).
   browserProxy: process.env.BROWSER_PROXY || '',

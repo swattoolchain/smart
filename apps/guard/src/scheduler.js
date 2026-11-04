@@ -5,6 +5,8 @@ import { config } from './config.js';
 import { db, q } from './db.js';
 import { enqueue } from './queue.js';
 import { dueEnvironmentChecks } from './release.js';
+import { entitlements, blockReason } from './license.js';
+import { sendLicenseNotices } from './billing-mail.js';
 
 export function minutesSince(ts) {
   if (!ts) return Infinity;
@@ -21,9 +23,11 @@ export function storeConfig(store) {
 
 export function intervals(store) {
   const cfg = storeConfig(store);
+  // The plan sets how often a store may be checked; a saved setting can't go below it (e.g. after a downgrade).
+  const lim = entitlements(store.user_id).limits;
   return {
-    journeyIntervalMin: cfg.journeyIntervalMin || config.journeyIntervalMin,
-    fullIntervalMin: cfg.fullIntervalMin || config.fullScanIntervalMin,
+    journeyIntervalMin: Math.max(cfg.journeyIntervalMin || config.journeyIntervalMin, lim.journeyMinInterval),
+    fullIntervalMin: Math.max(cfg.fullIntervalMin || config.fullScanIntervalMin, lim.fullMinInterval),
   };
 }
 
@@ -51,6 +55,8 @@ export function startScheduler() {
       if (q.activeRunForStore.get(s.id)) continue;
       // Stores are never tested before their first (owner-started) check.
       if (!s.last_run_at) continue;
+      // No scheduled tests for expired, paused or over-the-limit stores.
+      if (blockReason(entitlements(s.user_id), s.id)) continue;
       const { journeyIntervalMin, fullIntervalMin } = intervals(s);
       const failingCritical = s.last_status === 'critical';
       const dueFull = minutesSince(s.last_full_at) >= fullIntervalMin;
@@ -61,6 +67,7 @@ export function startScheduler() {
       else if (dueJourney) startRun({ storeId: s.id, origin: s.url, kind: 'journeys', password: s.storefront_password, trigger: 'schedule' });
     }
     try { dueEnvironmentChecks(); } catch (e) { console.error('environment checks failed', e); }
+    sendLicenseNotices().catch((e) => console.error('licence notices failed', e));
     pruneOldRuns();
   });
   console.log(`scheduler on: default journeys every ${config.journeyIntervalMin}m, full every ${config.fullScanIntervalMin}m`);

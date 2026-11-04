@@ -75,7 +75,7 @@ export function groupOf(checkId) {
   return null;
 }
 
-export const INTERVALS = [60, 180, 360, 720, 1440];
+export const INTERVALS = [30, 60, 180, 360, 720, 1440];
 export const FULL_INTERVALS = [720, 1440, 10080];
 
 export function normalizeConfig(input = {}, base = {}) {

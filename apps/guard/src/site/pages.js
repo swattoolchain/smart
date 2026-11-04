@@ -4,6 +4,7 @@ import { layout, esc, icon, badge, capCell, VERSION } from './layout.js';
 export { VERSION };
 import { PRODUCTS, PLATFORMS, MARKETPLACES, CAPS, FAQ, MANAGED, AUDIENCES, PROMISES } from './content.js';
 import { demoMarkup, demoScript } from './demo.js';
+import { listPlans, getPlan, setting, FEATURES } from '../license.js';
 
 const checkForm = (id = 'check') => `<form class="check-form" id="check-form" novalidate><label for="${id}-url" class="sr-only">Your store address</label>
   <input id="${id}-url" name="url" type="text" inputmode="url" autocomplete="url" placeholder="yourstore.com" required><button class="btn" type="submit">Check my store free</button></form>
@@ -232,19 +233,61 @@ export function market(slug) {
 }
 
 /* ---------- Pricing ---------- */
+const FREQ = { 30: 'Every 30 minutes', 60: 'Every hour', 180: 'Every 3 hours', 360: 'Every 6 hours', 720: 'Twice a day', 1440: 'Once a day', 10080: 'Once a week' };
+const fmtMoney = (minor, cur) => { try { return new Intl.NumberFormat(cur === 'INR' ? 'en-IN' : 'en-US', { style: 'currency', currency: cur, maximumFractionDigits: minor % 100 ? 2 : 0 }).format(minor / 100); } catch { return `${minor / 100} ${cur}`; } };
+
+/** Built from the plans in the founder console, so the page and what customers get never disagree. */
 export function pricing() {
-  const plan = (name, price, per, items, btn, hl) => `<div class="plan ${hl ? 'hl' : ''}">${hl ? '<span class="plan-tag">Available now</span>' : ''}<h3>${esc(name)}</h3><div class="price"><b>${esc(price)}</b><span>${esc(per)}</span></div><ul>${items.map((i) => `<li>${icon('check', 15)}<span>${esc(i)}</span></li>`).join('')}</ul>${btn}</div>`;
-  const body = `<main>${pageHead({ eyebrow: 'Pricing', title: 'Free while we’re in beta', lede: 'Everything is free during the beta. We’ll tell you at least 30 days before any charge, and beta customers keep a founding discount for good.' })}
-  <section class="band white"><div class="wrap"><div class="plans">
-    ${plan('Beta', 'Free', 'right now', ['Up to 5 stores', 'Shopping checks as often as every hour', 'A full daily check, including design changes', 'Safe to publish and product checks', 'Email and Slack alerts'], '<a class="btn block" href="/app#signup">Create free account</a>', true)}
-    ${plan('Starter', '$19', 'per store, per month, after the beta', ['Daily shopping checks', 'Speed, Google and mobile checks', 'Email alerts'], '<span class="plan-later">After the beta</span>')}
-    ${plan('Growth', '$49', 'per store, per month, after the beta', ['Hourly shopping checks', 'Safe to publish', 'Product, price and design checks', 'Slack alerts'], '<span class="plan-later">After the beta</span>')}
-    ${plan('Pro', '$99', 'per store, per month, after the beta', ['Checks every 15 minutes', 'AI that looks like a shopper', 'Priority support'], '<span class="plan-later">After the beta</span>')}
-  </div>
+  const plans = listPlans().filter((p) => p.public && p.active);
+  const signup = getPlan(setting('signup_plan'));
+  const betaOn = signup?.kind === 'free' && signup.public;
+  const grace = Number(setting('grace_days')) || 0;
+  const curs = [...new Set(plans.flatMap((p) => Object.keys(p.prices)))].sort((a, b) => ['USD', 'EUR', 'GBP', 'INR'].indexOf(a) - ['USD', 'EUR', 'GBP', 'INR'].indexOf(b));
+  const priceBlock = (p) => {
+    if (p.kind !== 'paid') return `<div class="price"><b>Free</b><span>${betaOn && p.key === signup.key ? 'while we’re in beta' : p.kind === 'trial' ? 'trial' : ''}</span></div>`;
+    return `<div class="price" data-prices='${esc(JSON.stringify(Object.fromEntries(Object.entries(p.prices).map(([c, v]) => [c, { m: v.month != null ? fmtMoney(v.month, c) : null, y: v.year != null ? fmtMoney(Math.round(v.year / 1200) * 100, c) : null, yt: v.year != null ? fmtMoney(v.year, c) : null }]))))}'>
+      <b class="pv">${fmtMoney(p.prices[curs[0]]?.month ?? 0, curs[0])}</b><span class="pp">per store, per month</span></div><p class="py muted"></p>`;
+  };
+  const featsOf = (p) => FEATURES.filter((f) => p.features.includes(f.key)).map((f) => f.label);
+  const card = (p) => `<div class="plan ${p.highlight ? 'hl' : ''}">${p.highlight ? `<span class="plan-tag">${betaOn && p.key === signup.key ? 'Available now' : 'Most popular'}</span>` : ''}<h3>${esc(p.name)}</h3><p class="plan-sub">${esc(p.tagline || '')}</p>${priceBlock(p)}
+    <ul>${[`Shopping checks ${FREQ[p.limits.journeyMinInterval]?.toLowerCase() || ''}`, `Full check ${FREQ[p.limits.fullMinInterval]?.toLowerCase() || ''}`, p.limits.maxStores ? `Up to ${p.limits.maxStores} stores` : 'As many stores as you need', ...featsOf(p).slice(1)].map((i) => `<li>${icon('check', 15)}<span>${esc(i)}</span></li>`).join('')}</ul>
+    ${p.kind === 'paid' && betaOn ? '<span class="plan-later">After the beta</span>' : `<a class="btn block ${p.highlight ? '' : 'secondary'}" href="/app#signup">${p.kind === 'paid' ? `Choose ${esc(p.name)}` : 'Create free account'}</a>`}</div>`;
+  const yes = `<span class="cap-yes">${icon('check', 15)}</span>`, no = '<span class="muted">–</span>';
+  const rows = [
+    ['Price per store, per month', (p) => (p.kind !== 'paid' ? 'Free' : `<span class="pv-cell" data-prices='${esc(JSON.stringify(Object.fromEntries(Object.entries(p.prices).map(([c, v]) => [c, v.month != null ? fmtMoney(v.month, c) : '–']))))}'>${fmtMoney(p.prices[curs[0]]?.month ?? 0, curs[0])}</span>`)],
+    ['Stores', (p) => (p.limits.maxStores ? `Up to ${p.limits.maxStores}` : 'Any number')],
+    ['Shopping checks', (p) => esc(FREQ[p.limits.journeyMinInterval] || '–')],
+    ['Full check', (p) => esc(FREQ[p.limits.fullMinInterval] || '–')],
+    ...FEATURES.filter((f) => !f.always).map((f) => [f.label, (p) => (p.features.includes(f.key) ? yes : no)]),
+    ['Saved staging environments per store', (p) => (p.features.includes('environments') ? String(p.limits.environments) : no)],
+  ];
+  const table = `<div class="table-scroll"><table class="compare"><thead><tr><th></th>${plans.map((p) => `<th>${esc(p.name)}</th>`).join('')}</tr></thead><tbody>
+    ${rows.map(([label, fn]) => `<tr><td>${esc(label)}</td>${plans.map((p) => `<td>${fn(p)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+  const switches = curs.length ? `<div class="price-switch"><div class="seg" role="radiogroup" aria-label="Billing">${[['m', 'Monthly'], ['y', 'Yearly']].map(([k, l], i) => `<label><input type="radio" name="bill" value="${k}" ${i ? '' : 'checked'}><span>${l}</span></label>`).join('')}</div>
+    ${curs.length > 1 ? `<div class="seg" role="radiogroup" aria-label="Currency">${curs.map((c, i) => `<label><input type="radio" name="cur" value="${c}" ${i ? '' : 'checked'}><span>${c}</span></label>`).join('')}</div>` : ''}</div>` : '';
+  const how = [
+    ['One plan, priced per store', 'Your plan decides what each store gets. You pay the plan’s price for every store you add. Two stores on Growth cost twice the Growth price.'],
+    ['Add or remove stores any time', 'Need another store? It’s added at your plan’s price per store. Remove one and you stop paying for it at your next renewal.'],
+    ['Pay yearly, get two months free', 'Yearly plans cost ten months of the monthly price.'],
+    ['A late payment never stops your store checks', `If a renewal is late, checks keep running for ${grace} days so nothing is missed. After that they pause, and your reports and settings are kept until you renew.`],
+  ];
+  const body = `<main>${pageHead({ eyebrow: 'Pricing', title: betaOn ? 'Free while we’re in beta. Simple pricing after.' : 'Simple pricing, per store', lede: betaOn ? 'Everything is free during the beta. When paid plans start, we’ll tell you at least 30 days before, and beta customers keep a founding discount.' : 'Choose what each store gets. Pay per store, monthly or yearly. Add or remove stores any time.' })}
+  <section class="band white"><div class="wrap">${switches}<div class="plans">${plans.map(card).join('')}</div>
   <div class="managed-band"><div><h3>Rather have us look after it?</h3><p>Our team watches your store, fixes what breaks and checks every change. Priced to your store.</p></div><a class="btn secondary" href="/managed">See the managed service</a></div>
-  <p class="muted center">Agencies and brands with many stores: <a href="/demo">talk to us</a>. Marketplace checks are in early access.</p></div></section>
+  <p class="muted center">Agencies and brands with 10 or more stores: <a href="/demo">talk to us</a> about volume pricing.</p></div></section>
+  <section class="band"><div class="wrap"><div class="sec-head"><p class="eyebrow">Compare plans</p><h2 class="h2">What each plan includes</h2></div>${table}</div></section>
+  <section class="band white"><div class="wrap"><div class="sec-head"><p class="eyebrow">How billing works</p><h2 class="h2">No surprises</h2></div>
+    <div class="features">${how.map(([t, d]) => `<div class="feature"><span class="ft-ic">${icon('check', 16)}</span><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div></div></section>
   ${faq(FAQ.slice(0, 4))}</main>`;
-  return layout({ title: 'Pricing', description: 'Tharam is free during the beta. Plans after the beta, per store, and a managed service priced to your store.', path: '/pricing', body });
+  const script = `<script>(function(){var tz='';try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||''}catch(e){}
+var pick=tz==='Asia/Kolkata'||tz==='Asia/Calcutta'?'INR':/^Europe\\//.test(tz)&&tz!=='Europe/London'?'EUR':tz==='Europe/London'?'GBP':'USD';
+var r=document.querySelector('input[name=cur][value='+pick+']');if(r)r.checked=true;
+function draw(){var b=(document.querySelector('input[name=bill]:checked')||{}).value||'m';var c=(document.querySelector('input[name=cur]:checked')||{}).value||${JSON.stringify(curs[0] || 'USD')};
+document.querySelectorAll('.price[data-prices]').forEach(function(el){var p=JSON.parse(el.getAttribute('data-prices'));var v=p[c]||p[Object.keys(p)[0]];var y=b==='y'&&v.y;
+el.querySelector('.pv').textContent=y?v.y:v.m;el.querySelector('.pp').textContent=y?'per store, per month, billed yearly':'per store, per month';var n=el.nextElementSibling;if(n&&n.classList.contains('py'))n.textContent=y?v.yt+' per store, per year':'';});
+document.querySelectorAll('.pv-cell').forEach(function(el){var p=JSON.parse(el.getAttribute('data-prices'));el.textContent=p[c]||p[Object.keys(p)[0]];});}
+document.querySelectorAll('input[name=bill],input[name=cur]').forEach(function(i){i.addEventListener('change',draw)});draw();})();</script>`;
+  return layout({ title: 'Pricing', description: 'Tharam pricing: one plan, priced per store, monthly or yearly. Free during the beta.', path: '/pricing', body, scripts: script });
 }
 
 /** Puts an existing static page (its <main>, scripts and inline styles) into the site layout. */

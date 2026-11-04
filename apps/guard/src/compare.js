@@ -171,8 +171,8 @@ function compareRuns(storeId, run, b) {
     const cb = b?.result?.categories?.find((x) => x.key === key);
     const list = checks.filter((x) => x.category === key);
     return {
-      key, label: c.label,
-      a: ca?.tested ? ca.score : null, b: cb?.tested ? cb.score : null,
+      key, label: c.label, rules: !!c.rules,
+      a: c.rules ? null : ca?.tested ? ca.score : null, b: c.rules ? null : cb?.tested ? cb.score : null,
       counts: { pass: list.filter((x) => x.a === 'pass').length, warn: list.filter((x) => x.a === 'warn').length, fail: list.filter((x) => x.a === 'fail').length, skip: list.filter((x) => x.a === 'skip').length },
       checks: list,
     };
