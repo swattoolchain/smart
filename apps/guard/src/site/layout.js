@@ -78,7 +78,7 @@ const SCRIPT = `<script>
 
 /** Wraps page content in the site layout. */
 export function layout({ title, description = '', path = '/', body, noindex = false, extraHead = '', scripts = '' }) {
-  const full = title ? `${title} – Tharam` : 'Tharam – The Commerce Assurance platform';
+  const full = title ? `${title} – Tharam` : 'Tharam – The AI-powered Commerce Assurance platform';
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(full)}</title>${description ? `<meta name="description" content="${esc(description)}">` : ''}

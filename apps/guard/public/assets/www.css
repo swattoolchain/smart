@@ -283,3 +283,11 @@ table.cmp.caps th a { color: var(--ink); text-decoration: none; }
 .plan-note a { font-weight: 600; }
 .show-sm { display: none !important; }
 @media (max-width: 980px) { .mainnav .show-sm { display: flex !important; } }
+.ai-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.ai-card { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 24px; position: relative; overflow: hidden; }
+.ai-card::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: linear-gradient(90deg, #6b3fc4, var(--action)); }
+.ai-ic { width: 38px; height: 38px; border-radius: 10px; background: #f3edfd; color: #6b3fc4; display: grid; place-items: center; margin-bottom: 14px; }
+.ai-card h3 { font-size: 17px; margin: 0 0 6px; }
+.ai-card p { margin: 0; color: var(--ink-soft); font-size: 14.5px; }
+@media (max-width: 1000px) { .ai-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .ai-grid { grid-template-columns: 1fr; } }

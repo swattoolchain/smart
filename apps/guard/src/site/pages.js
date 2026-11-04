@@ -29,9 +29,9 @@ export function home() {
   const pillars = PRODUCTS.map((p) => `<a class="pillar" href="/features/${p.slug}"><span class="pl-ic">${icon(p.icon, 20)}</span><span class="pl-k">${esc(p.pillar)}</span><h3>${esc(p.name)} ${p.status !== 'live' ? badge(p.status) : ''}</h3><p>${esc(p.short)}</p><span class="more">Learn more ${icon('arrow', 14)}</span></a>`).join('');
   const body = `<main>
   <section class="hero2"><div class="wrap">
-    <div class="h2-copy"><p class="eyebrow">The Commerce Assurance platform</p>
+    <div class="h2-copy"><p class="eyebrow">The AI-powered Commerce Assurance platform</p>
       <h1>Make sure customers can always buy from you.</h1>
-      <p class="lede">Tharam shops your store like a real customer around the clock, checks every theme change before it goes live, and watches your catalog for costly mistakes. On Shopify, every major platform and, soon, the marketplaces you sell on.</p>
+      <p class="lede">Tharam shops your store like a real customer around the clock, checks every theme change before it goes live, and uses AI to spot what only a person would notice. On Shopify, every major platform and, soon, the marketplaces you sell on.</p>
       <div id="check">${checkForm('hero')}</div>
       <p class="fine">Free check in about two minutes. No install or login. Tests stop before payment.</p></div>
     ${heroVisual}
@@ -56,6 +56,17 @@ export function home() {
       <a class="link-arrow" href="/commerce-assurance">Why Buyability matters ${icon('arrow', 15)}</a></div>
     <div class="metric-card"><div class="mc-row"><span>Last 24 hours</span><b>100%</b></div><div class="mc-row"><span>Last 7 days</span><b>99.4%</b></div><div class="mc-row warn"><span>Last 30 days</span><b>97.8%</b></div>
       <div class="mc-bars">${Array.from({ length: 42 }, (_, i) => `<i class="${i === 17 || i === 18 ? 'bad' : i === 30 ? 'meh' : ''}"></i>`).join('')}</div><p class="mc-note">Add to cart broke for 6 hours on 12 Oct after a cart-drawer app update. Fixed the same day.</p></div>
+  </div></section>
+
+  <section class="band"><div class="wrap">
+    <div class="sec-head"><p class="eyebrow">AI-powered</p><h2 class="h2">AI that sees your store the way customers do</h2>
+      <p class="body-l">Our checks are deterministic, so an alert is always real. On top of them, AI looks at your pages and reads your product copy like a shopper, catching what rules can’t.</p></div>
+    <div class="ai-grid">
+      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>AI visual review ${badge('beta')}</h3><p>Every page on desktop and phone, checked for overlapping text, cut-off prices, broken images and popups covering the buy button.</p></div>
+      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>AI copy review ${badge('beta')}</h3><p>Spelling, grammar and contradictions in new or edited products, like a silk saree described as cotton.</p></div>
+      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>Explain this change ${badge('beta')}</h3><p>Two screenshots differ: AI says what changed and whether it looks intended or like a bug.</p></div>
+      <div class="ai-card"><span class="ai-ic">${icon('sparkle', 18)}</span><h3>AI shopper agents ${badge('soon')}</h3><p>Shoppers with a goal, like “find a gift under ₹2,000 and check out”, that report where they struggled, on any theme.</p></div>
+    </div>
   </div></section>
 
   <section class="band white"><div class="wrap split rev">
@@ -84,7 +95,7 @@ export function home() {
   ${faq(FAQ)}
   ${cta()}
   </main>`;
-  return layout({ title: '', description: 'Tharam is the Commerce Assurance platform: it shops your store like a real customer around the clock, checks theme changes before you publish, and watches your catalog for mistakes. Shopify, every major platform and marketplaces.', path: '/', body });
+  return layout({ title: '', description: 'Tharam is the AI-powered Commerce Assurance platform: it shops your store like a real customer around the clock, checks theme changes before you publish, and watches your catalog for mistakes. Shopify, every major platform and marketplaces.', path: '/', body });
 }
 
 export function category() {
