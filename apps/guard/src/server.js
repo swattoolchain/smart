@@ -13,6 +13,7 @@ import { queueDepth, cancelRun } from './queue.js';
 import { liveView } from './live.js';
 import { previewUrlFor, startRelease, settleRelease } from './release.js';
 import { comparePair } from './compare.js';
+import * as site from './site/pages.js';
 import { approveBaseline } from './engine/visual.js';
 import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
@@ -540,18 +541,32 @@ app.get('/api/public-config', (req, res) => res.json({ calLink: config.calLink, 
 
 // ---------- Website ----------
 const page = (f) => (req, res) => res.sendFile(path.join(config.publicDir, f));
-app.get('/', page('index.html'));
-app.get('/scan/:id', page('report.html'));
+// ---------- Website (server-rendered from src/site) ----------
+const html = (render) => (req, res) => {
+  const out = render(req);
+  if (!out) return res.status(404).type('html').send(site.legacy(config.publicDir, '404.html', { title: 'Page not found', noindex: true }));
+  res.set('Cache-Control', 'public, max-age=300').type('html').send(out);
+};
+const old = (file, opts) => html(() => site.legacy(config.publicDir, file, opts));
+app.get('/', html(() => site.home()));
+app.get('/commerce-assurance', html(() => site.category()));
+app.get('/product', html(() => site.productIndex()));
+app.get('/product/:slug', html((req) => site.product(req.params.slug)));
+app.get('/platforms', html(() => site.platformIndex()));
+app.get('/platforms/:slug', html((req) => site.platform(req.params.slug)));
+app.get('/marketplaces', html(() => site.marketIndex()));
+app.get('/marketplaces/:slug', html((req) => site.market(req.params.slug)));
+app.get('/pricing', html(() => site.pricing()));
+app.get('/scan/:id', old('report.html', { title: 'Store check report', noindex: true }));
 app.get('/app', page('app.html'));
-app.get('/privacy', page('privacy.html'));
-app.get('/terms', page('terms.html'));
-app.get('/bot', page('bot.html'));
-app.get('/checks', page('checks.html'));
-app.get('/demo', page('demo.html'));
+app.get('/privacy', old('privacy.html', { path: '/privacy' }));
+app.get('/terms', old('terms.html', { path: '/terms' }));
+app.get('/bot', old('bot.html', { path: '/bot' }));
+app.get('/checks', old('checks.html', { path: '/checks' }));
+app.get('/demo', old('demo.html', { path: '/demo' }));
 app.use(express.static(config.publicDir, { maxAge: '1h', index: false }));
-app.use((req, res) => res.status(404).sendFile(path.join(config.publicDir, '404.html')));
+app.use((req, res) => res.status(404).type('html').send(site.legacy(config.publicDir, '404.html', { title: 'Page not found', noindex: true })));
 
-if (!fs.existsSync(path.join(config.publicDir, 'index.html'))) console.warn('public/index.html missing');
 app.listen(config.port, () => {
   console.log(`Tharam Store Guard on ${config.baseUrl} (port ${config.port})`);
   if (process.env.DISABLE_SCHEDULER !== '1') startScheduler();
