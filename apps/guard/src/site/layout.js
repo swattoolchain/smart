@@ -13,6 +13,7 @@ const P = {
   store: '<path d="M4 9.5 5.5 4h13L20 9.5"/><path d="M4 9.5h16v2a3 3 0 0 1-5.3 1.9A3 3 0 0 1 12 14.5a3 3 0 0 1-2.7-1.6A3 3 0 0 1 4 11.5z"/><path d="M5.5 14v6h13v-6"/>',
   market: '<circle cx="9" cy="20" r="1.2"/><circle cx="17" cy="20" r="1.2"/><path d="M3 4h2.5l2.2 11h10.6l2-8H7"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.6 3.5 5.4 3.5 8.5s-1.1 5.9-3.5 8.5c-2.4-2.6-3.5-5.4-3.5-8.5s1.1-5.9 3.5-8.5z"/>',
   chevron: '<path d="m8 10 4 4 4-4"/>',
   right: '<path d="m10 7 5 5-5 5"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
@@ -62,7 +63,7 @@ function footer() {
     ${col('Features', PRODUCTS.map((p) => [`/features/${p.slug}`, p.name]).concat([['/checks', 'Every check']]))}
     ${col('Platforms', PLATFORMS.slice(0, 6).map((p) => [`/platforms/${p.slug}`, p.name]).concat([['/platforms', 'All platforms']]))}
     ${col('Marketplaces', MARKETPLACES.map((m) => [`/marketplaces/${m.slug}`, m.name]))}
-    ${col('Company', [['/commerce-assurance', 'Why Tharam'], ['/managed', 'Managed service'], ['/pricing', 'Pricing'], ['/demo', 'Book a demo'], ['/bot', 'Our test browser'], ['mailto:hello@tharam.store', 'Contact']])}
+    ${col('Company', [['/commerce-assurance', 'Why Tharam'], ['/managed', 'Managed service'], ['/pricing', 'Pricing'], ['/demo', 'Book a demo'], ['/bot', 'Our test browser'], ['mailto:hello@tharam.store', 'Contact'], ['/de', 'Deutsch']])}
     </div><div class="wrap sf-legal"><span>© 2026 Tharam</span><span><a href="/privacy">Privacy</a><a href="/terms">Terms</a></span></div></footer>`;
 }
 
@@ -92,12 +93,12 @@ const SCRIPT = `<script>
 </script>`;
 
 /** Wraps page content in the site layout. */
-export function layout({ title, description = '', path = '/', body, noindex = false, extraHead = '', scripts = '' }) {
+export function layout({ title, description = '', path = '/', body, noindex = false, extraHead = '', scripts = '', lang = 'en', alternates = null }) {
   const full = title ? `${title} – Tharam` : 'Tharam – Make sure customers can always buy from you';
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(full)}</title>${description ? `<meta name="description" content="${esc(description)}">` : ''}
-${noindex ? '<meta name="robots" content="noindex">' : `<link rel="canonical" href="https://tharam.store${path === '/' ? '/' : path}">`}
+${noindex ? '<meta name="robots" content="noindex">' : `<link rel="canonical" href="https://tharam.store${path === '/' ? '/' : path}">`}${alternates ? Object.entries(alternates).map(([l, h]) => `<link rel="alternate" hreflang="${l}" href="https://tharam.store${h}">`).join('') : ''}
 <meta property="og:title" content="${esc(full)}"><meta property="og:description" content="${esc(description)}"><meta property="og:image" content="https://tharam.store/assets/og.png">
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/fonts/fonts.css?v=${VERSION}"><link rel="stylesheet" href="/assets/site.css?v=${VERSION}"><link rel="stylesheet" href="/assets/www.css?v=${VERSION}">${extraHead}</head>

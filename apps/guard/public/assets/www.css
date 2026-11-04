@@ -462,3 +462,10 @@ table.cmp.caps th a { color: var(--ink); text-decoration: none; }
 .demo [hidden] { display: none !important; }
 .dm-select { white-space: nowrap; }
 .cap-yes { color: #157a3c; font-weight: 700; font-size: 16px; }
+/* A lone last card in a three-column grid spans the row and lays out sideways. */
+@media (min-width: 981px) {
+  .pillars > .pillar:last-child:nth-child(3n+1) { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 18px; align-items: center; }
+  .pillars > .pillar:last-child:nth-child(3n+1) .pl-ic { grid-row: span 3; }
+  .pillars > .pillar:last-child:nth-child(3n+1) .more { grid-column: 3; grid-row: 1 / span 3; margin: 0; }
+  .pillars > .pillar:last-child:nth-child(3n+1) > :not(.pl-ic):not(.more) { grid-column: 2; }
+}

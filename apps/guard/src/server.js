@@ -657,6 +657,7 @@ const html = (render) => (req, res) => {
 };
 const old = (file, opts) => html(() => site.legacy(config.publicDir, file, opts));
 app.get('/', html(() => site.home()));
+app.get('/de', html(() => site.deHome()));
 app.get('/commerce-assurance', html(() => site.category()));
 app.get('/features', html(() => site.productIndex()));
 app.get('/features/:slug', html((req) => site.product(req.params.slug)));

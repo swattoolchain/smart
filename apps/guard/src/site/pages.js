@@ -116,7 +116,7 @@ export function home() {
   ${faq(FAQ)}
   ${cta()}
   </main>`;
-  return layout({ scripts: demoScript, title: '', description: 'Tharam checks your online store every few hours like a real customer and tells you the moment customers can’t buy. Product and price checks, tests for design changes, and AI that looks at your pages like a shopper. Free during the beta.', path: '/', body });
+  return layout({ scripts: demoScript, title: '', description: 'Tharam checks your online store every few hours like a real customer and tells you the moment customers can’t buy. Product and price checks, tests for design changes, and AI that looks at your pages like a shopper. Free during the beta.', path: '/', body, alternates: { en: '/', de: '/de', 'x-default': '/' } });
 }
 
 /* ---------- Why Tharam (the category page) ---------- */
@@ -128,7 +128,7 @@ export function category() {
       <p class="body-l">Website monitors only check that the homepage opens. Developers test their own code, not your whole store. Nobody checks the whole shopping trip, every few hours, for you. That’s what Tharam does.</p></div>
     <div class="quote-card"><p>Tharam answers one question, all the time: <b>can customers buy from me right now, and will they still be able to after this change?</b></p></div>
   </div></section>
-  <section class="band"><div class="wrap"><div class="sec-head"><p class="eyebrow">What Tharam checks</p><h2 class="h2">Six questions, answered for you every few hours</h2></div>
+  <section class="band"><div class="wrap"><div class="sec-head"><p class="eyebrow">What Tharam checks</p><h2 class="h2">Seven questions, answered for you every few hours</h2></div>
     <div class="pillars">${PRODUCTS.map((p) => featureCard(p, false)).join('')}</div></div></section>
   <section class="band white"><div class="wrap split">
     <div><p class="eyebrow">Your store score</p><h2 class="h2">Buyability</h2>
@@ -161,7 +161,7 @@ export function managed() {
 
 /* ---------- Features ---------- */
 export function productIndex() {
-  const body = `<main>${pageHead({ eyebrow: 'Features', title: 'Everything that keeps your store selling', lede: 'One service, six things it does for you. All of them are included in your Tharam plan.' })}
+  const body = `<main>${pageHead({ eyebrow: 'Features', title: 'Everything that keeps your store selling', lede: 'One service, seven things it does for you. All of them are included in your Tharam plan.' })}
     <section class="band white"><div class="wrap"><div class="pillars">${PRODUCTS.map((p) => featureCard(p)).join('')}</div></div></section>${cta()}</main>`;
   return layout({ title: 'Features', description: 'Store checks around the clock, Safe to publish, product and price checks, speed and Google checks, AI review and reports.', path: '/features', body });
 }
@@ -258,4 +258,54 @@ export function legacy(publicDir, file, { title, path: p, noindex = false } = {}
   const desc = /<meta name="description" content="([^"]*)"/.exec(html)?.[1] || '';
   const styles = (html.slice(0, start).match(/<style[\s\S]*?<\/style>/g) || []).join('');
   return layout({ title: t, description: desc, path: p, body: `<div class="legacy">${main}</div>`, noindex, scripts, extraHead: styles });
+}
+
+/* ---------- Deutsch ---------- */
+// A German landing page for shops selling in Germany and Austria. The rest of the site follows.
+export function deHome() {
+  const form = `<form class="check-form" id="check-form" novalidate><label for="de-url" class="sr-only">Adresse Ihres Shops</label>
+  <input id="de-url" name="url" type="text" inputmode="url" autocomplete="url" placeholder="ihrshop.de" required><button class="btn" type="submit">Shop kostenlos prüfen</button></form>
+  <p class="error-msg" id="check-err" role="alert"></p>`;
+  const feats = [
+    ['pulse', 'Kann man bei Ihnen kaufen?', 'Shop-Prüfung rund um die Uhr', 'Alle paar Stunden kauft Tharam bei Ihnen ein wie ein echter Kunde: suchen, Größe wählen, in den Warenkorb, zur Kasse. Funktioniert etwas nicht, erfahren Sie es sofort.'],
+    ['globe', 'Halten Sie die Regeln ein?', 'Rechtssicher in Deutschland und Österreich', 'Impressum, Widerrufsbelehrung, der neue Button „Vertrag widerrufen“, „inkl. MwSt., zzgl. Versand“, Grundpreise, Cookie-Einwilligung und Barrierefreiheit nach BFSG.'],
+    ['publish', 'Ist die Änderung sicher?', 'Sicher veröffentlichen', 'Neues Theme oder Sale-Banner? Tharam testet die neue Version neben Ihrem Live-Shop und sagt klar: veröffentlichen, erst ansehen, oder noch nicht.'],
+    ['catalog', 'Stimmen Ihre Produkte?', 'Produkt- und Preisprüfung', 'Jedes Produkt wird geprüft: Preise von 0 €, Scheinrabatte, Platzhaltertexte, fehlende Fotos und doppelte Artikelnummern.'],
+    ['speed', 'Schnell und auffindbar?', 'Tempo, Google und Mobil', 'Langsame Seiten am Handy, Seiten, die Google nicht sieht, und kaputte Links: die leisen Dinge, die Umsatz kosten.'],
+    ['sparkle', 'Was würde ein Mensch bemerken?', 'KI, die wie ein Kunde schaut', 'KI sieht sich Ihre Seiten an und liest Ihre Produkttexte, wie es ein Kunde tun würde.'],
+  ];
+  const checks = [
+    ['Impressum', 'Verlinkt auf jeder Seite, mit Anschrift und E-Mail.'],
+    ['Widerrufsbelehrung', 'Veröffentlicht, mit der 14-Tage-Frist.'],
+    ['„Vertrag widerrufen“', 'Der Widerrufsbutton, Pflicht seit dem 19. Juni 2026.'],
+    ['Preisangaben', '„inkl. MwSt.“ und Versandkosten beim Preis, Grundpreise bei Gewicht und Volumen.'],
+    ['Cookie-Einwilligung', 'Banner beim ersten Besuch, und kein Meta-, TikTok- oder Google-Tracking vor der Zustimmung.'],
+    ['Barrierefreiheit', 'Kaufen per Tastatur, Zoom, Sprache der Seite, Warenkorb nach WCAG 2.1 AA, Erklärung zur Barrierefreiheit.'],
+    ['Alte OS-Plattform', 'Hinweise auf die EU-Streitschlichtung, die am 20. Juli 2025 abgeschaltet wurde.'],
+  ];
+  const body = `<main lang="de">
+  <section class="hero2"><div class="wrap">
+    <div class="h2-copy"><p class="eyebrow">KI-gestützte Shop-Prüfung für Online-Händler</p>
+      <h1>Damit Kunden immer bei Ihnen kaufen können.</h1>
+      <p class="lede">Ein kaputter Warenkorb-Button, ein falscher Preis, ein fehlendes Impressum: kleine Fehler, die still Umsatz kosten oder eine Abmahnung bringen. Tharam prüft Ihren Shop alle paar Stunden wie ein echter Kunde und meldet sich, sobald etwas nicht stimmt.</p>
+      <div id="check">${form}</div>
+      <p class="fine">Kostenlos. Dauert etwa zwei Minuten. Keine Installation, kein Konto, keine Bestellungen. <a href="/" hreflang="en" lang="en">English</a></p></div>
+    ${heroVisual}
+  </div></section>
+
+  <section class="band white"><div class="wrap">
+    <div class="sec-head"><p class="eyebrow">Für Shops in Deutschland und Österreich</p><h2 class="h2">Was Tharam bei jeder vollständigen Prüfung kontrolliert</h2>
+      <p class="body-l">Automatische Prüfungen mit klaren Hinweisen, wo Sie es in Shopify beheben. Keine Rechtsberatung: Sie sehen genau, was wir gefunden haben, und entscheiden selbst oder mit Ihrer Kanzlei.</p></div>
+    <div class="features">${checks.map(([t, d]) => `<div class="feature"><span class="ft-ic">${icon('check', 16)}</span><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div>
+  </div></section>
+
+  <section class="band"><div class="wrap">
+    <div class="sec-head"><p class="eyebrow">Was Tharam tut</p><h2 class="h2">Alles, was eine sorgfältige Shop-Leitung prüfen würde, alle paar Stunden</h2></div>
+    <div class="pillars">${feats.map(([ic, k, t, d]) => `<div class="pillar"><span class="pl-ic">${icon(ic, 20)}</span><span class="pl-k">${esc(k)}</span><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div>
+  </div></section>
+
+  <section class="cta-band"><div class="wrap"><div><h2>Wie steht Ihr Shop da? Kostenlos prüfen.</h2><p>Etwa zwei Minuten. Nichts installieren, kein Konto, keine Bestellungen.</p></div>
+    <div class="cta-actions"><a class="btn light" href="#check">Shop kostenlos prüfen</a><a class="btn ghost-light" href="mailto:hello@tharam.store?subject=Tharam%20Deutschland">Kontakt aufnehmen</a></div></div></section>
+  </main>`;
+  return layout({ lang: 'de', title: 'Shop-Prüfung für Deutschland und Österreich', description: 'Tharam prüft Ihren Online-Shop alle paar Stunden wie ein echter Kunde: Kaufprozess, Preise, Impressum, Widerrufsbutton, Cookie-Einwilligung und Barrierefreiheit.', path: '/de', body, alternates: { en: '/', de: '/de', 'x-default': '/' } });
 }

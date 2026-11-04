@@ -43,6 +43,19 @@ export const PRODUCTS = [
     ],
   },
   {
+    slug: 'laws-where-you-sell', icon: 'globe', name: 'Laws where you sell', pillar: 'Am I following the rules?', status: 'live',
+    short: 'Tell us where you sell. We check the rules there: legal pages, cookie consent, price display and accessibility.',
+    title: 'Sell abroad without worrying about the rules',
+    lede: 'Every country has its own rules for online shops, and they keep changing. Tell Tharam where you sell, and every full check also looks for what the rules there ask for. In plain words, with what to fix and where to fix it in Shopify.',
+    points: [
+      ['Germany and Austria', 'Impressum, right of withdrawal, the new “Vertrag widerrufen” button required since June 2026, VAT and shipping next to every price, unit prices, and old links to the closed EU dispute platform.'],
+      ['Cookie consent in the EU and UK', 'We visit as a first-time shopper from Germany and check that your banner appears, and that Meta, TikTok, Google and other tags wait until the shopper agrees.'],
+      ['Accessibility, US and EU', 'What accessibility lawsuits in the US and the European Accessibility Act look for: buying with a keyboard, zoom, page language, the cart page, and an accessibility statement. We also tell you if you rely on an overlay widget.'],
+      ['US privacy choices', 'The “Do not sell or share my personal information” link that California and other states ask for.'],
+      ['Checks, not legal advice', 'Tharam shows exactly what it saw on your store, so you or your lawyer can decide. More countries are being added.'],
+    ],
+  },
+  {
     slug: 'catalog', icon: 'catalog', name: 'Product and price checks', pillar: 'Are my products right?', status: 'live',
     short: 'Every product checked for wrong prices, unfinished descriptions and missing photos.',
     title: 'Catch product and price mistakes before customers do',
