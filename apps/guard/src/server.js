@@ -11,6 +11,8 @@ import { GROUPS, INTERVALS, FULL_INTERVALS, normalizeConfig } from './engine/cat
 import { startRun, startScheduler, storeConfig, intervals, nextRunIn } from './scheduler.js';
 import { queueDepth, cancelRun } from './queue.js';
 import { liveView } from './live.js';
+import { previewUrlFor, startRelease, settleRelease } from './release.js';
+import { comparePair } from './compare.js';
 import { approveBaseline } from './engine/visual.js';
 import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
@@ -357,6 +359,50 @@ app.post('/api/stores/:id/run/:runId/cancel', requireUser, (req, res) => {
   if (run.status !== 'queued' && run.status !== 'running') return res.status(409).json({ error: 'This test has already finished.' });
   const stopped = cancelRun(run.id);
   if (!stopped) q.cancelRun.run(run.id); // not in this process's queue (e.g. after a restart); mark it cancelled anyway
+  res.json({ ok: true });
+});
+
+// ---------- Safe to publish ----------
+const releaseView = (r) => {
+  const sum = r.summary_json ? JSON.parse(r.summary_json) : null;
+  const run = (id) => { const x = id && q.runById.get(id); return x ? { id: x.id, status: x.status, score: x.score, error: x.error, live: x.status === 'queued' || x.status === 'running' ? liveView(x.id) : null, created_at: x.created_at, finished_at: x.finished_at } : null; };
+  return { id: r.id, preview_url: r.preview_url, label: r.label, status: r.status, verdict: r.verdict, created_at: r.created_at, finished_at: r.finished_at, summary: sum, runs: { live: run(r.live_run_id), draft: run(r.draft_run_id) } };
+};
+app.get('/api/stores/:id/releases', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json({ releases: q.releasesByStore.all(s.id).map((r) => { const v = releaseView(r); delete v.runs; if (v.summary) v.summary = { headline: v.summary.headline, theme: v.summary.theme, counts: { blockers: v.summary.blockers?.length || 0, reviews: v.summary.reviews?.length || 0, fixes: v.summary.fixes?.length || 0, visual: v.summary.visualChanged || 0 }, error: v.summary.error }; return v; }) });
+});
+app.post('/api/stores/:id/releases', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (q.activeRunForStore.get(s.id)) return res.status(409).json({ error: 'A test is running for this store. Start the publish check when it finishes.' });
+  let url;
+  try { url = previewUrlFor(s, String(req.body?.url || '').trim()); } catch (e) { return res.status(400).json({ error: e.message }); }
+  res.json({ id: startRelease(s, url, String(req.body?.label || '').trim().slice(0, 120)) });
+});
+app.get('/api/stores/:id/releases/:rid', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const r = q.releaseById.get(Number(req.params.rid));
+  if (!r || r.store_id !== s.id) return res.status(404).json({ error: 'Publish check not found.' });
+  const v = releaseView(r);
+  if (r.status === 'done') {
+    const cmp = comparePair(s.id, r.draft_run_id, r.live_run_id);
+    if (cmp) v.compare = { areas: cmp.areas, metrics: cmp.metrics, visual: cmp.visual, timings: cmp.timings };
+  }
+  res.json(v);
+});
+app.post('/api/stores/:id/releases/:rid/cancel', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const r = q.releaseById.get(Number(req.params.rid));
+  if (!r || r.store_id !== s.id) return res.status(404).json({ error: 'Publish check not found.' });
+  for (const id of [r.draft_run_id, r.live_run_id]) {
+    const run = id && q.runById.get(id);
+    if (run && (run.status === 'queued' || run.status === 'running') && !cancelRun(id)) q.cancelRun.run(id);
+  }
+  settleRelease(r.id);
   res.json({ ok: true });
 });
 

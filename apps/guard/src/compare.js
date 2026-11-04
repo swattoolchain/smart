@@ -15,7 +15,8 @@ function parse(run) {
   return run ? { id: run.id, kind: run.kind, trigger: run.trigger, created_at: run.created_at, finished_at: run.finished_at, score: run.score, verdict: run.verdict, result: JSON.parse(run.result_json) } : null;
 }
 
-const doneRuns = db.prepare("SELECT * FROM runs WHERE store_id = ? AND status = 'done' AND result_json IS NOT NULL ORDER BY id DESC LIMIT 400");
+const doneRuns = db.prepare("SELECT * FROM runs WHERE store_id = ? AND status = 'done' AND result_json IS NOT NULL AND (trigger IS NULL OR trigger != 'release') ORDER BY id DESC LIMIT 400");
+const runRow = db.prepare("SELECT * FROM runs WHERE id = ? AND store_id = ? AND status = 'done' AND result_json IS NOT NULL");
 
 /** Lists finished reports for the picker. */
 export function reportList(storeId) {
@@ -154,7 +155,16 @@ function visualDiff(aId, bId) {
 
 export function buildComparison(storeId, runId, base) {
   const { run, base: b } = resolvePair(storeId, runId, base);
-  if (!run) return null;
+  return run ? compareRuns(storeId, run, b) : null;
+}
+
+/** Compares two specific runs, e.g. a draft theme (a) against the live theme (b). */
+export function comparePair(storeId, aId, bId) {
+  const a = parse(runRow.get(aId, storeId)), b = parse(runRow.get(bId, storeId));
+  return a && b ? compareRuns(storeId, a, b) : null;
+}
+
+function compareRuns(storeId, run, b) {
   const checks = checkDiff(run.result, b?.result);
   const areas = Object.entries(CATEGORIES).map(([key, c]) => {
     const ca = run.result.categories?.find((x) => x.key === key);

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
-import { newContext, gotoStore } from './browser.js';
+import { newContext, gotoStore, openPreview, themeOf } from './browser.js';
 import { discover } from './discover.js';
 import { Recorder, check, shortErr } from './checks.js';
 import { runFunctional } from './functional.js';
@@ -28,7 +28,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, signal, progress }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, signal, progress, preview = null, captureOnly = false }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -54,11 +54,24 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
   const page = await ctx.newPage();
   const mobilePage = await mctx.newPage();
   let info;
+  let theme = null;
   try {
     // Unlock password-protected storefronts first so discovery shares the unlocked session.
     if (password) {
       await gotoStore(page, origin + '/', { password }).catch(() => {});
       await gotoStore(mobilePage, origin + '/', { password }).catch(() => {});
+    }
+    // Publish checks: open the draft theme in every context before anything else.
+    if (preview) {
+      const opened = await openPreview(page, preview.url, { password });
+      await openPreview(mobilePage, preview.url, { password });
+      theme = opened.theme;
+      if (opened.origin !== origin) origin = opened.origin; // share-preview links can move to the .myshopify.com domain
+      if (theme?.role === 'main') {
+        rec.add(check('fn.preview', 'functional', 'Draft theme opened', 'fail', { severity: 'critical', detail: `The link opened your live theme (“${theme.name}”), not a draft. In Shopify, open Online Store → Themes, choose the draft theme's ⋯ menu → Preview, then copy the Share preview link.`, fix: 'Use the Share preview link of the unpublished theme.' }));
+        throw new Error('The preview link opened the live theme');
+      }
+      rec.add(check('fn.preview', 'functional', 'Draft theme opened', theme ? 'pass' : 'warn', { severity: 'minor', detail: theme ? `Testing “${theme.name}” (draft) in a preview session.` : 'We could not confirm which theme loaded. Results may reflect the live theme.' }));
     }
     info = await discover(ctx.request, origin, { testProduct });
     const lockedEarly = /\/password/.test(page.url());
@@ -83,7 +96,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       }
       if (kind === 'full' && storeId && on('visual')) {
         phase('visual');
-        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`) });
+        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
       }
       if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
         phase('catalog');
@@ -101,9 +114,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     rec.checks = rec.checks.filter((c) => { const g = groupOf(c.id); return !g || on(g); });
     const cover = await shot(mobilePage.url() === 'about:blank' ? page : mobilePage, 'cover');
     const { score, verdict, categories } = scoreChecks(rec.checks);
+    theme = theme || (await themeOf(page));
     return {
       origin,
       kind,
+      theme,
       skippedGroups: disabled,
       startedAt: new Date(started).toISOString(),
       durationMs: Date.now() - started,
@@ -127,7 +142,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     if (signal?.aborted) throw new Error('cancelled');
     rec.add(check('fn.engine', 'functional', 'Scan completed', 'skip', { detail: shortErr(e) }));
     const { score, verdict, categories } = scoreChecks(rec.checks);
-    return { origin, kind, error: shortErr(e), checks: rec.checks, steps: rec.steps, score, verdict, categories, summary: 'The scan could not finish.' };
+    return { origin, kind, theme, error: shortErr(e), checks: rec.checks, steps: rec.steps, score, verdict, categories, summary: 'The scan could not finish.' };
   } finally {
     if (signal) signal.removeEventListener('abort', onAbort);
     await ctx.close().catch(() => {});

@@ -4,6 +4,7 @@ import { runScan } from './engine/index.js';
 import { handleAlerts } from './alerts.js';
 import { storeConfig } from './scheduler.js';
 import { live } from './live.js';
+import { settleRelease } from './release.js';
 
 const waiting = [];
 const running = new Map(); // runId -> AbortController
@@ -28,9 +29,10 @@ export function cancelRun(runId) {
   runId = Number(runId);
   const i = waiting.findIndex((j) => j.runId === runId);
   if (i !== -1) {
-    waiting.splice(i, 1);
+    const [job] = waiting.splice(i, 1);
     live.delete(runId);
     q.cancelRun.run(runId);
+    if (job.release) settleRelease(job.release);
     return true;
   }
   const controller = running.get(runId);
@@ -56,7 +58,7 @@ function pump() {
   }
 }
 
-async function execute({ runId, origin, kind, password, storeId, confirmed, disabled }) {
+async function execute({ runId, origin, kind, password, storeId, confirmed, disabled, preview, captureOnly, release }) {
   const controller = new AbortController();
   running.set(runId, controller);
   q.setRunRunning.run(runId);
@@ -72,13 +74,14 @@ async function execute({ runId, origin, kind, password, storeId, confirmed, disa
     if (store) password = store.storefront_password || password;
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
-      runScan({ runId, origin, kind, password, storeId, disabled: disabled || cfg.disabled || [], testProduct: cfg.testProduct || null, signal: controller.signal, progress: live.get(runId) }),
+      runScan({ runId, origin, kind, password, storeId, disabled: disabled || cfg.disabled || [], testProduct: cfg.testProduct || null, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.
     if (controller.signal.aborted) throw new Error(timedOut ? 'timeout' : 'cancelled');
     q.finishRun.run(result.score, result.verdict, JSON.stringify(result), runId);
-    if (storeId) {
+    // Publish-check runs (live and draft) never change the store's status and never alert.
+    if (storeId && !release) {
       q.updateStoreAfterRun.run(result.verdict, result.score, storeId);
       if (result.platform) q.updateStorePlatform.run(result.platform.label, storeId);
       if (kind === 'full') q.markFullScan.run(storeId);
@@ -101,5 +104,6 @@ async function execute({ runId, origin, kind, password, storeId, confirmed, disa
     else q.failRun.run(String(e.message || e).slice(0, 300), runId);
   } finally {
     clearTimeout(timer);
+    if (release) { try { settleRelease(release); } catch (e) { console.error('release settle failed', release, e); } }
   }
 }

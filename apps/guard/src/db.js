@@ -66,6 +66,20 @@ CREATE TABLE IF NOT EXISTS alerts (
   message TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS releases (
+  id INTEGER PRIMARY KEY,
+  store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
+  preview_url TEXT NOT NULL,
+  label TEXT,
+  live_run_id INTEGER,
+  draft_run_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'running', -- running | done | error | cancelled
+  verdict TEXT,                           -- safe | review | blocked
+  summary_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS releases_store ON releases(store_id, id DESC);
 CREATE TABLE IF NOT EXISTS check_state (
   store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
   check_id TEXT NOT NULL,
@@ -108,7 +122,7 @@ export const q = {
   insertRun: db.prepare('INSERT INTO runs (store_id, url, kind, requester_ip, trigger) VALUES (?, ?, ?, ?, ?)'),
   runById: db.prepare('SELECT * FROM runs WHERE id = ?'),
   runsByStore: db.prepare(
-    "SELECT id, kind, status, score, verdict, trigger, error, created_at, finished_at, json_array_length(result_json, '$.checks') AS checks FROM runs WHERE store_id = ? ORDER BY id DESC LIMIT ?"
+    "SELECT id, kind, status, score, verdict, trigger, error, created_at, finished_at, json_array_length(result_json, '$.checks') AS checks FROM runs WHERE store_id = ? AND (trigger IS NULL OR trigger != 'release') ORDER BY id DESC LIMIT ?"
   ),
   setRunRunning: db.prepare("UPDATE runs SET status = 'running' WHERE id = ?"),
   finishRun: db.prepare(
@@ -136,8 +150,15 @@ export const q = {
   ),
   insertAlert: db.prepare('INSERT INTO alerts (store_id, check_id, state, message, title) VALUES (?, ?, ?, ?, ?)'),
   alertsByStore: db.prepare('SELECT * FROM alerts WHERE store_id = ? ORDER BY id DESC LIMIT 30'),
+  insertRelease: db.prepare('INSERT INTO releases (store_id, preview_url, label) VALUES (?, ?, ?)'),
+  setReleaseRuns: db.prepare('UPDATE releases SET live_run_id = ?, draft_run_id = ? WHERE id = ?'),
+  releaseById: db.prepare('SELECT * FROM releases WHERE id = ?'),
+  releasesByStore: db.prepare('SELECT * FROM releases WHERE store_id = ? ORDER BY id DESC LIMIT 50'),
+  finishRelease: db.prepare("UPDATE releases SET status = ?, verdict = ?, summary_json = ?, finished_at = datetime('now') WHERE id = ?"),
+  staleReleases: db.prepare("UPDATE releases SET status = 'error', finished_at = datetime('now') WHERE status = 'running'"),
   staleRuns: db.prepare("UPDATE runs SET status = 'error', error = 'Interrupted by restart' WHERE status IN ('queued','running')"),
 };
 
 // Runs that were in flight when the process stopped will never finish.
 q.staleRuns.run();
+q.staleReleases.run();

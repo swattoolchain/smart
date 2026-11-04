@@ -8,6 +8,10 @@ import { URL } from 'node:url';
 
 const PORT = Number(process.env.MOCK_PORT || 4100);
 const BREAK = new Set((process.env.MOCK_BREAK || '').split(',').filter(Boolean));
+// A draft theme opened with ?preview_theme_id=… (Shopify keeps it for the session via a cookie).
+const DRAFT_BREAK = new Set([...BREAK, ...(process.env.MOCK_DRAFT_BREAK ?? 'theme,atc').split(',').filter(Boolean)]);
+let B = BREAK; // the breakages for the request being handled
+let DRAFT = false;
 const carts = new Map();
 
 const EXTRA = (process.env.MOCK_EXTRA || '');
@@ -42,13 +46,13 @@ function cartJson(items) {
 function layout(title, body, { noindex = false } = {}) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-${BREAK.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
+${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta name="description" content="Handmade Indian clothing and decor from small artisans.">
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
-<script>window.Shopify={shop:'mock.myshopify.com'};</script>
-${BREAK.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}
-${BREAK.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${BREAK.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${BREAK.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
-<main id="MainContent">${body}</main><footer><a href="/policies/privacy-policy">Privacy</a> <a href="/policies/refund-policy">Refunds</a></footer></body></html>`;
+<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
+${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}
+${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
+<main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">Privacy</a> <a href="/policies/refund-policy">Refunds</a></footer></body></html>`;
 }
 function send(res, status, body, type = 'text/html; charset=utf-8') {
   res.writeHead(status, { 'Content-Type': type });
@@ -66,11 +70,15 @@ async function readBody(req) {
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://localhost:${PORT}`);
   const p = u.pathname;
-  if (BREAK.has('cloudflare')) {
+  const previewId = u.searchParams.get('preview_theme_id');
+  if (previewId) res.setHeader('Set-Cookie', `preview_theme=${previewId}; Path=/`);
+  DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
+  B = DRAFT ? DRAFT_BREAK : BREAK;
+  if (B.has('cloudflare')) {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
   }
-  if (BREAK.has('password') && !/unlocked=1/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
+  if (B.has('password') && !/unlocked=1/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });
     return res.end();
   }
@@ -96,7 +104,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/search') {
     const qq = (u.searchParams.get('q') || '').toLowerCase();
-    const hits = BREAK.has('search') ? [] : products.filter((x) => x.title.toLowerCase().includes(qq));
+    const hits = B.has('search') ? [] : products.filter((x) => x.title.toLowerCase().includes(qq));
     return send(res, 200, layout('Search', `<h1>Search</h1>${hits.map(productCard).join('') || '<p>No results</p>'}`));
   }
   if (p.startsWith('/products/')) {
@@ -104,7 +112,7 @@ const server = http.createServer(async (req, res) => {
     if (!prod) return send(res, 404, layout('Not found', '<h1>404</h1>'));
     const vid = Number(u.searchParams.get('variant')) || prod.variants[0].id;
     const v = prod.variants.find((x) => x.id === vid) || prod.variants[0];
-    const breakAtc = BREAK.has('atc')
+    const breakAtc = B.has('atc')
       ? `<script>document.addEventListener('submit',function(e){e.preventDefault();},true);</script>`
       : `<script>document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:[{id:Number(f.id.value),quantity:1}]})}).then(function(){document.getElementById('cart-count').textContent='1';});});</script>`;
     return send(
@@ -137,15 +145,15 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/cart') {
     const items = cartFor(req, res);
-    const btn = BREAK.has('checkout') ? '' : '<form action="/cart" method="post"><button type="submit" name="checkout">Check out</button></form>';
+    const btn = B.has('checkout') ? '' : '<form action="/cart" method="post"><button type="submit" name="checkout">Check out</button></form>';
     if (req.method === 'POST') {
-      res.writeHead(302, { Location: BREAK.has('checkout') ? '/cart' : '/checkouts/cn/abc123' });
+      res.writeHead(302, { Location: B.has('checkout') ? '/cart' : '/checkouts/cn/abc123' });
       return res.end();
     }
     return send(res, 200, layout('Your cart', `<h1>Your cart</h1>${items.map((i) => `<a href="/products/${i.handle}">${i.title}</a> x${i.quantity}`).join('<br>')}${btn}`));
   }
   if (p === '/checkout') {
-    res.writeHead(302, { Location: BREAK.has('checkout') ? '/cart' : '/checkouts/cn/abc123' });
+    res.writeHead(302, { Location: B.has('checkout') ? '/cart' : '/checkouts/cn/abc123' });
     return res.end();
   }
   if (p.startsWith('/checkouts/')) return send(res, 200, layout('Checkout', '<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>'));

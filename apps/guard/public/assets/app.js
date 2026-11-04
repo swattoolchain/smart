@@ -132,6 +132,7 @@
     user: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/>',
     play: '<path d="M8 5.8v12.4a.6.6 0 0 0 .9.5l9.8-6.2a.6.6 0 0 0 0-1l-9.8-6.2a.6.6 0 0 0-.9.5z"/>',
     stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
+    publish: '<path d="M12 20V9"/><path d="m7.5 13.5 4.5-4.5 4.5 4.5"/><path d="M5 4.5h14"/>',
     shield: '<path d="M12 3.5 5 6v5.5c0 4.4 3 7.8 7 9 4-1.2 7-4.6 7-9V6z"/><path d="m9 12 2.2 2.2L15.5 10"/>',
     check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   };
@@ -250,6 +251,7 @@
       ${item(base, 'overview', 'Overview', at('overview'))}
       ${item(`${base}/reports`, 'reports', 'Reports', at('reports'))}
       ${item(`${base}/runs`, 'runs', 'Runs', at('runs'))}
+      ${item(`${base}/publish`, 'publish', 'Safe to publish', at('publish'))}
       ${item(`${base}/catalog`, 'catalog', 'Catalog', at('catalog'))}
       ${item(`${base}/visual`, 'visual', 'Visual changes', at('visual'))}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
@@ -365,7 +367,7 @@
     return `<a class="btn" href="#/s/${s.id}/run">${icon('play', 16)}Run validations</a>`;
   }
   function bindRunButtons() {} // Stop buttons are handled by one listener below.
-  const kindLabel = (r) => (r.trigger === 'manual' ? 'Validation run' : KIND[r.kind] || 'Run');
+  const kindLabel = (r) => (r.trigger === 'manual' ? 'Validation run' : r.trigger === 'release' ? 'Publish check' : KIND[r.kind] || 'Run');
 
   // What a run does, in order. Mirrors src/live.js on the server.
   const PHASES = [
@@ -1161,6 +1163,138 @@
       return `<div class="field-change"><b>${esc(f.label)}:</b> ${before} → ${after}${note}</div>`;
     }).join('');
     return `<li><div class="row"><span class="sev warn">Edited</span><span><span class="t"><a href="${esc(link)}" target="_blank" rel="noopener">${esc(ch.title)}</a></span>${fields}</span><span></span></div></li>`;
+  }
+
+  // ---------- Safe to publish ----------
+  const PUB = { safe: ['Safe to publish', 'healthy'], review: ['Review before publishing', 'warning'], blocked: ["Don't publish yet", 'critical'] };
+  const pubPill = (r) => r.status === 'running' ? '<span class="pill running">Checking…</span>'
+    : r.status === 'done' ? `<span class="pill ${PUB[r.verdict][1]}">${PUB[r.verdict][0]}</span>`
+    : r.status === 'cancelled' ? '<span class="pill">Stopped</span>' : '<span class="pill">Didn\'t finish</span>';
+  const DEVICE_PAGE = { home: 'Homepage', product: 'Product page' };
+
+  STORE_PAGES.publish = async (ctx, s) => {
+    S.catalog = S.catalog || (await api('/api/catalog'));
+    if (ctx.r.a && /^\d+$/.test(ctx.r.a)) return publishDetail(ctx, s, Number(ctx.r.a));
+    const d = await api(`/api/stores/${s.id}/releases`);
+    if (!ctx.alive()) return;
+    const shopify = !s.platform || /shopify/i.test(s.platform);
+    const form = `<section class="panel pub-start">
+      <div class="pub-intro"><span class="empty-icon">${icon('publish', 22)}</span><div><h2>Check a theme before it goes live</h2>
+        <p class="sub">We run your test suite on the draft theme and on your live theme at the same time, compare every check, screenshot and speed measure, and tell you if anything would break.</p></div></div>
+      <form id="pubf" novalidate>
+        <div class="pub-fields"><div class="field"><label for="purl">Theme preview link</label><input id="purl" name="url" placeholder="https://xxxx.shopifypreview.com" autocomplete="off" required></div>
+        <div class="field"><label for="plabel">What changed <span class="muted" style="font-weight:400">(optional)</span></label><input id="plabel" name="label" placeholder="e.g. New Diwali homepage" maxlength="120"></div>
+        <button class="btn" type="submit" ${s.active_run_id ? 'disabled title="A test is running"' : ''}>${icon('play', 16)}Start check</button></div>
+        <p class="error-msg" id="pub-err" role="alert"></p>
+      </form>
+      <details class="howto"><summary>Where do I find the preview link?</summary><ol>
+        <li>In Shopify admin, open <b>Online Store → Themes</b>.</li>
+        <li>Next to the draft theme, open the <b>⋯</b> menu and choose <b>Preview</b>.</li>
+        <li>In the preview bar at the bottom, choose <b>Share preview</b> and copy the link.</li></ol>
+        <p class="muted">Nothing is published and no orders are placed. The draft theme is only opened in our test browser.</p></details>
+      ${shopify ? '' : '<div class="notice"><p>Publish checks work with Shopify themes.</p></div>'}</section>`;
+    const list = d.releases.length ? `<section class="panel"><div class="panel-head"><h2>Earlier checks</h2></div>
+      <div class="table-wrap flat"><table class="data"><thead><tr><th>Started</th><th>Theme</th><th>Result</th><th>Findings</th><th aria-label="Open"></th></tr></thead><tbody>
+      ${d.releases.map((r) => { const c = r.summary?.counts; const th = r.summary?.theme?.draft?.name; return `<tr class="link" data-href="#/s/${s.id}/publish/${r.id}" tabindex="0"><td><span class="cell-main">${time(r.created_at)}</span><div class="cell-sub">${esc(exact(r.created_at))}</div></td>
+        <td><span class="cell-main">${esc(th || 'Draft theme')}</span>${r.label ? `<div class="cell-sub">${esc(r.label)}</div>` : ''}</td><td>${pubPill(r)}</td>
+        <td class="cell-sub">${c ? [c.blockers && plural(c.blockers, 'break'), c.reviews && plural(c.reviews, 'warning'), c.visual && `${plural(c.visual, 'page')} changed`, c.fixes && `${plural(c.fixes, 'fix', 'fixes')}`].filter(Boolean).join(' · ') || 'No differences' : esc(r.summary?.error || '–')}</td>
+        <td class="go">${icon('right', 16)}</td></tr>`; }).join('')}</tbody></table></div></section>` : '';
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Safe to publish')}${form}${list}</div>`;
+    $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
+    $('#pubf').onsubmit = async (e) => {
+      e.preventDefault();
+      const url = $('#purl').value.trim();
+      if (!url) { $('#pub-err').textContent = 'Paste the theme preview link.'; return; }
+      const done = busy(e.target.querySelector('button[type=submit]'), 'Starting');
+      try {
+        const r = await api(`/api/stores/${s.id}/releases`, { method: 'POST', body: { url, label: $('#plabel').value } });
+        location.hash = `#/s/${s.id}/publish/${r.id}`;
+      } catch (ex) { done(); $('#pub-err').textContent = ex.message; }
+    };
+    if (d.releases.some((r) => r.status === 'running')) poll(4000);
+  };
+
+  async function publishDetail(ctx, s, rid) {
+    const r = await api(`/api/stores/${s.id}/releases/${rid}`);
+    if (!ctx.alive()) return;
+    const sum = r.summary;
+    const crumb = `<a href="#/s/${s.id}/publish">Safe to publish</a> / Check #${r.id}`;
+    const title = sum?.theme?.draft?.name || r.label || 'Draft theme';
+    const meta = `${r.label && sum?.theme?.draft?.name ? `<span>${esc(r.label)}</span><span class="sep"></span>` : ''}<span>Started ${esc(exact(r.created_at))}</span>${r.finished_at ? `<span class="sep"></span><span>took ${duration(r.created_at, r.finished_at)}</span>` : ''}`;
+    const preview = `<a class="icon-btn bordered" href="${esc(r.preview_url)}" target="_blank" rel="noopener" data-tip="Open draft preview" aria-label="Open draft preview">${icon('external', 17)}</a>`;
+
+    if (r.status === 'running') {
+      const row = (label, run) => {
+        if (!run) return '';
+        const st = liveState({ ...run, kind: 'full' });
+        const what = run.status === 'done' ? 'Finished' : st.queued ? 'Waiting to start' : `${st.current.label} · step ${st.idx + 1} of ${st.phases.length}`;
+        return `<div class="pub-run"><div class="pub-run-head"><b>${esc(label)}</b><span class="muted">${esc(what)}</span>${run.status === 'done' ? `<span class="t-pass">${icon('check', 16)}</span>` : '<span class="spinner"></span>'}</div>
+          <div class="progress"><i style="width:${run.status === 'done' ? 100 : st.pct}%"></i></div>${run.live ? `<p class="live-tally">${tally(run.live.counts)}</p>` : ''}</div>`;
+      };
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb, meta, actions: preview + `<button type="button" class="btn danger" id="pub-stop">${icon('stop', 16)}Stop</button>` })}
+        <section class="panel run-live"><div class="rl-head"><span class="spinner"></span><div><h2>Testing both themes side by side</h2><p>Usually takes 1 to 3 minutes. This page updates by itself.</p></div></div></section>
+        <div class="grid-2 run-live-grid"><section class="panel">${row('Live theme', r.runs.live)}</section><section class="panel">${row('Draft theme', r.runs.draft)}</section></div></div>`;
+      $('#pub-stop').onclick = async (e) => {
+        if (!(await confirmDialog({ title: 'Stop this publish check?', body: 'Both test runs stop and nothing is saved.', confirm: 'Stop check', danger: true }))) return;
+        busy(e.currentTarget, 'Stopping');
+        await api(`/api/stores/${s.id}/releases/${r.id}/cancel`, { method: 'POST' }).catch(() => {});
+        render({ silent: true });
+      };
+      poll(2500);
+      return;
+    }
+    if (r.status !== 'done') {
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb, meta, actions: preview })}<div class="panel empty"><h2>${r.status === 'cancelled' ? 'This check was stopped' : "This check didn't finish"}</h2><p>${esc(sum?.error || (r.status === 'cancelled' ? 'Nothing was saved.' : 'One of the test runs could not finish. Try again in a few minutes.'))}</p><a class="btn" href="#/s/${s.id}/publish">New publish check</a></div></div>`;
+      return;
+    }
+
+    const [vLabel, vKey] = PUB[r.verdict];
+    const icn = { safe: 'check', review: 'alerts', blocked: 'stop' }[r.verdict];
+    const hero = `<section class="panel pub-verdict ${vKey}">
+      <span class="pv-icon">${icon(icn, 26)}</span>
+      <div class="pv-text"><p class="pv-kicker">${esc(vLabel)}</p><h2>${esc(sum.headline)}</h2>
+        <p class="muted">${esc(sum.theme?.draft?.name || 'Draft')} compared with ${esc(sum.theme?.live?.name || 'your live theme')} on desktop, tablet and phone.</p></div>
+      <div class="pv-scores"><div><span>Live</span><b>${sum.scores?.live ?? '–'}</b></div><span class="pv-arrow">${icon('arrow', 18)}</span><div><span>Draft</span><b class="${(sum.scores?.draft ?? 0) < (sum.scores?.live ?? 0) - 5 ? 't-fail' : ''}">${sum.scores?.draft ?? '–'}</b></div></div></section>`;
+    const findRow = (x, kind) => `<li><div class="row"><span class="sev ${kind === 'fix' ? 'ok' : x.status === 'fail' ? 'fail' : 'warn'}">${kind === 'fix' ? 'Fixed' : x.status === 'fail' ? 'Breaks' : 'Check'}</span>
+      <span><span class="t">${esc(x.title)}</span><span class="d">${esc(kind === 'fix' ? `On live: ${x.liveDetail}` : x.detail)}</span>
+      ${kind !== 'fix' && x.liveDetail ? `<span class="pub-live">On live: ${esc(x.liveDetail)}</span>` : ''}
+      ${kind !== 'fix' && x.fix ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}
+      ${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}</span><span></span></div></li>`;
+    const breaks = [...sum.blockers, ...sum.reviews];
+    const findings = `<div class="grid-2 tight"><section class="panel"><h2>Breaks or changes on the draft</h2><p class="sub">Works on your live store, but not on the draft.</p>
+        ${breaks.length ? `<ul class="list">${breaks.map((x) => findRow(x, 'break')).join('')}</ul>` : `<p class="muted" style="margin:0">Nothing breaks on the draft.</p>`}</section>
+      <section class="panel"><h2>Fixed by the draft</h2><p class="sub">Problems on your live store that the draft fixes.</p>
+        ${sum.fixes.length ? `<ul class="list">${sum.fixes.map((x) => findRow(x, 'fix')).join('')}</ul>` : `<p class="muted" style="margin:0">No live problems are fixed by the draft.</p>`}</section></div>`;
+    const cmp = r.compare || { visual: [], metrics: [], areas: [] };
+    const DEV = [['desktop', 'Desktop'], ['tablet', 'Tablet'], ['mobile', 'Phone']].filter(([dv]) => cmp.visual.some((v) => v.key.endsWith(dv)));
+    const visual = cmp.visual.length ? `<section class="panel"><div class="panel-head"><h2>How the draft looks</h2>
+        <div class="seg" role="radiogroup" aria-label="Device">${DEV.map(([dv, l], i) => `<label><input type="radio" name="pdev" value="${dv}" ${i === 0 ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
+        <p class="sub">Draft and live screenshots of the same page. Difference shows changed pixels in red.</p><div class="shots" id="pub-shots"></div></section>` : '';
+    const metrics = cmp.metrics.length ? `<section class="panel"><h2>Speed and page weight</h2><p class="sub">Phone-sized screen. Changes under 10% are treated as noise.</p>
+      <div class="table-wrap flat"><table class="data"><thead><tr><th>Page</th><th>Measure</th><th class="num">Live</th><th class="num">Draft</th><th class="num">Change</th></tr></thead><tbody>
+      ${cmp.metrics.map((m) => `<tr><td class="cell-sub">${esc(m.page)}</td><td>${esc(m.name)}</td><td class="num">${fmtVal(m.b, m.unit)}</td><td class="num">${fmtVal(m.a, m.unit)}</td><td class="num"><span class="trend ${m.trend}">${m.trend === 'worse' ? 'Slower' : m.trend === 'better' ? 'Faster' : 'Same'}</span></td></tr>`).join('')}</tbody></table></div></section>` : '';
+    const allChecks = cmp.areas.flatMap((a) => a.checks);
+    const same = allChecks.filter((x) => x.a === x.b).length;
+    const checks = cmp.areas.length ? `<section class="panel"><details class="still"><summary>All ${allChecks.length} checks compared · ${same} unchanged</summary>
+      <div class="table-wrap flat" style="margin-top:10px"><table class="data"><thead><tr><th style="width:90px">Live</th><th style="width:90px">Draft</th><th>Check</th></tr></thead><tbody>
+      ${allChecks.map((x) => `<tr class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.b)}</td><td>${stat(x.a)}</td><td><span class="cell-main">${esc(x.title)}</span><div class="cell-sub">${esc(x.detail || x.prevDetail)}</div></td></tr>`).join('')}</tbody></table></div></details></section>` : '';
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb, meta, actions: preview + `<a class="btn secondary" href="#/s/${s.id}/publish">${icon('publish', 16)}New check</a>` })}${hero}${findings}${visual}${metrics}${checks}</div>`;
+    $$('[data-shot]', ctx.main).forEach((x) => (x.onclick = () => lightbox(x.dataset.shot, 'Screenshot')));
+    const draw = (dv) => {
+      $('#pub-shots').innerHTML = cmp.visual.filter((v) => v.key.endsWith(dv)).map((v) => {
+        const views = [['a', 'Draft', v.a], ['b', 'Live', v.b], ['diff', 'Difference', v.diff]].filter((x) => x[2]);
+        const chip = v.ratio == null ? '' : v.ratio > 5 ? `<span class="pill warning">${v.ratio}% different</span>` : '<span class="pill healthy">Looks the same</span>';
+        const pg = DEVICE_PAGE[v.key.split('-')[0]] || v.key;
+        return `<article class="shot-card"><header><b>${esc(pg)}</b>${chip}</header>
+          ${views.length > 1 ? `<div class="seg" role="radiogroup" aria-label="View">${views.map((x, i) => `<label><input type="radio" name="pv-${v.key}" value="${esc(x[2])}" ${i === 0 ? 'checked' : ''}><span>${x[1]}</span></label>`).join('')}</div>` : ''}
+          <div class="frame">${views[0] ? `<img src="${esc(views[0][2])}" alt="${esc(pg)}" loading="lazy">` : '<span class="none">No screenshot</span>'}</div></article>`;
+      }).join('');
+      $$('#pub-shots .shot-card').forEach((card) => {
+        card.addEventListener('change', (e) => { if (e.target.name?.startsWith('pv-')) card.querySelector('.frame img').src = e.target.value; });
+        card.querySelector('.frame img')?.addEventListener('click', (e) => lightbox(e.target.src, e.target.alt));
+      });
+    };
+    if (DEV.length) { draw(DEV[0][0]); $$('input[name=pdev]', ctx.main).forEach((x) => (x.onchange = () => draw(x.value))); }
   }
 
   // ---------- Workspace pages ----------

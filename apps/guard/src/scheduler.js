@@ -36,10 +36,10 @@ export function nextRunIn(store) {
   return Math.max(0, Math.round(Math.min(j, f)));
 }
 
-export function startRun({ storeId, origin, kind, password, ip = null, trigger = 'manual', disabled }) {
+export function startRun({ storeId, origin, kind, password, ip = null, trigger = 'manual', disabled, preview, captureOnly, release }) {
   const info = q.insertRun.run(storeId || null, origin, kind, ip, trigger);
   const runId = Number(info.lastInsertRowid);
-  enqueue({ runId, origin, kind, password, storeId, disabled });
+  enqueue({ runId, origin, kind, password, storeId, disabled, preview, captureOnly, release });
   return runId;
 }
 

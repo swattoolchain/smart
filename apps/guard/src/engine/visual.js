@@ -9,9 +9,10 @@ import { gotoStore, settle, newContext } from './browser.js';
  * Visual regression: compares viewport screenshots against the store's approved baseline.
  * The first run becomes the baseline. Differences above the threshold are reported as warnings.
  */
-export async function runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir, threshold = 0.12 }) {
+export async function runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir, threshold = 0.12, captureOnly = false, prime = null }) {
   const tctx = await newContext({ tablet: true });
   const tabletPage = await tctx.newPage();
+  if (prime) await prime(tabletPage).catch(() => {});
   const devices = [['desktop', page], ['tablet', tabletPage], ['mobile', mobilePage]];
   const shots = devices.map(([d, p]) => ({ key: `home-${d}`, p, url: origin + '/' }));
   if (info.products[0]) for (const [d, p] of devices) shots.push({ key: `product-${d}`, p, url: `${origin}/products/${info.products[0].handle}` });
@@ -25,6 +26,8 @@ export async function runVisual({ page, mobilePage, rec, origin, info, password,
       await s.p.addStyleTag({ content: '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}' }).catch(() => {});
       const file = path.join(runDir, `${s.key}.png`);
       await s.p.screenshot({ path: file, fullPage: false });
+      // Publish checks only capture: their screenshots are compared with the paired live run, never the baseline.
+      if (captureOnly) { results.push({ key: s.key, status: 'captured' }); continue; }
       const base = path.join(baselineDir, `${s.key}.png`);
       if (!fs.existsSync(base)) {
         fs.copyFileSync(file, base);
@@ -47,6 +50,7 @@ export async function runVisual({ page, mobilePage, rec, origin, info, password,
     }
   }
   await tctx.close().catch(() => {});
+  if (captureOnly) return results;
   const changed = results.filter((r) => r.status === 'changed');
   const isBaseline = results.every((r) => r.status === 'baseline' || r.status === 'error');
   rec.add(

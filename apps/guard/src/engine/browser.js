@@ -168,3 +168,25 @@ export async function settle(page, ms = 1200) {
   await page.waitForLoadState('load', { timeout: 15000 }).catch(() => {});
   await page.waitForTimeout(ms);
 }
+
+/** Which Shopify theme the page is showing ({ id, name, role }), from the storefront's own Shopify.theme. */
+export async function themeOf(page) {
+  return page.evaluate(() => { const t = window.Shopify && window.Shopify.theme; return t ? { id: t.id, name: t.name, role: t.role } : null; }).catch(() => null);
+}
+
+/**
+ * Opens a Shopify theme preview link in this page's browser context. Shopify keeps the draft theme for the
+ * whole session, so every later visit in the context shows it. Share-preview links can redirect to the
+ * .myshopify.com domain; the returned origin is where the preview session lives.
+ */
+export async function openPreview(page, previewUrl, { password } = {}) {
+  await page.context().addInitScript(() => {
+    const css = '#preview-bar-iframe,#PBarNextFrameWrapper,#PBarNextFrame,#preview-bar,.preview-bar{display:none!important}';
+    const add = () => { if (document.head && !document.getElementById('tg-hide-pbar')) { const s = document.createElement('style'); s.id = 'tg-hide-pbar'; s.textContent = css; document.head.appendChild(s); } };
+    add();
+    document.addEventListener('DOMContentLoaded', add);
+  });
+  await gotoStore(page, previewUrl, { password });
+  await settle(page, 600);
+  return { origin: new URL(page.url()).origin, theme: await themeOf(page) };
+}
