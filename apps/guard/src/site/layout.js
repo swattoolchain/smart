@@ -37,6 +37,8 @@ function nav(path) {
         <a class="mega-foot" href="/marketplaces">How marketplace guard works ${icon('arrow', 15)}</a></div></div>
     <a class="nv-link" href="/commerce-assurance"${on('/commerce-assurance')}>Commerce Assurance</a>
     <a class="nv-link" href="/pricing"${on('/pricing')}>Pricing</a>
+    <a class="nv-link show-sm" href="/demo">Book a demo</a>
+    <a class="nv-link show-sm" href="/app">Log in</a>
   </nav>`;
 }
 
@@ -88,7 +90,7 @@ ${noindex ? '<meta name="robots" content="noindex">' : `<link rel="canonical" hr
 <header class="site-top"><div class="wrap">
   <a class="brand" href="/" aria-label="Tharam home"><img src="/assets/brand/tharam-logo.svg" width="118" height="34" alt="Tharam"></a>
   ${nav(path)}
-  <div class="top-actions"><a class="nv-link hide-sm" href="/app">Log in</a><a class="btn small" href="/#check">Free store check</a>
+  <div class="top-actions"><a class="nv-link hide-sm" href="/demo">Book a demo</a><a class="nv-link hide-sm" href="/app">Log in</a><a class="btn small" href="/#check">Free store check</a>
     <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="mainnav">${icon('menu', 22)}</button></div>
 </div></header>
 ${body}

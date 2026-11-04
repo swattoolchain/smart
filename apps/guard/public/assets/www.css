@@ -281,3 +281,5 @@ table.cmp.caps th a { color: var(--ink); text-decoration: none; }
 .mega-intro { margin: 4px 12px 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); font-size: 13.5px; color: var(--ink-soft); }
 .plan-note { background: #f2f4fe; border-bottom: 1px solid #dfe3fb; font-size: 14.5px; color: #2c3aa8; padding: 12px 0; }
 .plan-note a { font-weight: 600; }
+.show-sm { display: none !important; }
+@media (max-width: 980px) { .mainnav .show-sm { display: flex !important; } }
