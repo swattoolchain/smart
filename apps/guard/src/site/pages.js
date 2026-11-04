@@ -41,6 +41,7 @@ export function home() {
     ${heroVisual}
   </div></section>
   <div class="promises"><div class="wrap">${PROMISES.map(([ic, t]) => `<span>${icon(ic, 17)}${esc(t)}</span>`).join('')}</div></div>
+  ${saleBanner() ? `<div class="wrap">${saleBanner()}</div>` : ''}
 
   <section class="band white"><div class="wrap">
     <div class="sec-head center-h"><p class="eyebrow">Why it matters</p><h2 class="h2">Your store can look fine and still not sell</h2>
@@ -351,4 +352,51 @@ export function deHome() {
     <div class="cta-actions"><a class="btn light" href="#check">Shop kostenlos prüfen</a><a class="btn ghost-light" href="mailto:hello@tharam.store?subject=Tharam%20Deutschland">Kontakt aufnehmen</a></div></div></section>
   </main>`;
   return layout({ lang: 'de', title: 'Shop-Prüfung für Deutschland und Österreich', description: 'Tharam prüft Ihren Online-Shop alle paar Stunden wie ein echter Kunde: Kaufprozess, Preise, Impressum, Widerrufsbutton, Cookie-Einwilligung und Barrierefreiheit.', path: '/de', body, alternates: { en: '/', de: '/de', 'x-default': '/' } });
+}
+
+/* ---------- Sale readiness (Black Friday and festive sales) ---------- */
+/** The next Black Friday: the day after the fourth Thursday of November. */
+function nextBlackFriday(now = new Date()) {
+  for (const y of [now.getUTCFullYear(), now.getUTCFullYear() + 1]) {
+    const nov1 = new Date(Date.UTC(y, 10, 1));
+    const firstThu = 1 + ((4 - nov1.getUTCDay() + 7) % 7);
+    const bf = new Date(Date.UTC(y, 10, firstThu + 21 + 1));
+    if (bf.getTime() + 864e5 > now.getTime()) return bf;
+  }
+}
+export function saleBanner() {
+  const bf = nextBlackFriday();
+  const days = Math.ceil((bf - Date.now()) / 864e5);
+  if (days > 60) return '';
+  return `<a class="sale-strip" href="/sale-ready"><span class="ss-tag">Black Friday</span><span>${days <= 0 ? 'It’s Black Friday.' : `${days} day${days === 1 ? '' : 's'} to Black Friday.`} Find out if your store is ready before your customers do.</span>${icon('arrow', 15)}</a>`;
+}
+export function saleReady() {
+  const bf = nextBlackFriday();
+  const days = Math.max(0, Math.ceil((bf - Date.now()) / 864e5));
+  const when = bf.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const before = [
+    ['Every price and sale price', 'Every product checked: prices of zero, “sale” prices that aren’t lower, prices that dropped by more than half after an import, and products that are sold out.'],
+    ['The sale design, before it goes live', 'Your Black Friday theme or banner tested next to your live store on phone, tablet and computer. We tell you if the banner covers the Buy button or breaks Add to cart.'],
+    ['Buying, start to finish', 'Search, product, size, Add to cart, cart and checkout, on a phone, the way most sale shoppers buy.'],
+    ['Apps added for the sale', 'Countdown timers, popups and upsell apps are the usual cause of a broken Add to cart. We catch script errors and slow apps before the rush.'],
+    ['Speed on phones', 'Sale pages get heavy. We measure load time and flag the apps that slow you down.'],
+    ['Discount rules in the EU and UK', 'Selling in Europe? A discount must be measured against your lowest price in the last 30 days. We show you products where that doesn’t hold.', true],
+    ['Discount codes at checkout', 'Your sale code applied to a real cart, so you know it works before you email it to 50,000 customers.', true],
+  ];
+  const during = [
+    ['Checks as often as every 30 minutes', 'Through the sale weekend, your store is shopped like a customer around the clock.'],
+    ['Alerts in minutes', 'Email and Slack the moment buying breaks, with the reason and how to fix it. One more when it’s fixed.'],
+    ['Money at risk, in rupees, dollars or euros', 'How long customers couldn’t buy and what that cost, so you know what to fix first next year.'],
+  ];
+  const feats = (list) => `<div class="features">${list.map(([t, d, early]) => `<div class="feature"><span class="ft-ic">${icon('check', 16)}</span><h3>${esc(t)} ${early ? badge('soon') : ''}</h3><p>${esc(d)}</p></div>`).join('')}</div>`;
+  const body = `<main>${pageHead({ eyebrow: `Black Friday is ${when}${days ? `, ${days} days away` : ''}`, title: 'Is your store ready for the sale?', lede: 'The worst time to find a broken Add to cart button is on your biggest sales day. Tharam checks everything that usually goes wrong in a sale, before it starts and all through it. For Black Friday, Cyber Monday, Diwali, Boxing Day and your own sales.', actions: '<a class="btn" href="/#check">Check my store free</a><a class="btn secondary" href="/managed">Have us check it for you</a>' })}
+  <section class="band white"><div class="wrap"><div class="sec-head"><p class="eyebrow">Before the sale</p><h2 class="h2">What breaks on sale day, checked weeks before</h2></div>${feats(before)}</div></section>
+  <section class="band"><div class="wrap"><div class="sec-head"><p class="eyebrow">During the sale</p><h2 class="h2">Someone watching your store all weekend</h2></div>${feats(during)}</div></section>
+  <section class="band white"><div class="wrap split"><div><p class="eyebrow">A simple plan</p><h2 class="h2">Three weeks out, one week out, sale day</h2></div>
+    <ol class="steps-list"><li><b>Three weeks before:</b> run a full check. Fix wrong prices, slow apps and anything that breaks buying.</li>
+      <li><b>One week before:</b> check your sale theme and banners with Safe to publish, on a phone.</li>
+      <li><b>Sale week:</b> turn checks up to every 30 minutes, and keep your phone handy for alerts.</li></ol></div></section>
+  ${faq([['Do you load test my store?', 'No. Shopify handles sale-day traffic for you. What actually breaks on sale day is usually an app, a price, a discount or a new banner, and that’s what we check.'], ['Will your tests place orders?', 'Never. Our checkout test stops before payment and empties the cart.'], ['Can you do this for us?', 'Yes. With the managed service, our team runs the checks, reviews your sale design and watches your store through the sale.']])}
+  ${cta('Find out if your store is ready', 'Free check in about two minutes. Nothing to install, no orders placed.')}</main>`;
+  return layout({ title: 'Black Friday sale readiness', description: 'Check your store is ready for Black Friday, Cyber Monday and festive sales: prices, sale designs, checkout, apps, speed and discount rules, before and during the sale.', path: '/sale-ready', body });
 }

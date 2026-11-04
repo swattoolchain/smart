@@ -712,6 +712,7 @@ app.get('/marketplaces', html(() => site.marketIndex()));
 app.get('/marketplaces/:slug', html((req) => site.market(req.params.slug)));
 app.get('/pricing', html(() => site.pricing()));
 app.get('/managed', html(() => site.managed()));
+app.get(['/sale-ready', '/black-friday'], html(() => site.saleReady()));
 app.get('/scan/:id', old('report.html', { title: 'Store check report', noindex: true }));
 const appHtml = fs.readFileSync(path.join(config.publicDir, 'app.html'), 'utf8').replace(/(\/assets\/[\w./-]+\.(?:css|js))"/g, `$1?v=${site.VERSION}"`);
 app.get('/app', (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(appHtml));

@@ -63,7 +63,7 @@ function footer() {
     ${col('Features', PRODUCTS.map((p) => [`/features/${p.slug}`, p.name]).concat([['/checks', 'Every check']]))}
     ${col('Platforms', PLATFORMS.slice(0, 6).map((p) => [`/platforms/${p.slug}`, p.name]).concat([['/platforms', 'All platforms']]))}
     ${col('Marketplaces', MARKETPLACES.map((m) => [`/marketplaces/${m.slug}`, m.name]))}
-    ${col('Company', [['/commerce-assurance', 'Why Tharam'], ['/managed', 'Managed service'], ['/pricing', 'Pricing'], ['/demo', 'Book a demo'], ['/bot', 'Our test browser'], ['mailto:hello@tharam.store', 'Contact'], ['/de', 'Deutsch']])}
+    ${col('Company', [['/commerce-assurance', 'Why Tharam'], ['/managed', 'Managed service'], ['/sale-ready', 'Black Friday readiness'], ['/pricing', 'Pricing'], ['/demo', 'Book a demo'], ['/bot', 'Our test browser'], ['mailto:hello@tharam.store', 'Contact'], ['/de', 'Deutsch']])}
     </div><div class="wrap sf-legal"><span>© 2026 Tharam</span><span><a href="/privacy">Privacy</a><a href="/terms">Terms</a></span></div></footer>`;
 }
 
