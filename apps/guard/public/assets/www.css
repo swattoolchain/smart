@@ -278,3 +278,6 @@ table.cmp.caps th a { color: var(--ink); text-decoration: none; }
 .mm-item b .st { display: inline-flex; margin-left: 4px; color: #2c3aa8; font-size: 11px; }
 @media (max-width: 520px) { .check-form input, .check-form .btn { flex: none; width: 100%; } }
 .plan ul { align-content: start; }
+.mega-intro { margin: 4px 12px 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); font-size: 13.5px; color: var(--ink-soft); }
+.plan-note { background: #f2f4fe; border-bottom: 1px solid #dfe3fb; font-size: 14.5px; color: #2c3aa8; padding: 12px 0; }
+.plan-note a { font-weight: 600; }

@@ -550,8 +550,9 @@ const html = (render) => (req, res) => {
 const old = (file, opts) => html(() => site.legacy(config.publicDir, file, opts));
 app.get('/', html(() => site.home()));
 app.get('/commerce-assurance', html(() => site.category()));
-app.get('/product', html(() => site.productIndex()));
-app.get('/product/:slug', html((req) => site.product(req.params.slug)));
+app.get('/features', html(() => site.productIndex()));
+app.get('/features/:slug', html((req) => site.product(req.params.slug)));
+app.get(['/product', '/product/:slug'], (req, res) => res.redirect(301, req.params.slug ? `/features/${req.params.slug}` : '/features'));
 app.get('/platforms', html(() => site.platformIndex()));
 app.get('/platforms/:slug', html((req) => site.platform(req.params.slug)));
 app.get('/marketplaces', html(() => site.marketIndex()));

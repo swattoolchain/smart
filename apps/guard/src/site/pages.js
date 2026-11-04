@@ -26,7 +26,7 @@ const heroVisual = `<div class="mock" aria-label="Example Tharam dashboard">
 </div>`;
 
 export function home() {
-  const pillars = PRODUCTS.map((p) => `<a class="pillar" href="/product/${p.slug}"><span class="pl-ic">${icon(p.icon, 20)}</span><span class="pl-k">${esc(p.pillar)}</span><h3>${esc(p.name)} ${p.status !== 'live' ? badge(p.status) : ''}</h3><p>${esc(p.short)}</p><span class="more">Learn more ${icon('arrow', 14)}</span></a>`).join('');
+  const pillars = PRODUCTS.map((p) => `<a class="pillar" href="/features/${p.slug}"><span class="pl-ic">${icon(p.icon, 20)}</span><span class="pl-k">${esc(p.pillar)}</span><h3>${esc(p.name)} ${p.status !== 'live' ? badge(p.status) : ''}</h3><p>${esc(p.short)}</p><span class="more">Learn more ${icon('arrow', 14)}</span></a>`).join('');
   const body = `<main>
   <section class="hero2"><div class="wrap">
     <div class="h2-copy"><p class="eyebrow">The Commerce Assurance platform</p>
@@ -64,7 +64,7 @@ export function home() {
       <ul><li><span class="sev-b">Breaks</span>Add to cart on mobile does nothing</li><li><span class="sev-w">Check</span>Homepage loads 1.2 s slower</li><li><span class="sev-g">Fixed</span>Broken “Sale” link in the menu</li></ul></div>
     <div><p class="eyebrow">Only on Tharam</p><h2 class="h2">Know a theme change is safe before you publish it.</h2>
       <p class="body-l">Paste a theme preview link. Tharam tests the draft and your live store side by side, on desktop, tablet and phone, and tells you what would break, what it fixes, and how it changes speed and the look of every page.</p>
-      <a class="link-arrow" href="/product/safe-to-publish">How Safe to publish works ${icon('arrow', 15)}</a></div>
+      <a class="link-arrow" href="/features/safe-to-publish">How Safe to publish works ${icon('arrow', 15)}</a></div>
   </div></section>
 
   <section class="band"><div class="wrap">
@@ -96,7 +96,7 @@ export function category() {
     <div class="quote-card"><p>Commerce Assurance answers one question continuously: <b>can customers buy from me right now, and will they still be able to after this change?</b></p></div>
   </div></section>
   <section class="band"><div class="wrap"><div class="sec-head"><p class="eyebrow">The five pillars</p><h2 class="h2">What a Commerce Assurance platform covers</h2></div>
-    <div class="pillars">${PRODUCTS.map((p) => `<a class="pillar" href="/product/${p.slug}"><span class="pl-ic">${icon(p.icon, 20)}</span><span class="pl-k">${esc(p.pillar)}</span><h3>${esc(p.name)}</h3><p>${esc(p.short)}</p></a>`).join('')}</div></div></section>
+    <div class="pillars">${PRODUCTS.map((p) => `<a class="pillar" href="/features/${p.slug}"><span class="pl-ic">${icon(p.icon, 20)}</span><span class="pl-k">${esc(p.pillar)}</span><h3>${esc(p.name)}</h3><p>${esc(p.short)}</p></a>`).join('')}</div></div></section>
   <section class="band white"><div class="wrap split">
     <div><p class="eyebrow">The standard metric</p><h2 class="h2">Buyability</h2>
       <p class="body-l"><b>Buyability is the share of tests in which a customer could complete a purchase</b>: find a product, add it to the cart and reach checkout, on desktop and phone.</p>
@@ -108,9 +108,9 @@ export function category() {
 }
 
 export function productIndex() {
-  const body = `<main>${pageHead({ eyebrow: 'Product', title: 'Everything that keeps a store selling, in one platform', lede: 'Journey monitoring, Safe to publish, catalog guard, experience checks, AI review and reports, all built around one question: can customers buy?' })}
-    <section class="band white"><div class="wrap"><div class="pillars">${PRODUCTS.map((p) => `<a class="pillar" href="/product/${p.slug}"><span class="pl-ic">${icon(p.icon, 20)}</span><span class="pl-k">${esc(p.pillar)}</span><h3>${esc(p.name)} ${p.status !== 'live' ? badge(p.status) : ''}</h3><p>${esc(p.short)}</p><span class="more">Learn more ${icon('arrow', 14)}</span></a>`).join('')}</div></div></section>${cta()}</main>`;
-  return layout({ title: 'Product', description: 'The Tharam platform: journey monitoring, Safe to publish, catalog guard, experience checks, AI review and reports.', path: '/product', body });
+  const body = `<main>${pageHead({ eyebrow: 'Features', title: 'Everything that keeps a store selling, in one platform', lede: 'Journey monitoring, Safe to publish, catalog guard, experience checks, AI review and reports, all built around one question: can customers buy?' })}
+    <section class="band white"><div class="wrap"><div class="pillars">${PRODUCTS.map((p) => `<a class="pillar" href="/features/${p.slug}"><span class="pl-ic">${icon(p.icon, 20)}</span><span class="pl-k">${esc(p.pillar)}</span><h3>${esc(p.name)} ${p.status !== 'live' ? badge(p.status) : ''}</h3><p>${esc(p.short)}</p><span class="more">Learn more ${icon('arrow', 14)}</span></a>`).join('')}</div></div></section>${cta()}</main>`;
+  return layout({ title: 'Features', description: 'The Tharam platform: journey monitoring, Safe to publish, catalog guard, experience checks, AI review and reports.', path: '/features', body });
 }
 
 export function product(slug) {
@@ -118,13 +118,14 @@ export function product(slug) {
   if (!p) return null;
   const others = PRODUCTS.filter((x) => x.slug !== slug).slice(0, 3);
   const support = PLATFORMS.map((pl) => { const k = { monitoring: 'journey', 'safe-to-publish': 'publish', catalog: 'catalog', experience: 'experience', ai: 'experience', reports: 'experience' }[slug]; return [pl, pl.caps[k]]; });
-  const body = `<main>${pageHead({ eyebrow: p.pillar, status: p.status, title: p.title, lede: p.lede, actions: `<a class="btn" href="/app#signup">Start free</a><a class="btn secondary" href="/#check">Run a free check</a>` })}
+  const body = `<main>${pageHead({ eyebrow: `Feature · ${p.pillar}`, status: p.status, title: p.title, lede: p.lede, actions: `<a class="btn" href="/app#signup">Start free</a><a class="btn secondary" href="/#check">Run a free check</a>` })}
+  <div class="plan-note"><div class="wrap">${p.name} is part of the Tharam platform, not a separate product. <a href="/pricing">See what each plan includes</a>.</div></div>
   <section class="band white"><div class="wrap"><div class="features">${p.points.map(([t, d]) => `<div class="feature"><span class="ft-ic">${icon('check', 16)}</span><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div></div></section>
   <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">Where it works</h2></div>
     <div class="support-grid">${support.map(([pl, st]) => `<a href="/platforms/${pl.slug}" class="sup"><span>${esc(pl.name)}</span>${badge(st)}</a>`).join('')}</div></div></section>
-  <section class="band white"><div class="wrap"><div class="sec-head"><h2 class="h2">Also in Tharam</h2></div><div class="pillars three">${others.map((o) => `<a class="pillar" href="/product/${o.slug}"><span class="pl-ic">${icon(o.icon, 20)}</span><h3>${esc(o.name)}</h3><p>${esc(o.short)}</p></a>`).join('')}</div></div></section>
+  <section class="band white"><div class="wrap"><div class="sec-head"><h2 class="h2">Also in Tharam</h2></div><div class="pillars three">${others.map((o) => `<a class="pillar" href="/features/${o.slug}"><span class="pl-ic">${icon(o.icon, 20)}</span><h3>${esc(o.name)}</h3><p>${esc(o.short)}</p></a>`).join('')}</div></div></section>
   ${cta()}</main>`;
-  return layout({ title: p.name, description: p.short, path: `/product/${slug}`, body });
+  return layout({ title: p.name, description: p.short, path: `/features/${slug}`, body });
 }
 
 const capTable = (list) => `<div class="table-scroll"><table class="cmp caps"><thead><tr><th>Capability</th>${list.map((p) => `<th><a href="/platforms/${p.slug}">${esc(p.name)}</a></th>`).join('')}</tr></thead><tbody>
@@ -148,7 +149,7 @@ export function platform(slug) {
       ${!live ? `<form class="note-card wl" data-waitlist="platform-${esc(p.slug)}" novalidate><h3>Get ${esc(p.name)} journey tests first</h3><p>Leave your email and store address. We’ll set you up as soon as they’re ready.</p>
         <input name="email" type="email" placeholder="you@yourstore.com" required aria-label="Email"><input name="url" type="text" placeholder="yourstore.com" aria-label="Store address"><button class="btn" type="submit">Join early access</button><p class="wl-msg" role="status"></p></form>` : ''}</div>
   </div></section>
-  <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">The platform</h2></div><div class="pillars three">${PRODUCTS.slice(0, 3).map((o) => `<a class="pillar" href="/product/${o.slug}"><span class="pl-ic">${icon(o.icon, 20)}</span><h3>${esc(o.name)}</h3><p>${esc(o.short)}</p></a>`).join('')}</div></div></section>
+  <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">The platform</h2></div><div class="pillars three">${PRODUCTS.slice(0, 3).map((o) => `<a class="pillar" href="/features/${o.slug}"><span class="pl-ic">${icon(o.icon, 20)}</span><h3>${esc(o.name)}</h3><p>${esc(o.short)}</p></a>`).join('')}</div></div></section>
   ${cta(`See how your ${p.name.split(' ')[0]} store does`)}</main>`;
   return layout({ title: `Tharam for ${p.name}`, description: p.blurb, path: `/platforms/${slug}`, body });
 }

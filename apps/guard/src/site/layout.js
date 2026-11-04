@@ -26,8 +26,8 @@ function nav(path) {
   const on = (p) => (path === p || path.startsWith(p + '/') ? ' aria-current="page"' : '');
   const item = (href, ic, title, sub, status) => `<a class="mm-item" href="${href}"><span class="mm-ic">${icon(ic, 18)}</span><span><b>${esc(title)} ${status && status !== 'live' ? badge(status) : ''}</b><span>${esc(sub)}</span></span></a>`;
   return `<nav class="mainnav" id="mainnav" aria-label="Main">
-    <div class="nv"><button type="button" class="nv-btn"${on('/product')} aria-expanded="false">Product ${icon('chevron', 15)}</button>
-      <div class="mega wide"><div class="mega-grid">${PRODUCTS.map((p) => item(`/product/${p.slug}`, p.icon, p.name, p.short, p.status)).join('')}</div>
+    <div class="nv"><button type="button" class="nv-btn"${on('/features')} aria-expanded="false">Features ${icon('chevron', 15)}</button>
+      <div class="mega wide"><p class="mega-intro">One platform. Every feature below is part of your Tharam plan.</p><div class="mega-grid">${PRODUCTS.map((p) => item(`/features/${p.slug}`, p.icon, p.name, p.short, p.status)).join('')}</div>
         <a class="mega-foot" href="/checks">See every check we run ${icon('arrow', 15)}</a></div></div>
     <div class="nv"><button type="button" class="nv-btn"${on('/platforms')} aria-expanded="false">Platforms ${icon('chevron', 15)}</button>
       <div class="mega"><p class="mega-label">Your own store</p><div class="mega-list">${PLATFORMS.map((p) => `<a href="/platforms/${p.slug}"><span>${esc(p.name)}</span>${badge(p.status)}</a>`).join('')}</div>
@@ -45,7 +45,7 @@ function footer() {
   return `<footer class="site-foot"><div class="wrap">
     <div class="sf-brand"><img src="/assets/brand/tharam-logo-dark.svg" alt="Tharam" width="112" height="32"><p>The Commerce Assurance platform. Continuous proof that customers can find, trust and buy from you.</p>
       <a class="btn small light" href="/#check">Free store check</a></div>
-    ${col('Product', PRODUCTS.map((p) => [`/product/${p.slug}`, p.name]).concat([['/checks', 'Every check']]))}
+    ${col('Features', PRODUCTS.map((p) => [`/features/${p.slug}`, p.name]).concat([['/checks', 'Every check']]))}
     ${col('Platforms', PLATFORMS.slice(0, 6).map((p) => [`/platforms/${p.slug}`, p.name]).concat([['/platforms', 'All platforms']]))}
     ${col('Marketplaces', MARKETPLACES.map((m) => [`/marketplaces/${m.slug}`, m.name]))}
     ${col('Company', [['/commerce-assurance', 'Commerce Assurance'], ['/pricing', 'Pricing'], ['/demo', 'Book a demo'], ['/bot', 'Our test browser'], ['mailto:hello@tharam.store', 'Contact']])}
