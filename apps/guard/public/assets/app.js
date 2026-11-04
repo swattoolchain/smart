@@ -596,7 +596,9 @@
         <div class="cat-bars">${cats.map((c) => `<div class="cat-bar"><span>${esc(c.label)}</span><span class="track"><i class="${scoreClass(c.score)}" style="width:${c.score}%"></i></span><b>${c.score}</b></div>`).join('')}</div>
       </section>`;
       if (res.verdict === 'blocked') { const bc = res.checks.find((c) => c.id === 'fn.blocked'); body += `<div class="notice"><p><b>${esc(bc?.evidence?.vendor || 'Bot protection')} stopped our test browser.</b> ${esc(bc?.fix || '')}</p></div>`; }
-      if (res.verdict === 'locked') body += `<div class="notice"><p>Your store is password protected. <a href="#/s/${s.id}/settings">Add the storefront password</a> so we can test the shopping journey.</p></div>`;
+      if (res.verdict === 'locked') body += `<form class="notice pw-inline" id="pw-inline" novalidate><p><b>Your store is password protected.</b> Enter the storefront password so we can shop it like a customer. ${EMB ? 'In Shopify: Online Store → Preferences → Password protection.' : ''}</p>
+        <div class="inline-row"><input name="password" type="password" autocomplete="off" placeholder="Storefront password" required aria-label="Storefront password"><button class="btn" type="submit">${icon('play', 16)}Save and run the check</button></div>
+        <p class="error-msg" role="alert"></p><p class="hint">We use it only to open your store for testing, and never show it again.</p></form>`;
     }
     if (sc && (res || done.length)) body += scorecardPanel(sc, s);
     if (res || done.length) {
@@ -621,6 +623,18 @@
     const meta = `${res ? '' : `<span class="pill ${esc(st.key)}">${esc(st.label)}</span>`}<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(host(s.url))}</a>${s.platform ? `<span class="sep"></span><span>${esc(s.platform)}</span>` : ''}<span class="sep"></span><span>${esc(monitoringLine(s))}</span>`;
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, s.name || host(s.url), { crumb: 'Overview', meta, actions: openStore(s) + runButtons(s) })}${body}</div>`;
     $$('[data-focus]', ctx.main).forEach((a) => a.addEventListener('click', () => (S.focus = a.dataset.focus)));
+    $('#pw-inline')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = e.currentTarget, pw = f.password.value;
+      if (!pw) { f.querySelector('.error-msg').textContent = 'Enter the storefront password.'; return; }
+      const done = busy(f.querySelector('button'), 'Starting');
+      try {
+        await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { password: pw } });
+        const r = await api(`/api/stores/${s.id}/run`, { method: 'POST', body: {} });
+        await loadStores();
+        location.hash = `#/s/${s.id}/runs/${r.runId}`;
+      } catch (ex) { done(); f.querySelector('.error-msg').textContent = ex.message; }
+    });
     if (active || s.active_run_id) poll(S.stopping.size ? 1500 : 3000); // also refresh once if the run ended between loads
     else if (s.monitoring && s.last_run_at) poll(60000);
   };

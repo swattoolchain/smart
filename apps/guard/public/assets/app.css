@@ -878,3 +878,7 @@ details.more-ways > summary { cursor: pointer; font-weight: 600; font-size: 14px
 details.more-ways[open] > summary { margin-bottom: 12px; }
 details.more-ways .pub-start { border: 0; padding: 0; margin: 0; box-shadow: none; }
 ui-nav-menu { display: none !important; }
+.pw-inline { display: grid; gap: 8px; }
+.pw-inline p { margin: 0; }
+.pw-inline .inline-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.pw-inline input { flex: 1; min-width: 200px; max-width: 320px; }
