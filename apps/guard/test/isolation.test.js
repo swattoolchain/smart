@@ -12,7 +12,7 @@ const STORE_ROUTES = [
   ['get', '/api/stores/:id/visual'], ['patch', '/api/stores/:id'], ['delete', '/api/stores/:id'],
   ['post', '/api/stores/:id/approve-visual'], ['post', '/api/stores/:id/discover'], ['post', '/api/stores/:id/environments'],
   ['post', '/api/stores/:id/explain-change'], ['post', '/api/stores/:id/releases'], ['post', '/api/stores/:id/run'],
-  ['post', '/api/stores/:id/test-alert'],
+  ['post', '/api/stores/:id/test-alert'], ['get', '/api/stores/:id/webhook-deliveries'],
 ];
 
 describe('Data isolation', () => {
