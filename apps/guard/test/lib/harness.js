@@ -46,9 +46,10 @@ function launch(file, env) {
 }
 
 /** A mock Shopify storefront. `breaks`: atc, search, checkout, jserror, password, cloudflare, discount, … */
-export async function startMock({ breaks = '', extra = '', draftBreaks } = {}) {
+export async function startMock({ breaks = '', extra = '', draftBreaks, sale } = {}) {
   const port = await freePort();
   const env = { MOCK_PORT: String(port), MOCK_BREAK: breaks, MOCK_EXTRA: extra };
+  if (sale) env.MOCK_SALE = JSON.stringify(sale); // a sale that switches on at sale.at (see mock-store.js)
   if (draftBreaks !== undefined) env.MOCK_DRAFT_BREAK = draftBreaks;
   const p = launch('test/mock-store.js', env);
   const origin = `http://localhost:${port}`;

@@ -44,7 +44,22 @@ CREATE TABLE IF NOT EXISTS sale_rehearsals (
   finished_at TEXT
 );
 CREATE INDEX IF NOT EXISTS sale_rehearsals_plan ON sale_rehearsals(plan_id, id DESC);
+-- Part 2: checks while the sale is live (the go-live burst). See sale-live.js.
+CREATE TABLE IF NOT EXISTS sale_live_checks (
+  id INTEGER PRIMARY KEY,
+  plan_id INTEGER REFERENCES sale_plans(id) ON DELETE CASCADE,
+  store_id INTEGER REFERENCES stores(id) ON DELETE CASCADE,
+  trigger TEXT NOT NULL DEFAULT 'schedule', -- schedule | manual
+  status TEXT NOT NULL DEFAULT 'running',   -- running | done | error
+  verdict TEXT,                             -- ok | warn | fail
+  run_id INTEGER,                           -- the shopping journey check started with it, if any
+  summary_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS sale_live_plan ON sale_live_checks(plan_id, id DESC);
 `);
+db.exec("UPDATE sale_live_checks SET status = 'error', summary_json = '{\"error\":\"Interrupted by a restart.\"}', finished_at = datetime('now') WHERE status = 'running'");
 db.exec("UPDATE sale_rehearsals SET status = 'error', summary_json = '{\"error\":\"Interrupted by a restart. Run it again.\"}', finished_at = datetime('now') WHERE status = 'running'");
 
 const Q = {
@@ -60,6 +75,7 @@ const Q = {
   rehearsals: db.prepare('SELECT id, trigger, status, verdict, release_id, created_at, finished_at, summary_json FROM sale_rehearsals WHERE plan_id = ? ORDER BY id DESC LIMIT ?'),
   last: db.prepare('SELECT * FROM sale_rehearsals WHERE plan_id = ? ORDER BY id DESC LIMIT 1'),
   todayManual: db.prepare("SELECT COUNT(*) AS n FROM sale_rehearsals WHERE store_id = ? AND trigger = 'manual' AND created_at > datetime('now', '-1 day')"),
+  lastLive: db.prepare("SELECT id, trigger, status, verdict, run_id, created_at, finished_at, summary_json FROM sale_live_checks WHERE plan_id = ? ORDER BY id DESC LIMIT 1"),
   recentSaleRelease: db.prepare("SELECT id FROM releases WHERE store_id = ? AND trigger = 'sale' AND preview_url = ? AND created_at > datetime('now', '-3 days') LIMIT 1"),
 };
 const MARKET_CODES = MARKETS.map((m) => m.code);
@@ -69,9 +85,9 @@ const running = new Set(); // plan ids being rehearsed in this process
 /** How many sale plans a store may have that haven't ended yet. */
 export const planLimit = (ent) => (has(ent, 'publish') ? 10 : 2);
 
-const parse = (row) => ({ ...JSON.parse(row.plan_json || '{}'), id: row.id, storeId: row.store_id, name: row.name, timeZone: row.time_zone, startsAt: row.starts_at, endsAt: row.ends_at, createdAt: row.created_at, updatedAt: row.updated_at });
+export const parse = (row) => ({ ...JSON.parse(row.plan_json || '{}'), id: row.id, storeId: row.store_id, name: row.name, timeZone: row.time_zone, startsAt: row.starts_at, endsAt: row.ends_at, createdAt: row.created_at, updatedAt: row.updated_at });
 const sqlMs = (s) => (s ? new Date(s.replace(' ', 'T') + 'Z').getTime() : null);
-function phase(p, now = Date.now()) { return now < p.startsAt ? 'upcoming' : now < p.endsAt ? 'live' : 'ended'; }
+export function phase(p, now = Date.now()) { return now < p.startsAt ? 'upcoming' : now < p.endsAt ? 'live' : 'ended'; }
 
 function rehearsalView(r, { full = false } = {}) {
   if (!r) return null;
@@ -83,13 +99,18 @@ function rehearsalView(r, { full = false } = {}) {
 }
 function planView(row) {
   const p = parse(row);
-  return { ...p, phase: phase(p), startsLocal: utcToZoned(p.startsAt, p.timeZone), endsLocal: utcToZoned(p.endsAt, p.timeZone), last: rehearsalView(Q.last.get(p.id)) };
+  const live = Q.lastLive.get(p.id);
+  const ls = live?.summary_json ? JSON.parse(live.summary_json) : null;
+  return {
+    ...p, phase: phase(p), startsLocal: utcToZoned(p.startsAt, p.timeZone), endsLocal: utcToZoned(p.endsAt, p.timeZone), last: rehearsalView(Q.last.get(p.id)),
+    lastLive: live ? { id: live.id, status: live.status, verdict: live.verdict, createdAt: live.created_at, counts: ls?.counts || null, fails: (ls?.findings || []).filter((f) => f.level === 'fail').slice(0, 3).map((f) => f.title) } : null,
+  };
 }
 const toRow = (c) => [c.name, c.timeZone, c.startsAt, c.endsAt, JSON.stringify({ markets: c.markets, codes: c.codes, rules: c.rules, themeId: c.themeId, banner: c.banner, freeShipping: c.freeShipping, notes: c.notes })];
 
 // ---------- reading the store ----------
 /** Every product from the storefront's products.json, up to 1,000. */
-async function storeProducts(request, origin) {
+export async function storeProducts(request, origin) {
   const out = [], seen = new Set();
   for (let page = 1; page <= 4; page++) {
     const r = await request.get(`${origin}/products.json?limit=250&page=${page}`, { timeout: 30000 }).catch(() => null);
@@ -101,7 +122,7 @@ async function storeProducts(request, origin) {
   }
   return out;
 }
-async function collectionIds(request, origin, handle) {
+export async function collectionIds(request, origin, handle) {
   const ids = new Set();
   for (let page = 1; page <= 4; page++) {
     const r = await request.get(`${origin}/collections/${encodeURIComponent(handle)}/products.json?limit=250&page=${page}`, { timeout: 30000 }).catch(() => null);

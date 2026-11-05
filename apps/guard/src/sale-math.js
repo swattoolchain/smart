@@ -222,3 +222,86 @@ export function verdictOf(findings) {
   if (findings.some((f) => f.level === 'warn')) return 'review';
   return 'ready';
 }
+
+// ---------- go-live burst (part 2) ----------
+/**
+ * How often the sale is checked once it has started, by plan. Plans with Safe to publish get the full burst:
+ * every 5 minutes for the first hour, then every 15 minutes up to 7 hours. Other plans: every 15 minutes for
+ * the first hour, then every 30 minutes up to 4 hours. After that the store's normal checks carry on.
+ */
+export const BURST = {
+  full: [{ until: 60, every: 5 }, { until: 420, every: 15 }],
+  basic: [{ until: 60, every: 15 }, { until: 240, every: 30 }],
+};
+/** Minutes between burst checks right now, or null when the burst is over (or the sale hasn't started). */
+export function burstEvery(plan, now = Date.now(), kind = 'full') {
+  if (now < plan.startsAt || now >= plan.endsAt) return null;
+  const m = (now - plan.startsAt) / 60000;
+  for (const s of BURST[kind] || BURST.basic) if (m < s.until) return s.every;
+  return null;
+}
+/** Is a burst check due? `lastAt`: when the plan was last checked live (ms) or null. */
+export function burstDue(plan, lastAt, now = Date.now(), kind = 'full') {
+  const every = burstEvery(plan, now, kind);
+  if (!every) return false;
+  if (!lastAt || lastAt < plan.startsAt) return true; // the first check right at go-live
+  return now - lastAt >= every * 60000 - 60000; // the scheduler ticks every 5 minutes; a minute's slack
+}
+
+/** Prices are close enough: shops round sale prices (1199.20 → 1199 or 1199.99). */
+export function nearPrice(shown, want) {
+  return Math.abs(Number(shown) - Number(want)) <= Math.max(0.05, want >= 100 ? 1 : want * 0.01);
+}
+const variantKey = (handle, title) => `${String(handle).toLowerCase()}|${title || 'Default Title'}`;
+/** The normal (pre-sale) prices from a pre-check's price rows, by product handle and variant. */
+export function baselineFrom(rows = []) {
+  const m = new Map();
+  for (const r of rows) m.set(variantKey(r.handle, r.variant || 'Default Title'), Number(r.now));
+  return m;
+}
+
+/**
+ * During the sale: does every product the plan covers show its sale price?
+ * `products`: products.json as it is now. `baseline`: normal prices from the last pre-check (Map, may be empty);
+ * without one, the variant's compare-at price (when higher) is taken as the normal price.
+ * `viaCart`: indexes of rules that a Shopify automatic discount applies in the cart (the shown price stays).
+ * Returns { rows, counts } with rows { product, handle, variant, normal, expected, shown, state }:
+ * state ok | normal (still the normal price) | wrong | cart (taken off in the cart) | soldout.
+ */
+export function livePrices(products, rules, inCollection, baseline = new Map(), viaCart = new Set()) {
+  const rows = [];
+  for (const p of products) {
+    const match = matchingRules(rules, p, inCollection);
+    if (!match.length) continue;
+    const top = Math.max(...match.map((r) => SPECIFIC[r.scope]));
+    const rule = match.find((r) => SPECIFIC[r.scope] === top);
+    const ri = rules.indexOf(rule);
+    for (const v of p.variants || []) {
+      const shown = Number(v.price);
+      const cmp = v.compare_at_price ? Number(v.compare_at_price) : null;
+      const base = baseline.get(variantKey(p.handle, v.title));
+      const normal = base != null ? base : cmp && cmp > shown ? cmp : shown;
+      const expected = priceAfter(normal, rule);
+      let state;
+      if (v.available === false) state = 'soldout';
+      else if (viaCart.has(ri)) state = 'cart';
+      else if (nearPrice(shown, expected)) state = 'ok';
+      else if (nearPrice(shown, normal)) state = 'normal';
+      else state = 'wrong';
+      rows.push({ product: p.title, handle: p.handle, variant: v.title === 'Default Title' ? null : v.title, normal, expected, shown, rule: ri, state });
+    }
+  }
+  const n = (s) => rows.filter((r) => r.state === s).length;
+  return { rows, counts: { variants: rows.length, products: new Set(rows.map((r) => r.handle)).size, ok: n('ok'), normal: n('normal'), wrong: n('wrong'), cart: n('cart'), soldout: n('soldout') } };
+}
+
+/**
+ * What changed since the last live check: problems that are new, and ones that are fixed (by finding key).
+ * `prevFails`: [{ key, title }] from the last check. Returns { broke, fixed, still }.
+ */
+export function liveChanges(prevFails = [], findings = []) {
+  const now = findings.filter((f) => f.level === 'fail');
+  const prev = new Set(prevFails.map((f) => f.key));
+  const cur = new Set(now.map((f) => f.key));
+  return { broke: now.filter((f) => !prev.has(f.key)), fixed: prevFails.filter((f) => !cur.has(f.key)), still: now.filter((f) => prev.has(f.key)) };
+}

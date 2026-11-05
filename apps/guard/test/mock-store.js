@@ -27,6 +27,18 @@ const products = [
   { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: '0.00', available: true }] },
 ];
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
+// MOCK_SALE (JSON): a sale that switches on by itself at a set moment, like a scheduled sale on a real store.
+//   { at: ms since 1970, prices: { variantId: salePrice }, banner, themeId, soldOut: [variantId] }
+// Before `at` the store is as usual. From `at`: new prices (the old one becomes the compare-at price), the banner
+// on every page, the sale theme live (window.Shopify.theme), and the listed variants sold out. GET /__sale starts it now.
+const SALE = process.env.MOCK_SALE ? JSON.parse(process.env.MOCK_SALE) : null;
+let saleOn = false;
+function saleClock() {
+  if (!SALE || saleOn || Date.now() < SALE.at) return;
+  saleOn = true;
+  for (const [id, price] of Object.entries(SALE.prices || {})) { const hit = byId.get(Number(id)); if (hit) { hit.v.compare_at_price = hit.v.price; hit.v.price = Number(price).toFixed(2); } }
+  for (const id of SALE.soldOut || []) { const hit = byId.get(Number(id)); if (hit) hit.v.available = false; }
+}
 
 function cartFor(req, res) {
   const m = /cart=([a-z0-9]+)/.exec(req.headers.cookie || '');
@@ -64,9 +76,9 @@ function layout(title, body, { noindex = false } = {}) {
 ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta name="description" content="Handmade Indian clothing and decor from small artisans.">
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
-<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
+<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : saleOn && SALE.themeId ? `{id:${Number(SALE.themeId)},name:'Dawn – Sale',role:'main'}` : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}
-${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
+${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${saleOn && SALE.banner && !DRAFT ? `<div class="announcement">${SALE.banner}</div>` : ''}${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
 <main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
 }
 function send(res, status, body, type = 'text/html; charset=utf-8') {
@@ -88,11 +100,13 @@ const server = http.createServer(async (req, res) => {
   const previewId = u.searchParams.get('preview_theme_id');
   if (previewId) res.setHeader('Set-Cookie', `preview_theme=${previewId}; Path=/`);
   DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
+  saleClock();
   B = DRAFT ? DRAFT_BREAK : BREAK;
   if (B.has('cloudflare')) {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
   }
+  if (p === '/__sale') { if (SALE) { SALE.at = 0; saleClock(); } return send(res, 200, { on: saleOn }, 'application/json'); } // tests: start the sale now
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });

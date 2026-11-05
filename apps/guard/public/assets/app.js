@@ -614,13 +614,21 @@
     const runs = data.runs;
     const active = runs.find((r) => r.status === 'queued' || r.status === 'running');
     const lastDone = runs.find((r) => r.status === 'done');
-    const [latest, activeRun, sc] = await Promise.all([lastDone ? api('/api/runs/' + lastDone.id) : null, active ? api('/api/runs/' + active.id) : null, api(`/api/stores/${s.id}/scorecard`).catch(() => null), S.catalog ? null : api('/api/catalog').then((c) => (S.catalog = c))]);
+    const [latest, activeRun, sc, , sp] = await Promise.all([lastDone ? api('/api/runs/' + lastDone.id) : null, active ? api('/api/runs/' + active.id) : null, api(`/api/stores/${s.id}/scorecard`).catch(() => null), S.catalog ? null : api('/api/catalog').then((c) => (S.catalog = c)), api(`/api/stores/${s.id}/sale-plans`).catch(() => null)]);
     if (!ctx.alive()) return;
+    const liveSales = (sp?.plans || []).filter((p) => p.phase === 'live');
     const res = latest?.result;
     const problems = problemsFrom(res);
     const fails = problems.filter((c) => c.status === 'fail'), warns = problems.filter((c) => c.status === 'warn');
     const base = `#/s/${s.id}`;
     let body = '';
+    // A planned sale is running: how it's going, first.
+    for (const p of liveSales) {
+      const x = p.lastLive, v = x?.verdict ? LIVE_V[x.verdict] : null;
+      body += `<a class="panel sale-live-card ${v ? v[1] : ''}" href="#/s/${s.id}/sales/${p.id}"><span class="st-ic">${icon(v ? v[2] : 'calendar', 22)}</span>
+        <span><span class="pv-kicker">Sale live · ${esc(p.name)}</span><b>${v ? esc(v[0]) : 'Checking your sale on the live store'}</b>
+        <small>${x?.fails?.length ? esc(x.fails.join(' · ')) : x ? `Checked ${time(x.createdAt)} · theme, banner, sale prices and codes` : 'The first check starts within 5 minutes.'}</small></span>${icon('right', 16)}</a>`;
+    }
     if (activeRun && (activeRun.status === 'queued' || activeRun.status === 'running')) body += liveCard(activeRun, s);
     if (!res && !active) {
       body += `<section class="panel empty"><h2>Ready for its first check</h2><p>The first full check tests the shopping journey, speed, Google, accessibility and every product, and saves today’s look. ${s.monitoring ? 'Scheduled checks start after it.' : 'Monitoring is paused, so only checks you start will run.'}</p>${runLink(s, 'Run first check')}</section>`;
@@ -1775,12 +1783,38 @@
     };
   }
 
+  // While a sale runs: checked every few minutes on the live store (the go-live burst).
+  const LIVE_V = { ok: ['Sale is running as planned', 'healthy', 'check'], warn: ['Sale is running, with things to look at', 'warning', 'alerts'], fail: ['Something in your sale is broken', 'critical', 'stop'] };
+  const LIVE_STATE = { ok: '', normal: 'Normal price', wrong: 'Different from plan', cart: 'Taken off in the cart', soldout: 'Sold out' };
+  function saleLiveSection(s, p, L) {
+    const every = L.every ? `Checked every ${L.every} minutes${L.nextInMin != null ? ` · next in ${L.nextInMin <= 1 ? 'a minute' : `${L.nextInMin} minutes`}` : ''}` : 'Frequent checks have finished. Your store’s usual checks carry on.';
+    const btn = p.phase === 'live' ? `<button type="button" class="btn small" id="sl-run" ${L.running ? 'disabled' : ''}>${icon('play', 14)}${L.running ? 'Checking…' : 'Check now'}</button>` : '';
+    const x = L.latest;
+    if (!x) return `<section class="panel sale-live" id="sale-live"><div class="panel-head"><h2>${icon('calendar', 18)} Sale live</h2>${btn}</div><p class="muted" style="margin:0">${L.running ? 'Checking your live store now: theme, banner, every sale price and your codes.' : 'The first check of the live sale starts within 5 minutes.'}</p></section>`;
+    const [vl, vk, vi] = LIVE_V[x.verdict] || LIVE_V.warn;
+    const sum = x.summary, c = sum.counts;
+    const order = ['fail', 'warn', 'pass'];
+    const items = [...sum.findings].sort((a, b) => order.indexOf(a.level) - order.indexOf(b.level));
+    const pr = sum.prices;
+    const off = pr ? pr.rows.filter((r) => r.state !== 'ok') : [];
+    return `<section class="panel pub-verdict ${vk} sale-live" id="sale-live"><span class="pv-icon">${icon(vi, 26)}</span><div class="pv-text"><p class="pv-kicker">Sale live</p>
+        <h2>${esc(vl)}</h2><p class="muted">Checked ${time(x.createdAt)} on a phone · ${c.fail} to fix · ${c.warn} to look at · ${c.pass} working · ${esc(every)}</p></div><div>${btn}</div></section>
+      <section class="panel"><h2>On your live store now</h2><ul class="list">${items.map((f) => `<li><div class="row"><span class="sev ${SALE_LEVEL[f.level][1]}">${f.level === 'pass' ? 'OK' : SALE_LEVEL[f.level][0]}</span>
+        <span><span class="t">${esc(f.title)}</span>${f.detail ? `<span class="d">${esc(f.detail)}</span>` : ''}${f.fix ? `<div class="fix-line"><b>What to do:</b> ${esc(f.fix)}</div>` : ''}</span><span></span></div></li>`).join('')}
+        ${!x.runId && sum.journey === 'busy' ? `<li><div class="row"><span class="sev">Journey</span><span><span class="t">Shopping journey and checkout</span><span class="d">Another check was running for your store, so the next sale check tests it.</span></span><span></span></div></li>` : ''}
+        ${x.runId ? `<li><div class="row"><span class="sev">Journey</span><span><span class="t">Shopping journey and checkout</span><span class="d">Tested with this check, like a shopper on your store.</span><div class="evidence"><a class="btn small secondary" href="#/s/${s.id}/reports/${x.runId}">${icon('reports', 14)}Open the report</a></div></span><span></span></div></li>` : ''}</ul></section>
+      ${off.length ? `<section class="panel"><details class="still" open><summary>Prices to look at: ${off.length}</summary><div class="table-wrap flat" style="margin-top:10px"><table class="data"><thead><tr><th>Product</th><th class="num">Normal</th><th class="num">Plan</th><th class="num">Shown now</th><th>Note</th></tr></thead><tbody>
+        ${off.map((r) => `<tr class="${r.state === 'normal' || r.state === 'wrong' ? 'row-new' : ''}"><td><span class="cell-main">${esc(r.product)}</span>${r.variant ? `<div class="cell-sub">${esc(r.variant)}</div>` : ''}</td><td class="num">${esc(r.normal)}</td><td class="num">${esc(r.expected)}</td><td class="num">${esc(r.shown)}</td><td class="cell-sub">${esc(LIVE_STATE[r.state])}</td></tr>`).join('')}</tbody></table></div></details></section>` : ''}`;
+  }
+
   async function saleDetail(ctx, s, planId) {
     const d = await api(`/api/stores/${s.id}/sale-plans/${planId}`);
     if (!ctx.alive()) return;
+    const L = d.plan.phase !== 'upcoming' ? await api(`/api/stores/${s.id}/sale-plans/${planId}/live`).catch(() => null) : null;
+    if (!ctx.alive()) return;
     const p = d.plan, r = d.latest, sum = r?.summary;
     const crumb = `<a href="#/s/${s.id}/sales">Sale plans</a> / ${esc(p.name)}`;
-    const actions = `<a class="btn secondary" href="#/s/${s.id}/sales/${p.id}/edit">${icon('edit', 16)}Edit</a><button type="button" class="btn ghost" id="sp-del">${icon('trash', 16)}Remove</button>${p.phase !== 'ended' ? `<button type="button" class="btn" id="sp-run" ${r?.status === 'running' ? 'disabled' : ''}>${icon('play', 16)}Rehearse now</button>` : ''}`;
+    const actions = `<a class="btn secondary" href="#/s/${s.id}/sales/${p.id}/edit">${icon('edit', 16)}Edit</a><button type="button" class="btn ghost" id="sp-del">${icon('trash', 16)}Remove</button>${p.phase === 'upcoming' ? `<button type="button" class="btn" id="sp-run" ${r?.status === 'running' ? 'disabled' : ''}>${icon('play', 16)}Rehearse now</button>` : ''}`;
     const facts = `<section class="panel"><h2>The plan</h2><dl class="facts">
       <div><dt>When</dt><dd>${saleWhen(p)}</dd></div>
       ${p.markets.length ? `<div><dt>Where</dt><dd>${esc(p.markets.join(', '))}</dd></div>` : ''}
@@ -1812,7 +1846,11 @@
       body = hero + find + prices;
     }
     const hist = d.history.length > 1 ? `<section class="panel"><h2>Earlier rehearsals</h2><ul class="list">${d.history.slice(1, 10).map((h) => `<li><div class="row"><span>${salePill(h)}</span><span class="d">${h.counts ? `${h.counts.fail} to fix · ${h.counts.warn} to look at` : esc(h.error || '')}</span><span class="r">${time(h.createdAt)}</span></div></li>`).join('')}</ul></section>` : '';
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, p.name, { crumb, actions, meta: `${esc(SALE_PHASE[p.phase])}` })}<div class="grid-2 tight"><div>${body}</div><div>${facts}${hist}</div></div></div>`;
+    const liveHtml = L && (p.phase === 'live' || L.latest) ? saleLiveSection(s, p, L) + (r ? '<h2 class="sale-sub">Last rehearsal before the sale</h2>' : '') : '';
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, p.name, { crumb, actions, meta: `${esc(SALE_PHASE[p.phase])}` })}<div class="grid-2 tight"><div>${liveHtml}${L && p.phase !== 'upcoming' && !r ? '' : body}</div><div>${facts}${hist}</div></div></div>`;
+    const slr = $('#sl-run');
+    if (slr) slr.onclick = async () => { const done = busy(slr, 'Starting'); try { await api(`/api/stores/${s.id}/sale-plans/${p.id}/live-check`, { method: 'POST' }); render({ silent: true }); } catch (ex) { done(); toast(ex.message, 'error'); } };
+    if (L?.running) poll(4000);
     const run = $('#sp-run');
     if (run) run.onclick = async () => { const done = busy(run, 'Starting'); try { await api(`/api/stores/${s.id}/sale-plans/${p.id}/rehearse`, { method: 'POST' }); render({ silent: true }); } catch (ex) { done(); toast(ex.message, 'error'); } };
     $('#sp-del').onclick = async () => {

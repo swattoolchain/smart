@@ -987,3 +987,12 @@ ui-nav-menu { display: none !important; }
 .sale-markets { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .sale-markets label.check { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; font-size: 13.5px; margin: 0; }
 @media (max-width: 640px) { .sale-rule { grid-template-columns: 1fr 1fr; } }
+
+/* Sale live (go-live burst) */
+.sale-sub { font-size: 14px; color: var(--muted); margin: 18px 0 10px; }
+.sale-live-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: center; text-decoration: none; color: inherit; border-left: 4px solid var(--line, #ddd); }
+.sale-live-card.healthy { border-left-color: #22a35a; } .sale-live-card.warning { border-left-color: #e19a1b; } .sale-live-card.critical { border-left-color: #e5484d; }
+.sale-live-card b { display: block; font-size: 15.5px; margin: 1px 0 2px; } .sale-live-card small { color: var(--muted); font-size: 13px; }
+.sale-live-card .pv-kicker { display: block; }
+.sale-live-card .st-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--soft, #f1f1f4); color: var(--muted); }
+.sale-live-card.healthy .st-ic { background: #e7f6ec; color: #1a7f45; } .sale-live-card.warning .st-ic { background: #fdf3e1; color: #a86a00; } .sale-live-card.critical .st-ic { background: #fdecec; color: #c4262c; }
