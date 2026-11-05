@@ -173,6 +173,7 @@
     close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
     copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
     layers: '<path d="m12 4 8.5 4.5L12 13 3.5 8.5z"/><path d="m3.5 12.5 8.5 4.5 8.5-4.5"/><path d="m3.5 16.5 8.5 4.5 8.5-4.5"/>',
+    calendar: '<rect x="4" y="5.5" width="16" height="14.5" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/><path d="m9.5 15 1.8 1.8 3.5-3.5"/>',
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.6 3.5 5.4 3.5 8.5s-1.1 5.9-3.5 8.5c-2.4-2.6-3.5-5.4-3.5-8.5s1.1-5.9 3.5-8.5z"/>',
   };
   const icon = (k, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
@@ -335,6 +336,7 @@
       ${item(`${base}/reports`, 'reports', 'Reports', at('reports'))}
       ${item(`${base}/runs`, 'runs', 'Runs', at('runs'))}
       ${item(`${base}/publish`, 'publish', 'Safe to publish', at('publish'))}
+      ${item(`${base}/sales`, 'calendar', 'Sale plans', at('sales'))}
       ${item(`${base}/catalog`, 'catalog', 'Catalog', at('catalog'))}
       ${item(`${base}/visual`, 'visual', 'Visual changes', at('visual'))}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
@@ -1424,7 +1426,7 @@
     : r.status === 'cancelled' ? '<span class="pill">Stopped</span>' : '<span class="pill">Didn\'t finish</span>';
   const DEVICE_PAGE = { home: 'Homepage', product: 'Product page' };
 
-  const BY = { manual: 'You', schedule: 'Daily check', ci: 'Deploy pipeline' };
+  const BY = { manual: 'You', schedule: 'Daily check', ci: 'Deploy pipeline', sale: 'Sale rehearsal' };
   const ENV_KIND = { theme: ['Theme on this store', 'layers'], store: ['Staging store or site', 'globe'] };
   const hostOf = (u) => { try { const x = new URL(u); return x.hostname + (x.searchParams.get('preview_theme_id') ? ` · theme ${x.searchParams.get('preview_theme_id')}` : ''); } catch { return u; } };
 
@@ -1676,6 +1678,149 @@
       });
     };
     if (DEV.length) { draw(DEV[0][0]); $$('input[name=pdev]', ctx.main).forEach((x) => (x.onchange = () => draw(x.value))); }
+  }
+
+  // ---------- Sale plans: write the sale down once, rehearse it before it starts ----------
+  const SALE_V = { ready: ['Ready for the sale', 'healthy', 'check'], review: ['Ready, with things to look at', 'warning', 'alerts'], not_ready: ['Not ready yet', 'critical', 'stop'] };
+  const SALE_LEVEL = { fail: ['Fix', 'fail'], warn: ['Look', 'warn'], pass: ['Ready', 'ok'], later: ['At go-live', ''] };
+  const SALE_PHASE = { upcoming: 'Upcoming', live: 'Running now', ended: 'Ended' };
+  const salePill = (r) => !r ? '<span class="pill">Not rehearsed yet</span>' : r.status === 'running' ? '<span class="pill running">Rehearsing…</span>'
+    : r.status === 'done' ? `<span class="pill ${SALE_V[r.verdict][1]}">${SALE_V[r.verdict][0]}</span>` : '<span class="pill">Didn\'t finish</span>';
+  const localTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } };
+  const fmtLocal = (l) => { const d = new Date(l + ':00Z'); return d.toLocaleString(undefined, { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
+  // The sale's times in the store's time zone, and in the owner's own when it is different.
+  const saleWhen = (p) => { const own = localTz(); const mine = own !== p.timeZone ? ` · your time ${new Date(p.startsAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''; return `${esc(fmtLocal(p.startsLocal))} → ${esc(fmtLocal(p.endsLocal))} <span class="cell-sub">(${esc(p.timeZone)})${esc(mine)}</span>`; };
+  const ruleText = (r) => `${r.type === 'percent' ? `${r.value}% off` : r.type === 'fixed' ? `${r.value} off` : `new price ${r.value}`} · ${r.scope === 'all' ? 'everything' : `${r.scope} “${r.target}”`}`;
+
+  STORE_PAGES.sales = async (ctx, s) => {
+    if (ctx.r.a === 'new' || ctx.r.b === 'edit') return saleForm(ctx, s, ctx.r.b === 'edit' ? Number(ctx.r.a) : null);
+    if (ctx.r.a && /^\d+$/.test(ctx.r.a)) return saleDetail(ctx, s, Number(ctx.r.a));
+    const d = await api(`/api/stores/${s.id}/sale-plans`);
+    if (!ctx.alive()) return;
+    const open = d.plans.filter((p) => p.phase !== 'ended').length;
+    const add = open >= d.limit ? `<span class="btn secondary" aria-disabled="true" title="Your plan covers ${d.limit} upcoming sale plans">${icon('lock', 16)}New sale plan</span>` : `<a class="btn" href="#/s/${s.id}/sales/new">${icon('add', 16)}New sale plan</a>`;
+    const intro = `<section class="panel pub-start"><div class="pub-intro"><span class="empty-icon">${icon('calendar', 22)}</span><div><h2>Rehearse your next sale</h2>
+      <p class="sub">Write down your sale once: when it starts and ends, the discounts, codes, sale theme and banner. We work out every product’s sale price, compare it with the discounts scheduled in Shopify, test the sale theme next to your live store, and send you a report every day until the sale starts. Works for Black Friday, Diwali, 11.11, end of season sales and any other sale day.</p></div></div></section>`;
+    const list = d.plans.length ? `<section class="panel"><div class="panel-head"><h2>Your sale plans</h2></div><div class="table-wrap flat"><table class="data"><thead><tr><th>Sale</th><th>When</th><th>Last rehearsal</th><th aria-label="Open"></th></tr></thead><tbody>
+      ${d.plans.map((p) => `<tr class="link" data-href="#/s/${s.id}/sales/${p.id}" tabindex="0"><td><span class="cell-main">${esc(p.name)}</span><div class="cell-sub">${esc(SALE_PHASE[p.phase])}${p.codes.length ? ` · ${plural(p.codes.length, 'code')}` : ''}${p.rules.length ? ` · ${plural(p.rules.length, 'discount')}` : ''}</div></td>
+        <td>${saleWhen(p)}</td><td>${salePill(p.last)}${p.last ? `<div class="cell-sub">${time(p.last.createdAt)}</div>` : ''}</td><td class="go">${icon('right', 16)}</td></tr>`).join('')}</tbody></table></div></section>` : '';
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Sale plans', { actions: add })}${intro}${list}</div>`;
+    $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
+  };
+
+  async function saleForm(ctx, s, planId) {
+    const [d, th] = await Promise.all([api(`/api/stores/${s.id}/sale-plans`), S.license?.shopify ? api(`/api/stores/${s.id}/shopify/themes`).catch(() => ({ themes: null })) : Promise.resolve({ themes: null })]);
+    if (!ctx.alive()) return;
+    const p = planId ? d.plans.find((x) => x.id === planId) : null;
+    if (planId && !p) { location.hash = `#/s/${s.id}/sales`; return; }
+    const v = p || { name: '', timeZone: localTz(), startsLocal: '', endsLocal: '', markets: s.config.markets || [], codes: [], rules: [{ scope: 'all', type: 'percent', value: '' }], themeId: null, banner: '', freeShipping: null, notes: '' };
+    let zones = [];
+    try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = [v.timeZone]; }
+    // Common sale time zones are always offered, whatever name the browser uses for them.
+    zones = [...new Set([v.timeZone, ...zones, 'Asia/Kolkata', 'America/New_York', 'America/Los_Angeles', 'Europe/London', 'Europe/Berlin', 'Asia/Singapore', 'Asia/Dubai', 'Australia/Sydney'])].sort();
+    const ruleRow = (r = {}) => `<div class="sale-rule">
+      <select name="type" aria-label="Kind of discount">${[['percent', '% off'], ['fixed', 'Amount off'], ['price', 'New price']].map(([k, l]) => `<option value="${k}" ${r.type === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <input name="value" type="number" min="0" step="0.01" inputmode="decimal" placeholder="20" value="${esc(r.value ?? '')}" aria-label="Amount">
+      <select name="scope" aria-label="Applies to">${[['all', 'Everything'], ['collection', 'Collection'], ['product', 'Product'], ['tag', 'Tag']].map(([k, l]) => `<option value="${k}" ${r.scope === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <input name="target" placeholder="handle or tag" value="${esc(r.target || '')}" aria-label="Collection, product or tag" ${!r.scope || r.scope === 'all' ? 'hidden' : ''}>
+      <button type="button" class="icon-btn" data-del aria-label="Remove discount">${icon('trash', 16)}</button></div>`;
+    const themeField = th.themes ? `<select id="sp-theme" name="themeId"><option value="">No sale theme</option>${th.themes.map((t) => `<option value="${esc(t.id)}" ${String(v.themeId) === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>`
+      : `<input id="sp-theme" name="themeId" inputmode="numeric" placeholder="e.g. 140298567890" value="${esc(v.themeId || '')}"><p class="hint">The number after preview_theme_id= in the theme’s preview link.</p>`;
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, p ? `Edit ${p.name}` : 'New sale plan', { crumb: `<a href="#/s/${s.id}/sales">Sale plans</a> / ${p ? esc(p.name) : 'New'}` })}
+      <form id="spf" class="panel" novalidate>
+        <div class="form-grid">
+          <div class="field"><label for="sp-name">Name of the sale</label><input id="sp-name" name="name" maxlength="80" placeholder="Black Friday 2026" value="${esc(v.name)}" required></div>
+          <div class="field"><label for="sp-tz">Time zone of the sale</label><select id="sp-tz" name="timeZone">${zones.map((z) => `<option ${z === v.timeZone ? 'selected' : ''}>${esc(z)}</option>`).join('')}</select></div>
+          <div class="field"><label for="sp-start">Starts</label><input id="sp-start" name="startsLocal" type="datetime-local" value="${esc(v.startsLocal)}" required></div>
+          <div class="field"><label for="sp-end">Ends</label><input id="sp-end" name="endsLocal" type="datetime-local" value="${esc(v.endsLocal)}" required></div>
+        </div>
+        <div class="field"><span class="label">Where the sale runs</span><div class="sale-markets">${d.markets.map((m) => `<label class="check"><input type="checkbox" name="markets" value="${esc(m.code)}" ${v.markets.includes(m.code) ? 'checked' : ''}> ${esc(m.label)}</label>`).join('')}</div></div>
+        <div class="field"><span class="label">Discounts you expect</span><p class="hint" style="margin-top:0">We work out every product’s sale price from these and check it before the sale. The most specific one wins: product, then tag, then collection, then everything.</p>
+          <div id="sp-rules">${(v.rules.length ? v.rules : [{ scope: 'all', type: 'percent' }]).map(ruleRow).join('')}</div>
+          <button type="button" class="btn ghost small" id="sp-add-rule">${icon('add', 14)}Add a discount</button></div>
+        <div class="form-grid">
+          <div class="field"><label for="sp-codes">Discount codes <span class="muted" style="font-weight:400">(one per line, with the % if you like: BF20 20)</span></label><textarea id="sp-codes" name="codes" rows="3" placeholder="BF20 20">${esc(v.codes.map((c) => c.code + (c.percent != null ? ' ' + c.percent : '')).join('\n'))}</textarea></div>
+          <div class="field"><label for="sp-theme">Sale theme</label>${themeField}</div>
+          <div class="field"><label for="sp-banner">Sale banner text</label><input id="sp-banner" name="banner" maxlength="140" placeholder="BLACK FRIDAY · 30% OFF EVERYTHING" value="${esc(v.banner || '')}"></div>
+          <div class="field"><label for="sp-ship">Free shipping from <span class="muted" style="font-weight:400">(order amount, optional)</span></label><input id="sp-ship" name="freeShipping" type="number" min="0" step="0.01" value="${esc(v.freeShipping ?? '')}"></div>
+        </div>
+        <div class="field"><label for="sp-notes">Notes <span class="muted" style="font-weight:400">(bundles, gifts, anything else)</span></label><textarea id="sp-notes" name="notes" rows="2" maxlength="500">${esc(v.notes || '')}</textarea></div>
+        <p class="error-msg" id="sp-err" role="alert"></p>
+        <div class="inline-row"><button class="btn" type="submit">${p ? 'Save changes' : 'Save and rehearse'}</button><a class="btn ghost" href="#/s/${s.id}/sales${p ? '/' + p.id : ''}">Cancel</a></div>
+      </form></div>`;
+    const wire = () => $$('.sale-rule', ctx.main).forEach((row) => {
+      row.querySelector('[name=scope]').onchange = (e) => { row.querySelector('[name=target]').hidden = e.target.value === 'all'; };
+      row.querySelector('[data-del]').onclick = () => { row.remove(); };
+    });
+    wire();
+    $('#sp-add-rule').onclick = () => { $('#sp-rules').insertAdjacentHTML('beforeend', ruleRow({ scope: 'collection', type: 'percent' })); wire(); };
+    $('#spf').oninput = () => (S.dirty = true);
+    $('#spf').onsubmit = async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      const body = {
+        name: f.name.value, timeZone: f.timeZone.value, startsLocal: f.startsLocal.value, endsLocal: f.endsLocal.value,
+        markets: $$('input[name=markets]:checked', f).map((x) => x.value),
+        rules: $$('.sale-rule', f).map((row) => ({ type: row.querySelector('[name=type]').value, value: row.querySelector('[name=value]').value, scope: row.querySelector('[name=scope]').value, target: row.querySelector('[name=target]').value })).filter((r) => r.value !== ''),
+        codes: f.codes.value.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { const [code, pct] = l.split(/[\s,]+/); return { code, percent: pct ? pct.replace('%', '') : null }; }),
+        themeId: f.themeId.value || null, banner: f.banner.value, freeShipping: f.freeShipping.value, notes: f.notes.value,
+      };
+      const done = busy(f.querySelector('button[type=submit]'), 'Saving');
+      try {
+        const r = await api(`/api/stores/${s.id}/sale-plans${p ? '/' + p.id : ''}`, { method: p ? 'PATCH' : 'POST', body });
+        S.dirty = false;
+        if (!p) await api(`/api/stores/${s.id}/sale-plans/${r.plan.id}/rehearse`, { method: 'POST' }).catch(() => {});
+        location.hash = `#/s/${s.id}/sales/${r.plan.id}`;
+      } catch (ex) { done(); $('#sp-err').textContent = ex.message; }
+    };
+  }
+
+  async function saleDetail(ctx, s, planId) {
+    const d = await api(`/api/stores/${s.id}/sale-plans/${planId}`);
+    if (!ctx.alive()) return;
+    const p = d.plan, r = d.latest, sum = r?.summary;
+    const crumb = `<a href="#/s/${s.id}/sales">Sale plans</a> / ${esc(p.name)}`;
+    const actions = `<a class="btn secondary" href="#/s/${s.id}/sales/${p.id}/edit">${icon('edit', 16)}Edit</a><button type="button" class="btn ghost" id="sp-del">${icon('trash', 16)}Remove</button>${p.phase !== 'ended' ? `<button type="button" class="btn" id="sp-run" ${r?.status === 'running' ? 'disabled' : ''}>${icon('play', 16)}Rehearse now</button>` : ''}`;
+    const facts = `<section class="panel"><h2>The plan</h2><dl class="facts">
+      <div><dt>When</dt><dd>${saleWhen(p)}</dd></div>
+      ${p.markets.length ? `<div><dt>Where</dt><dd>${esc(p.markets.join(', '))}</dd></div>` : ''}
+      <div><dt>Discounts</dt><dd>${p.rules.length ? p.rules.map((x) => esc(ruleText(x))).join('<br>') : '–'}</dd></div>
+      <div><dt>Codes</dt><dd>${p.codes.length ? p.codes.map((c) => esc(c.code + (c.percent != null ? ` (${c.percent}%)` : ''))).join(', ') : '–'}</dd></div>
+      ${p.themeId ? `<div><dt>Sale theme</dt><dd>${esc(p.themeId)}</dd></div>` : ''}${p.banner ? `<div><dt>Banner</dt><dd>${esc(p.banner)}</dd></div>` : ''}
+      ${p.freeShipping != null ? `<div><dt>Free shipping from</dt><dd>${esc(p.freeShipping)}</dd></div>` : ''}${p.notes ? `<div><dt>Notes</dt><dd>${esc(p.notes)}</dd></div>` : ''}</dl>
+      ${p.phase === 'upcoming' ? '<p class="muted" style="margin:10px 0 0">We rehearse this sale once a day until it starts and email you the result.</p>' : ''}</section>`;
+    let body;
+    if (!r) body = `<section class="panel empty"><h2>Not rehearsed yet</h2><p>Rehearse the sale to see if your prices, codes and sale theme are ready.</p></section>`;
+    else if (r.status === 'running') body = `<section class="panel empty"><span class="spinner"></span><h2>Rehearsing your sale</h2><p>Working out sale prices and reading your discounts. This takes about a minute.</p></section>`;
+    else if (r.status !== 'done') body = `<section class="panel empty"><h2>The rehearsal didn’t finish</h2><p>${esc(sum?.error || 'Try again in a few minutes.')}</p></section>`;
+    else {
+      const [vl, vk, vi] = SALE_V[r.verdict];
+      const c = sum.counts;
+      const hero = `<section class="panel pub-verdict ${vk}"><span class="pv-icon">${icon(vi, 26)}</span><div class="pv-text"><p class="pv-kicker">${esc(vl)}</p>
+        <h2>${c.fail ? `${plural(c.fail, 'thing')} to fix before the sale` : c.warn ? `${plural(c.warn, 'thing')} to look at` : 'Everything we can check now is ready'}</h2>
+        <p class="muted">Rehearsed ${time(r.createdAt)}${r.trigger === 'schedule' ? ' (daily)' : ''} · ${c.pass} ready · ${c.later} checked when the sale goes live</p></div></section>`;
+      const order = ['fail', 'warn', 'pass', 'later'];
+      const items = [...sum.findings].sort((a, b) => order.indexOf(a.level) - order.indexOf(b.level));
+      const find = `<section class="panel"><h2>What we checked</h2><ul class="list">${items.map((f) => `<li><div class="row"><span class="sev ${SALE_LEVEL[f.level][1]}">${SALE_LEVEL[f.level][0]}</span>
+        <span><span class="t">${esc(f.title)}</span>${f.detail ? `<span class="d">${esc(f.detail)}</span>` : ''}${f.fix ? `<div class="fix-line"><b>What to do:</b> ${esc(f.fix)}</div>` : ''}
+        ${f.releaseId ? `<div class="evidence"><a class="btn small secondary" href="#/s/${s.id}/publish/${f.releaseId}">${icon('publish', 14)}Open side-by-side result</a></div>` : ''}</span><span></span></div></li>`).join('')}</ul></section>`;
+      const pr = sum.prices;
+      const prices = pr?.rows.length ? `<section class="panel"><details class="still" ${pr.counts.fail ? 'open' : ''}><summary>Sale prices: ${plural(pr.counts.variants, 'price')} on ${plural(pr.counts.products, 'product')}${pr.counts.fail ? ` · ${pr.counts.fail} wrong` : ''}${pr.counts.warn ? ` · ${pr.counts.warn} to look at` : ''}</summary>
+        <div class="table-wrap flat" style="margin-top:10px"><table class="data"><thead><tr><th>Product</th><th class="num">Today</th><th class="num">In the sale</th><th>Note</th></tr></thead><tbody>
+        ${pr.rows.map((x) => `<tr class="${x.issues.some((i) => i.level === 'fail') ? 'row-new' : ''}"><td><span class="cell-main">${esc(x.product)}</span>${x.variant ? `<div class="cell-sub">${esc(x.variant)}</div>` : ''}</td><td class="num">${esc(x.now)}</td><td class="num">${esc(x.sale)}</td><td class="cell-sub">${esc(x.issues.map((i) => i.text).join(', '))}</td></tr>`).join('')}</tbody></table></div>
+        ${pr.more ? `<p class="muted">And ${pr.more} more.</p>` : ''}</details></section>` : '';
+      body = hero + find + prices;
+    }
+    const hist = d.history.length > 1 ? `<section class="panel"><h2>Earlier rehearsals</h2><ul class="list">${d.history.slice(1, 10).map((h) => `<li><div class="row"><span>${salePill(h)}</span><span class="d">${h.counts ? `${h.counts.fail} to fix · ${h.counts.warn} to look at` : esc(h.error || '')}</span><span class="r">${time(h.createdAt)}</span></div></li>`).join('')}</ul></section>` : '';
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, p.name, { crumb, actions, meta: `${esc(SALE_PHASE[p.phase])}` })}<div class="grid-2 tight"><div>${body}</div><div>${facts}${hist}</div></div></div>`;
+    const run = $('#sp-run');
+    if (run) run.onclick = async () => { const done = busy(run, 'Starting'); try { await api(`/api/stores/${s.id}/sale-plans/${p.id}/rehearse`, { method: 'POST' }); render({ silent: true }); } catch (ex) { done(); toast(ex.message, 'error'); } };
+    $('#sp-del').onclick = async () => {
+      if (!(await confirmDialog({ title: `Remove ${p.name}?`, body: 'The plan and its rehearsals are removed. Your Shopify discounts and themes are not changed.', confirm: 'Remove', danger: true }))) return;
+      await api(`/api/stores/${s.id}/sale-plans/${p.id}`, { method: 'DELETE' });
+      location.hash = `#/s/${s.id}/sales`;
+    };
+    if (r?.status === 'running') poll(3000);
   }
 
   // ---------- Workspace pages ----------
@@ -2468,7 +2613,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false;
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', sales: '/sales', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {
