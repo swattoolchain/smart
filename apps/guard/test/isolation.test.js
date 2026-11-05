@@ -14,6 +14,7 @@ const STORE_ROUTES = [
   ['post', '/api/stores/:id/explain-change'], ['post', '/api/stores/:id/releases'], ['post', '/api/stores/:id/run'],
   ['post', '/api/stores/:id/test-alert'],
   ['get', '/api/stores/:id/incident'], ['post', '/api/stores/:id/incident'], ['patch', '/api/stores/:id/incident'], ['post', '/api/stores/:id/incident/end'],
+  ['get', '/api/stores/:id/recovery-packet'], ['get', '/api/stores/:id/recovery-packet.txt'],
 ];
 
 describe('Data isolation', () => {

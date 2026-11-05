@@ -1136,7 +1136,8 @@
               <div><button class="btn danger" id="inc-go" type="submit">${icon('lock', 16)}Start incident mode</button></div>
             </form></section>
           <section class="panel"><h2>What you'll be asked to do</h2><ol class="inc-steps-preview">${d.steps.map((x) => `<li><b>${esc(x.title)}.</b> <span class="muted">${esc(x.how)}</span></li>`).join('')}</ol></section>
-          ${d.history.length ? `<section class="panel"><h2>Earlier incidents</h2><ul class="list">${d.history.map((h) => `<li><span>${esc(when(h.startedAt))} → ${esc(when(h.endedAt))}${h.reason ? ` · ${esc(h.reason)}` : ''}</span><span class="muted">${h.stepsDone} of ${h.steps} steps · ${h.endedBy === 'time' ? 'ended after 48 hours' : 'ended by you'}</span></li>`).join('')}</ul></section>` : ''}</div>`;
+          ${d.history.length ? `<section class="panel"><h2>Earlier incidents</h2><ul class="list">${d.history.map((h) => `<li><span>${esc(when(h.startedAt))} → ${esc(when(h.endedAt))}${h.reason ? ` · ${esc(h.reason)}` : ''}</span><span class="muted">${h.stepsDone} of ${h.steps} steps · ${h.endedBy === 'time' ? 'ended after 48 hours' : 'ended by you'}</span></li>`).join('')}</ul></section>` : ''}
+          <section class="panel" id="inc-packet"></section></div>`;
         $('#inc-form').addEventListener('submit', async (e) => {
           e.preventDefault();
           const done = busy($('#inc-go'), 'Starting');
@@ -1147,6 +1148,7 @@
             if (ctx.alive()) draw();
           } catch (ex) { toast(ex.message, 'error'); done(); }
         });
+        packetSection();
         return;
       }
       const stepsDone = a.steps.filter((x) => x.doneAt).length;
@@ -1163,7 +1165,8 @@
             <div class="sc-body"><b>${esc(x.title)}</b><p class="sc-how">${esc(x.how)}</p>${x.doneAt ? `<p class="sc-meta muted">Done ${esc(when(x.doneAt))}</p>` : ''}</div></li>`).join('')}</ul></section>
         <section class="panel"><h2>Team alerts</h2><p class="sub">These people get every alert until incident mode ends, plus the summary at the end.</p>
           <form id="inc-team-form" class="inline-row"><input id="inc-team" value="${esc(a.contacts.join(', '))}" placeholder="developer@example.com" style="flex:1;min-width:0"><button class="btn secondary" type="submit">Save</button></form></section>
-        <section class="panel"><h2>Checks since it started</h2>${a.runs.length ? `<ul class="list">${a.runs.map((r) => `<li><a href="#/s/${s.id}/reports/${r.id}">${esc(when(r.created_at))} · ${r.kind === 'full' ? 'Full check' : 'Shopping check'}</a><span class="pill ${esc(r.verdict || '')}">${esc(r.status === 'done' ? VLABEL[r.verdict] || r.verdict : r.status)}</span></li>`).join('')}</ul>` : '<p class="muted">The first check starts in a moment.</p>'}</section></div>`;
+        <section class="panel"><h2>Checks since it started</h2>${a.runs.length ? `<ul class="list">${a.runs.map((r) => `<li><a href="#/s/${s.id}/reports/${r.id}">${esc(when(r.created_at))} · ${r.kind === 'full' ? 'Full check' : 'Shopping check'}</a><span class="pill ${esc(r.verdict || '')}">${esc(r.status === 'done' ? VLABEL[r.verdict] || r.verdict : r.status)}</span></li>`).join('')}</ul>` : '<p class="muted">The first check starts in a moment.</p>'}</section>
+        <section class="panel" id="inc-packet"></section></div>`;
       $$('[data-step] input', ctx.main).forEach((box) => box.addEventListener('change', async () => {
         const key = box.closest('[data-step]').dataset.step;
         box.disabled = true;
@@ -1180,6 +1183,27 @@
         const done = busy(e.currentTarget, 'Ending');
         try { d = await api(`/api/stores/${s.id}/incident/end`, { method: 'POST' }); toast('Incident mode ended. A summary is on its way.'); await refreshStore(); if (ctx.alive()) draw(); }
         catch (ex) { toast(ex.message, 'error'); done(); }
+      });
+      packetSection();
+    };
+    // Recovery packet (S17): shown in both states, under everything else.
+    const packetSection = async () => {
+      const box = $('#inc-packet', ctx.main);
+      if (!box) return;
+      let p;
+      try { p = await api(`/api/stores/${s.id}/recovery-packet`); } catch (ex) { box.innerHTML = `<p class="muted">${esc(ex.message)}</p>`; return; }
+      if (!ctx.alive() || !box.isConnected) return;
+      box.innerHTML = `<h2>Recovery packet</h2><p class="sub">Locked out, or think someone else got in? Reset your password first, then send this message to ${p.support ? 'Shopify Support' : 'your platform\'s support'}. It says what changed and when, from our checks.</p>
+        <div class="rp-grid"><div class="rp-reset"><h3>1. Reset your password</h3><ol>${p.reset.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>
+          <p><a class="btn" id="rp-reset" href="${esc(p.reset.url)}" target="_blank" rel="noopener">${icon('lock', 16)}Reset password</a>${p.reset.help ? ` <a class="btn secondary" href="${esc(p.reset.help)}" target="_blank" rel="noopener">Shopify's help</a>` : ''}</p></div>
+        <div class="rp-msg"><h3>2. Send this to ${p.support ? 'Shopify Support' : 'support'}</h3>
+          <div class="field"><label for="rp-subject">Subject</label><input id="rp-subject" readonly value="${esc(p.message.subject)}"></div>
+          <div class="field"><label for="rp-text">Message</label><textarea id="rp-text" readonly rows="14">${esc(p.message.text)}</textarea></div>
+          <p class="inline-row"><button class="btn" type="button" id="rp-copy">${icon('copy', 16)}Copy message</button><a class="btn secondary" id="rp-download" href="/api/stores/${s.id}/recovery-packet.txt" download>Download</a>${p.support ? `<a class="btn secondary" href="${esc(p.support.url)}" target="_blank" rel="noopener">${icon('external', 16)}Contact Shopify Support</a>` : ''}</p></div></div>`;
+      $('#rp-copy').addEventListener('click', async () => {
+        const text = `Subject: ${p.message.subject}\n\n${p.message.text}`;
+        try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into your message to support.'); }
+        catch { const t = $('#rp-text'); t.focus(); t.select(); document.execCommand?.('copy'); toast('Copied. Paste it into your message to support.'); }
       });
     };
     draw();
