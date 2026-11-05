@@ -34,6 +34,7 @@ import { appHealth } from './app-health.js';
 import { runnerRoutes } from './runner-routes.js';
 import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportName } from './export.js';
 import { teamRoutes, membership, memberMay, teamAllowed } from './team.js';
+import * as themeClean from './theme-clean.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -514,6 +515,31 @@ app.delete('/api/stores/:id', requireUser, (req, res) => {
   fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
   fs.rmSync(path.join(config.dataDir, 'variants', `store-${s.id}.json`), { force: true });
   res.json({ ok: true });
+});
+
+// ---------- Clean theme copy and guided restore (read-only; Shopify stores) ----------
+app.get('/api/stores/:id/theme/clean', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json({ clean: themeClean.cleanView(s.id) });
+});
+
+app.get('/api/stores/:id/theme/clean/file', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const f = themeClean.cleanFile(s.id, String(req.query.name || '').slice(0, 300));
+  if (!f) return res.status(404).json({ error: 'This file isn’t in the clean copy.' });
+  res.json(f);
+});
+
+app.get('/api/stores/:id/theme/clean.zip', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const v = themeClean.cleanView(s.id);
+  if (!v) return res.status(404).json({ error: 'There is no clean copy of your theme yet.' });
+  const name = `${String(v.themeName || 'theme').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'theme'}-clean-${String(v.savedAt).slice(0, 10)}.zip`;
+  res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' });
+  res.send(themeClean.cleanZip(s.id));
 });
 
 app.get('/api/stores/:id/scorecard', requireUser, (req, res) => {

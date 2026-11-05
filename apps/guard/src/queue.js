@@ -9,6 +9,7 @@ import { settleRelease } from './release.js';
 import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
 import { themeWatch } from './theme-watch.js';
+import { afterCheck } from './theme-clean.js';
 import { check } from './engine/checks.js';
 import { scoreChecks, summarize } from './engine/score.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
@@ -233,7 +234,13 @@ async function settle(job, result) {
   // A check that just broke: name the scripts that appeared since it last worked (report, email, Slack).
   if (storeId && !release) { try { attributeFailures(storeId, runId, result); } catch (e) { console.error('change attribution failed', runId, e.message); } }
   q.finishRun.run(result.score, result.verdict, JSON.stringify(result), runId);
-  if (job.theme?.commit && (result.checks || []).some((c) => c.id === 'sec.theme' && c.status !== 'skip')) { try { job.theme.commit(); } catch (e) { console.error('theme record save failed', storeId, e); } }
+  if (job.theme?.commit && (result.checks || []).some((c) => c.id === 'sec.theme' && c.status !== 'skip')) {
+    try {
+      job.theme.commit();
+      // A check where the theme is unchanged and no security check failed: this theme becomes the clean copy.
+      afterCheck(storeId, runId, result);
+    } catch (e) { console.error('theme record save failed', storeId, e); }
+  }
   // Publish-check runs (live and draft) never change the store's status and never alert.
   if (storeId && !release) {
     q.updateStoreAfterRun.run(result.verdict, result.score, storeId);

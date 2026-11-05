@@ -12,6 +12,51 @@
       ${f.lines && f.lines.length ? `<pre class="diff">${f.lines.map((l) => `<span class="${l.t === '+' ? 'd-add' : 'd-del'}">${l.t} ${String(l.n).padStart(4, ' ')}  ${esc(l.s)}</span>`).join('')}${f.more ? `<span class="muted" style="display:block">… ${f.more} more changed lines</span>` : ''}</pre>` : `<p class="muted" style="margin:6px 0">${f.text === false ? 'Not a text file, so there are no lines to show.' : 'No lines to show.'}</p>`}</details>`).join('')}${ev.moreFiles ? `<p class="muted">… and ${ev.moreFiles} more files</p>` : ''}</div>`;
   }
 
+  // Guided restore (S4): the clean copy of each changed theme file, to copy or download and paste back in Shopify.
+  // Read-only: Tharam never changes the theme itself.
+  async function themeRestore(el, storeId, ev) {
+    let clean;
+    try { clean = (await api(`/api/stores/${storeId}/theme/clean`)).clean; } catch { return; }
+    if (!clean) { el.innerHTML = '<p class="muted">We keep a clean copy of your theme from each check where nothing changed. There isn\'t one yet, so use the older versions in Shopify\'s code editor to undo a change.</p>'; return; }
+    const byName = new Map(clean.files.map((f) => [f.filename, f]));
+    const rows = (ev?.files || []).map((f) => {
+      const c = byName.get(f.filename);
+      const act = c && c.stored
+        ? `<button type="button" class="btn small secondary" data-clean-copy="${esc(f.filename)}">${icon('copy', 14)}Copy clean version</button> <button type="button" class="btn small secondary" data-clean-get="${esc(f.filename)}">${icon('download', 14)}Download</button>`
+        : c ? '<span class="muted">Not a text file: restore it from the older versions in Shopify\'s code editor.</span>'
+          : '<span class="muted">Not in the clean copy: if you didn\'t add it, delete this file in the code editor.</span>';
+      return `<li><code>${esc(f.filename)}</code><div class="tr-act">${act}</div></li>`;
+    }).join('');
+    el.innerHTML = `<h4>Undo a change you didn't make</h4>
+      <p class="muted">Clean copy of “${esc(clean.themeName || 'your theme')}” from ${esc(exact(clean.savedAt))}, the last check where nothing had changed.${clean.sameTheme ? '' : ' It is from a different theme than the one live now, so compare carefully before pasting.'}</p>
+      <ol class="steps"><li>In Shopify admin, open <b>Online Store → Themes</b>, then <b>⋯ → Edit code</b> on your live theme.</li><li>Open the file below, select all its code and paste the clean version over it.</li><li>Press <b>Save</b>. Then run a full check here to confirm the theme matches the clean copy again.</li><li>If you didn't make the change, also change your Shopify password and review your staff accounts and apps.</li></ol>
+      <ul class="tr-files">${rows}</ul>
+      <p><button type="button" class="btn small secondary" data-clean-zip>${icon('download', 14)}Download the whole clean copy (.zip)</button></p>`;
+    const fileOf = async (name) => api(`/api/stores/${storeId}/theme/clean/file?name=${encodeURIComponent(name)}`);
+    $$('[data-clean-copy]', el).forEach((b) => (b.onclick = async () => { try { copyText((await fileOf(b.dataset.cleanCopy)).content); } catch (e) { toast(e.message, 'error'); } }));
+    $$('[data-clean-get]', el).forEach((b) => (b.onclick = async () => {
+      try { const f = await fileOf(b.dataset.cleanGet); saveBlob(new Blob([f.content], { type: 'text/plain' }), f.filename.split('/').pop()); } catch (e) { toast(e.message, 'error'); }
+    }));
+    const z = $('[data-clean-zip]', el);
+    if (z) z.onclick = async () => {
+      try {
+        const headers = EMB ? { Authorization: `Bearer ${await window.shopify.idToken()}` } : {};
+        const r = await fetch(`/api/stores/${storeId}/theme/clean.zip`, { headers, credentials: 'same-origin' });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Download failed. Try again.');
+        const name = (/filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'theme-clean.zip';
+        saveBlob(await r.blob(), name);
+      } catch (e) { toast(e.message, 'error'); }
+    };
+  }
+  function saveBlob(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
   const S = { me: null, admin: false, stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
 
   // ---------- Helpers ----------
@@ -213,6 +258,7 @@
     lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
     close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
     copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
+    download: '<path d="M12 4.5v11"/><path d="m7.5 11 4.5 4.5 4.5-4.5"/><path d="M5 19.5h14"/>',
     layers: '<path d="m12 4 8.5 4.5L12 13 3.5 8.5z"/><path d="m3.5 12.5 8.5 4.5 8.5-4.5"/><path d="m3.5 16.5 8.5 4.5 8.5-4.5"/>',
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.6 3.5 5.4 3.5 8.5s-1.1 5.9-3.5 8.5c-2.4-2.6-3.5-5.4-3.5-8.5s1.1-5.9 3.5-8.5z"/>',
   };
@@ -1466,7 +1512,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a === 'fail' && x.evidence?.files ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -1541,6 +1587,8 @@
     $('#rep-base').onchange = (e) => go(run.id, e.target.value);
     $('#print').onclick = () => { $$('details', ctx.main).forEach((d) => (d.open = true)); const hidden = $$('[data-pane][hidden]', ctx.main); hidden.forEach((p) => (p.hidden = false)); window.print(); hidden.forEach((p) => (p.hidden = true)); };
     $$('[data-shot]', ctx.main).forEach((x) => (x.onclick = () => lightbox(x.dataset.shot, 'Screenshot')));
+    const restoreEl = $('[data-theme-restore]', ctx.main);
+    if (restoreEl) themeRestore(restoreEl, s.id, c.areas.flatMap((a) => a.checks).find((x) => x.id === 'sec.theme')?.evidence);
     const PAGE = { home: 'Homepage', product: 'Product page' };
     const drawDevice = (dev) => {
       const el = $('#dev-shots');
