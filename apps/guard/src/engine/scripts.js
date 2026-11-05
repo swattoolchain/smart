@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { check, plural } from './checks.js';
 
-const DATA = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data', 'bad-domains.json');
+const DATA = path.join(path.dirname(fileURLToPath(import.meta.url)), 'bad-domains.json');
 let BAD = null;
 /** Known-bad sites (skimmers, crypto-miners, malware drops), plus any in BAD_DOMAINS (comma separated). */
 export function badDomains() {
