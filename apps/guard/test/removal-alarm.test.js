@@ -2,6 +2,8 @@
 // (confirmed browser-access email and alert email), once, and reinstalling still works.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
+import Database from 'better-sqlite3';
 import { startProduct, shopifyOpen, lastMailLink, shopifyHmac } from './lib/harness.js';
 import { note } from './lib/evidence.js';
 
@@ -82,8 +84,10 @@ describe('Removal alarm', () => {
     // No alert email and no browser access: nothing to send, nothing breaks.
     const shop2 = 'silent.myshopify.com';
     const s2 = await shopifyOpen(P, shop2);
-    assert.equal((await s2.patch(`/api/stores/${s2.storeId}`, { alertEmail: '' })).status, 200);
-    // An empty alert email falls back to the account's name, which for a Shopify install is the shop domain, not an address.
+    // Since #26 an owner can no longer save a non-address, but a store saved earlier can still hold the shop domain
+    // (an empty alert email used to fall back to the account's name). That older data is set up directly here.
+    const rw = new Database(path.join(P.dataDir, 'guard.db'), { fileMustExist: true });
+    try { rw.prepare('UPDATE stores SET alert_email = ? WHERE id = ?').run(shop2, s2.storeId); } finally { rw.close(); }
     assert.equal(P.db().prepare('SELECT alert_email FROM stores WHERE id = ?').get(s2.storeId).alert_email, shop2);
     before = alarms(P).length;
     assert.equal((await webhook('app/uninstalled', shop2)).status, 200);
