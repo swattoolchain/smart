@@ -1,11 +1,11 @@
 // A stand-in for Shopify's Admin API and Razorpay's API, for local end-to-end tests.
 // Shopify:  POST /:shop/admin/oauth/access_token, POST /:shop/admin/api/:v/graphql.json
 // Razorpay: POST /rzp/v1/orders, GET /rzp/v1/payments/:id
-// Control:  POST /control {subscription, primaryDomain, payStatus, discounts}
+// Control:  POST /control {subscription, primaryDomain, payStatus, discounts, timeZone}
 //           discounts: nodes for the discountNodes query (scheduled and active discounts), as Shopify returns them
 import http from 'node:http';
 const PORT = Number(process.env.FAKE_PORT || 4200);
-const state = { subscription: null, primaryDomain: 'http://localhost:4100', orders: new Map(), payments: new Map(), tokenCalls: [], payStatus: 'captured', discounts: [] };
+const state = { subscription: null, primaryDomain: 'http://localhost:4100', orders: new Map(), payments: new Map(), tokenCalls: [], payStatus: 'captured', discounts: [], timeZone: 'Europe/Berlin' };
 const read = (req) => new Promise((r) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => r(b)); });
 const json = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 http.createServer(async (req, res) => {
@@ -23,7 +23,7 @@ http.createServer(async (req, res) => {
   if ((m = /^\/([^/]+)\/admin\/api\/[^/]+\/graphql\.json$/.exec(u.pathname))) {
     if (!/^shpat_/.test(req.headers['x-shopify-access-token'] || '')) return json(res, 401, { errors: 'Invalid API key or access token' });
     const qy = JSON.parse(body).query;
-    if (qy.includes('shop {')) return json(res, 200, { data: { shop: { name: 'Test Shop', email: 'owner@testshop.example', contactEmail: 'hello@testshop.example', currencyCode: 'INR', myshopifyDomain: m[1], primaryDomain: { url: state.primaryDomain }, billingAddress: { countryCodeV2: 'DE' } } } });
+    if (qy.includes('shop {')) return json(res, 200, { data: { shop: { name: 'Test Shop', email: 'owner@testshop.example', contactEmail: 'hello@testshop.example', currencyCode: 'INR', myshopifyDomain: m[1], primaryDomain: { url: state.primaryDomain }, billingAddress: { countryCodeV2: 'DE' }, ianaTimezone: state.timeZone } } });
     if (qy.includes('activeSubscriptions')) return json(res, 200, { data: { currentAppInstallation: { activeSubscriptions: state.subscription ? [state.subscription] : [] } } });
     if (qy.includes('themes(')) return json(res, 200, { data: { themes: { nodes: [{ id: 'gid://shopify/OnlineStoreTheme/222', name: 'Dawn – Black Friday', role: 'UNPUBLISHED', updatedAt: new Date(Date.now() - 3600e3).toISOString() }] } } });
     if (qy.includes('discountNodes(')) return json(res, 200, { data: { discountNodes: { nodes: state.discounts } } });
