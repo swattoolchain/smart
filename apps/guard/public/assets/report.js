@@ -10,11 +10,14 @@
     const errors = c.evidence && c.evidence.errors;
     const visual = c.evidence && c.evidence.visual;
     const ai = c.evidence && c.evidence.ai;
+    const traffic = c.evidence && c.evidence.traffic;
+    const secs = (ms) => (ms == null ? '–' : ms < 100 ? '<0.1 s' : `${(ms / 1000).toFixed(1)} s`);
     return `<div class="chk ${esc(c.status)}">
       <div class="chk-top"><span class="st">${ST[c.status] || esc(c.status)}</span><h4>${esc(c.title)}</h4></div>
       <p class="detail">${esc(c.detail)}</p>
       ${c.fix && c.status !== 'pass' ? `<p class="fix"><b>How to fix:</b> ${esc(c.fix)}</p>` : ''}
       ${errors ? `<p class="fix">${errors.map((e) => `<code>${esc(e.message)}</code>`).join('<br>')}</p>` : ''}
+      ${traffic && traffic.steps ? `<table class="traffic-table"><thead><tr><th>Step</th><th>One shopper</th><th>${traffic.shoppers} at once (typical)</th><th>Slowest</th></tr></thead><tbody>${traffic.steps.map((x) => `<tr><td>${esc(x.label)}</td><td>${secs(x.alone)}</td><td>${secs(x.median)}</td><td>${secs(x.max)}</td></tr>`).join('')}</tbody></table>` : ''}
       ${shot ? `<img class="shot" src="${esc(shot)}" alt="Screenshot when '${esc(c.title)}' was checked" loading="lazy">` : ''}
       ${visual && visual.some((v) => v.status === 'changed') ? `<p class="fix">${visual.filter((v) => v.status === 'changed').map((v) => `${esc(v.key)}: ${v.ratio}% changed`).join(' · ')}</p>` : ''}
       ${ai ? `<ul class="ai-findings">${ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${f.severity}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}

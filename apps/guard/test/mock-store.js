@@ -26,6 +26,11 @@ const products = [
   { id: 2, title: 'Handwoven Silk Saree', handle: 'silk-saree', product_type: 'Saree', vendor: 'Tharam', tags: 'silk', body_html: EXTRA.includes('placeholder') ? '<p>Lorem ipsum dolor sit amet, TBD description here.</p>' : '<p>Traditional handwoven silk saree with zari border and intricate detailing.</p>', images: [{ src: '/img/s.png' }], variants: [{ id: 201, title: 'Default Title', sku: 'SAR-1', price: '8999.00', available: true }] },
   { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: '0.00', available: true }] },
 ];
+// Sale traffic (MOCK_EXTRA): slowcrowd = pages get slow when several shoppers are on them at once;
+// crowdfail = Add to cart fails when shoppers add at the same moment (only the first of a burst succeeds).
+let INFLIGHT = 0;
+let LAST_ADD = 0;
+const CROWD_PAGE = (p) => (p.startsWith('/products/') && !p.endsWith('.js')) || p === '/cart' || p.startsWith('/checkouts/') || p === '/checkout';
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
 
 function cartFor(req, res) {
@@ -93,6 +98,14 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
   }
+  if (EXTRA.includes('slowcrowd') && CROWD_PAGE(p) && req.method === 'GET') {
+    INFLIGHT++;
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      if (INFLIGHT >= 2) await new Promise((r) => setTimeout(r, 2500));
+    } finally { INFLIGHT--; }
+  }
+  if (p === '/__carts') return send(res, 200, { carts: [...carts.values()].map((c) => c.length) }, 'application/json');
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });
@@ -152,6 +165,7 @@ const server = http.createServer(async (req, res) => {
   if (p === '/cart/add.js' && req.method === 'POST') {
     const items = cartFor(req, res);
     const body = JSON.parse((await readBody(req)) || '{}');
+    if (EXTRA.includes('crowdfail')) { const now = Date.now(); const busy = now - LAST_ADD < 400; LAST_ADD = now; if (busy) return send(res, 503, { status: 503, description: 'Too many requests at once' }, 'application/json'); }
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
       const hit = byId.get(Number(it.id));
       if (!hit || !hit.v.available) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');

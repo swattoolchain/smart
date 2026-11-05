@@ -12,6 +12,7 @@ import { groupOf } from './catalog.js';
 import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
+import { runTraffic } from './traffic.js';
 import { reviewScreens } from './visual-ai.js';
 import { aiEnabled } from '../ai.js';
 
@@ -30,7 +31,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, traffic = null }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -87,6 +88,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     }
     let metrics = {};
     let catalog = null;
+    let trafficOut = null;
     let ai = null;
     phase('journey');
     const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
@@ -96,6 +98,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind !== 'journeys') {
         phase('quality');
         metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;
+      }
+      // Opt-in only (Store settings), never on publish previews, at most every 6 hours (see traffic.js).
+      if (kind === 'full' && storeId && traffic && !preview && on('sale.traffic')) {
+        phase('traffic');
+        trafficOut = await runTraffic({ rec, origin, info, password, storeId, dataDir: config.dataDir, shoppers: traffic.shoppers });
       }
       if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
         phase('regional');
@@ -132,6 +139,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       isShopify: info.isShopify,
       metrics,
       catalog,
+      traffic: trafficOut,
       ai,
       testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,
       notes: info.notes,
