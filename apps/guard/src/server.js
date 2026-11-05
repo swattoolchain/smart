@@ -27,6 +27,7 @@ import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
+import { runnerRoutes } from './runner-routes.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -761,6 +762,7 @@ app.post('/api/stores/:id/approve-visual', requireUser, (req, res) => {
 
 // ---------- Founder console: customers, licences, payments, plans ----------
 adminRoutes(app, { requireUser, isAdmin });
+runnerRoutes(app, { requireUser, isAdmin });
 
 // ---------- Founder view ----------
 app.get('/api/admin/overview', requireUser, (req, res) => {

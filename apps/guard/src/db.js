@@ -152,6 +152,8 @@ export const q = {
   ),
   setRunRunning: db.prepare("UPDATE runs SET status = 'running', started_at = datetime('now') WHERE id = ?"),
   setRunDue: db.prepare('UPDATE runs SET due_at = ? WHERE id = ?'),
+  // A check whose worker went quiet goes back in the queue once (see src/queue.js).
+  requeueRun: db.prepare("UPDATE runs SET status = 'queued', started_at = NULL WHERE id = ? AND status = 'running'"),
   finishRun: db.prepare(
     "UPDATE runs SET status = 'done', score = ?, verdict = ?, result_json = ?, finished_at = datetime('now') WHERE id = ?"
   ),

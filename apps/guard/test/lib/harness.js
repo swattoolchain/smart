@@ -115,6 +115,26 @@ export async function startProduct({ env = {}, mock: mockOpts = {} } = {}) {
   return product;
 }
 
+/**
+ * A worker machine (src/worker.js) joined to the product with a join token, with its own data folder.
+ * `kill()` stops it the hard way (like a machine dying); `credentials()` reads what it got when it joined.
+ */
+export async function startWorker(product, token, env = {}) {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tharam-worker-'));
+  const w = launch('src/worker.js', { MAIN_URL: product.base, JOIN_TOKEN: token, DATA_DIR: dataDir, WORKER_POLL_MS: '500', ALLOW_LOCAL_TARGETS: '1', ...env });
+  const until = Date.now() + 15000;
+  while (!fs.existsSync(path.join(dataDir, 'runner.json'))) {
+    if (Date.now() > until || w.child.exitCode != null) throw new Error(`worker did not join: ${w.log()}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return {
+    ...w, dataDir,
+    credentials: () => JSON.parse(fs.readFileSync(path.join(dataDir, 'runner.json'), 'utf8')).credentials,
+    kill: () => { try { w.child.kill('SIGKILL'); } catch {} },
+    cleanup: () => { try { w.child.kill('SIGKILL'); } catch {} fs.rmSync(dataDir, { recursive: true, force: true }); },
+  };
+}
+
 /** A Shopify session token, as App Bridge would hand it to the embedded app. */
 export function shopifyToken(shop, { secret = SHOPIFY.secret, aud = SHOPIFY.key, expIn = 60 } = {}) {
   const b = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
