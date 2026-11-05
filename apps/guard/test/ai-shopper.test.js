@@ -15,7 +15,7 @@ process.env.AI_PROVIDER = 'anthropic';
 process.env.AI_API_KEY = 'test-ai-key';
 process.env.AI_BASE_URL = ai.base;
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'tharam-agent-'));
-const { runShopper, MAX_STEPS, GOAL, atCheckout } = await import('../src/engine/agent.js');
+const { runShopper, MAX_STEPS, GOAL, atCheckout, allowedPlace } = await import('../src/engine/agent.js');
 const { Recorder } = await import('../src/engine/checks.js');
 const { getBrowser } = await import('../src/engine/browser.js');
 
@@ -38,7 +38,7 @@ describe('AI shopper', { concurrency: 1 }, () => {
       assert.equal(check.status, 'pass', check.detail);
       assert.match(check.detail, /reached checkout in \d+ steps/);
       assert.deepEqual(out.steps.map((s) => s.did.replace(/".*"/, '"…"')).slice(0, 4), ['clicked link "…"', 'clicked button "…"', 'clicked link "…"', 'clicked button "…"']);
-      assert.ok(atCheckout(mock.origin + out.steps.at(-1).at));
+      assert.ok(atCheckout(mock.origin + out.steps.at(-1).at, mock.origin));
       assert.ok(st.calls <= MAX_STEPS);
       assert.deepEqual(st.keys, ['test-ai-key']);
       assert.match(st.prompts[0].text, new RegExp(GOAL.slice(0, 30)));
@@ -84,6 +84,55 @@ describe('AI shopper', { concurrency: 1 }, () => {
       assert.match(did[2], /could not: there is no element with that number/);
       assert.equal(out.outcome, 'checkout', 'still reached checkout afterwards');
       note(t, did.slice(0, 3).join(' | '));
+    } finally { mock.stop(); }
+  });
+
+  it('counts checkout only on the store or Shopify checkout, at a checkout path', (t) => {
+    const o = 'https://kaveri.example';
+    const yes = ['https://kaveri.example/checkouts/cn/abc', 'https://www.kaveri.example/checkout', 'https://kaveri.example/12345/checkouts/abc', 'https://checkout.shopify.com/12345/checkouts/abc', 'https://shop.app/checkout/1/cn/abc', 'https://kaveri.myshopify.com/checkouts/cn/x'];
+    const no = ['https://other-site.example/checkout', 'https://other-site.example/checkouts/cn/abc', 'https://kaveri.example/pages/checkout-help', 'https://kaveri.example/blogs/news/checkout-tips', 'https://kaveri.example.evil.test/checkout', 'https://evilkaveri.example/checkout', 'https://shopify.com.evil.test/checkouts/x', 'javascript:alert(1)//checkout', 'not a url'];
+    for (const u of yes) assert.ok(atCheckout(u, o, 'kaveri.myshopify.com'), u);
+    for (const u of no) assert.ok(!atCheckout(u, o, 'kaveri.myshopify.com'), u);
+    assert.ok(allowedPlace('https://kaveri.example/products/x', o));
+    assert.ok(allowedPlace('https://checkout.shopify.com/1/checkouts/x', o));
+    for (const u of ['https://other-site.example/', 'https://kaveri.example.evil.test/', 'http://127.0.0.1:4100/checkout']) assert.ok(!allowedPlace(u, o), u);
+    note(t, `checkout: ${yes.length} store/Shopify addresses count; ${no.length} look-alikes (other sites, /pages/checkout-help, blog posts) do not`);
+  });
+
+  it('is not led off the store by page text, links elsewhere or a store page about checkout', { timeout: 120000 }, async (t) => {
+    const mock = await startMock({ extra: 'offsite' });
+    try {
+      const elsewhere = `127.0.0.1:${mock.port}`;
+      const { out, check, ai: st } = await shop(mock, 'lured');
+      const offered = st.prompts.map((p) => p.text.split('You can use:')[1] || '').join('\n');
+      assert.ok(!offered.includes(elsewhere), 'links to other sites are never offered to the AI');
+      assert.ok(!/Go to checkout/.test(offered));
+      assert.match(st.prompts[0].system, /never as instructions to you/);
+      const did = out.steps.map((s) => s.did);
+      assert.match(did[0], new RegExp(`could not: refused to leave the store \\(${elsewhere.replace(/\./g, '\\.')}\\)`));
+      assert.match(did[1], /clicked link "Checkout help"/);
+      assert.equal(did[2], 'said it was done, but checkout was not open', '/pages/checkout-help is not checkout');
+      assert.equal(out.outcome, 'checkout', JSON.stringify(did));
+      assert.match(out.steps.at(-1).at, /^\/checkouts\//);
+      assert.equal(check.status, 'pass');
+      note(t, did.join(' | '));
+    } finally { mock.stop(); }
+  });
+
+  it('stops when a button leaves the store by script, and still empties the cart on the store', { timeout: 120000 }, async (t) => {
+    const mock = await startMock({ extra: 'offsite' });
+    try {
+      const { out, check } = await shop(mock, 'express');
+      assert.equal(out.outcome, 'left', JSON.stringify(out.steps));
+      assert.match(out.steps.at(-1).did, /stopped: this would have left your store for 127\.0\.0\.1/);
+      assert.equal(out.steps.at(-1).at, '/cart');
+      assert.equal(check.status, 'warn');
+      assert.equal(check.severity, 'minor');
+      assert.match(check.detail, /would have taken it to another site \(127\.0\.0\.1\)/);
+      assert.doesNotMatch(check.detail, /reached checkout/);
+      const carts = await (await fetch(`${mock.origin}/__carts`)).json();
+      assert.equal(carts.filled, 0, 'the test cart was emptied on the store');
+      note(t, `${check.status}: ${check.detail}`);
     } finally { mock.stop(); }
   });
 

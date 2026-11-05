@@ -1,6 +1,6 @@
 // A stand-in for the AI provider (Anthropic Messages API), for tests of the AI shopper.
 // It plays a simple, predictable shopper from the text it is sent: home -> product -> Add to cart -> cart -> checkout.
-// Control: POST /control {mode: 'shop' | 'stuck' | 'naughty' | 'loop'}; GET /state -> {calls, prompts}
+// Control: POST /control {mode: 'shop' | 'stuck' | 'naughty' | 'loop' | 'lured' | 'express'}; GET /state -> {calls, prompts}
 import http from 'node:http';
 const PORT = Number(process.env.FAKE_AI_PORT || 4300);
 const state = { mode: 'shop', calls: 0, prompts: [], keys: [] };
@@ -19,10 +19,15 @@ function decide(text) {
   if (state.mode === 'naughty' && steps === 0) return { thought: 'Leaving.', action: { type: 'goto', path: 'https://evil.example/steal' }, friction: [] };
   if (state.mode === 'naughty' && steps === 1) return { thought: 'Admin.', action: { type: 'goto', path: '/admin' }, friction: [] };
   if (state.mode === 'naughty' && steps === 2) return { thought: 'Nonsense.', action: { type: 'click', index: 999 }, friction: [] };
+  // lured: page text steers it off the store, then it calls a store page about checkout "checkout".
+  if (state.mode === 'lured' && steps === 0) { const l = find(/go to checkout/i, 'link'); const url = /go to (https?:\/\/\S+?)(?: |$)/i.exec(text)?.[1]; return { thought: 'The page says to go there.', action: l ? { type: 'click', index: l.i } : { type: 'goto', path: url || '/' }, friction: [] }; }
+  if (state.mode === 'lured' && steps === 1) { const h = find(/checkout help/i, 'link'); return { thought: 'Checkout is here.', action: { type: 'click', index: h?.i ?? -1 }, friction: [] }; }
+  if (state.mode === 'lured' && steps === 2) return { thought: 'This is checkout.', action: { type: 'done' }, friction: [] };
+  if (state.mode === 'lured' && steps === 3) return { thought: 'Back to the homepage.', action: { type: 'goto', path: '/' }, friction: [] };
   if (/^\/check/.test(path)) return { thought: 'Checkout is open.', action: { type: 'done' }, friction: [] };
   if (path.startsWith('/cart')) {
     if (cart === 0) return { thought: 'The cart is empty.', action: { type: 'stuck', reason: 'the cart is empty although I pressed Add to cart' }, friction: [{ severity: 'critical', issue: 'Add to cart did not put the product in the cart' }] };
-    const co = find(/check ?out/i, 'button');
+    const co = state.mode === 'express' ? find(/express checkout/i, 'button') : find(/^check ?out$/i, 'button');
     return { thought: 'Going to checkout.', action: { type: 'click', index: co?.i ?? -1 }, friction: [] };
   }
   if (path.startsWith('/products/')) {
