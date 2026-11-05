@@ -151,3 +151,23 @@ export async function reviewCopy(products, { maxProducts = 60 } = {}) {
   }
   return { results, reviewed: todo.length, skipped: pending.length - todo.length };
 }
+
+const SHOPPER_SYSTEM = `You are a first-time shopper on an online store, testing whether a real customer can buy. You see the page as text: the address, what is in the cart, a short excerpt of the page, and a numbered list of things you can click or choose.
+Your goal is given by the user. Act like a normal shopper: browse to a product, choose options if needed, add it to the cart, open the cart and go to checkout. Do not use the store's admin, account or login pages.
+Rules: you can only click, choose an option in a list, or go to a page on the same store. You never type, never enter personal or payment details, and never press anything that pays or places an order. You stop as soon as checkout opens.
+While shopping, note real friction a shopper would feel: something that did not respond, an error, a confusing step, a missing price, a popup in the way. Only real problems, in plain words.
+Answer with JSON only: {"thought": "one short sentence about what you see and will do", "action": {"type": "click|select|goto|done|stuck", "index": <number of the element, for click and select>, "value": "<option to choose, for select>", "path": "</path on this store, for goto>", "reason": "<why you are done or stuck>"}, "friction": [{"severity": "critical|major|minor", "issue": "what got in the way"}]}.
+Use "done" only when checkout has opened. Use "stuck" when you cannot see a way forward.`;
+
+/** One step of the AI shopper: what to do next on this page. Never cached: the page and history change every step. */
+export async function shopperStep({ goal, observation, history }) {
+  const text = `Goal: ${goal}\n\nWhat you did so far:\n${history.length ? history.map((h, i) => `${i + 1}. ${h}`).join('\n') : '(nothing yet)'}\n\nThe page now:\n${observation}`;
+  const { json, usage } = await call({ system: SHOPPER_SYSTEM, text, model: config.ai.textModel, maxTokens: 600 });
+  const a = json.action || {};
+  return {
+    thought: String(json.thought || '').slice(0, 300),
+    action: { type: String(a.type || 'stuck'), index: Number.isInteger(Number(a.index)) ? Number(a.index) : null, value: a.value != null ? String(a.value).slice(0, 120) : null, path: a.path != null ? String(a.path).slice(0, 300) : null, reason: String(a.reason || '').slice(0, 300) },
+    friction: (Array.isArray(json.friction) ? json.friction : []).filter((f) => f && f.issue).slice(0, 5).map((f) => ({ severity: SEVERITIES.has(f.severity) ? f.severity : 'minor', issue: String(f.issue).slice(0, 300) })),
+    usage,
+  };
+}

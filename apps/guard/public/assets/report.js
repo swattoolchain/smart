@@ -10,11 +10,13 @@
     const errors = c.evidence && c.evidence.errors;
     const visual = c.evidence && c.evidence.visual;
     const ai = c.evidence && c.evidence.ai;
+    const agent = c.evidence && c.evidence.agent;
     return `<div class="chk ${esc(c.status)}">
       <div class="chk-top"><span class="st">${ST[c.status] || esc(c.status)}</span><h4>${esc(c.title)}</h4></div>
       <p class="detail">${esc(c.detail)}</p>
       ${c.fix && c.status !== 'pass' ? `<p class="fix"><b>How to fix:</b> ${esc(c.fix)}</p>` : ''}
       ${errors ? `<p class="fix">${errors.map((e) => `<code>${esc(e.message)}</code>`).join('<br>')}</p>` : ''}
+      ${agent && agent.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${agent.steps.length} steps)</summary><ol>${agent.steps.map((x) => `<li><b>${esc(x.did || x.action)}</b> <span class="muted">on ${esc(x.at)}</span>${x.thought ? `<br><span class="fix-inline">${esc(x.thought)}</span>` : ''}</li>`).join('')}</ol>${agent.friction && agent.friction.length ? `<p class="fix"><b>Got in the way:</b> ${agent.friction.map((f) => `${esc(f.issue)} <span class="muted">(${esc(f.at)})</span>`).join('; ')}</p>` : ''}</details>` : ''}
       ${shot ? `<img class="shot" src="${esc(shot)}" alt="Screenshot when '${esc(c.title)}' was checked" loading="lazy">` : ''}
       ${visual && visual.some((v) => v.status === 'changed') ? `<p class="fix">${visual.filter((v) => v.status === 'changed').map((v) => `${esc(v.key)}: ${v.ratio}% changed`).join(' · ')}</p>` : ''}
       ${ai ? `<ul class="ai-findings">${ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${f.severity}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}

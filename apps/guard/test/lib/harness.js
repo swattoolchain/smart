@@ -67,6 +67,17 @@ export async function startFake() {
   return { ...p, port, base, control, state };
 }
 
+/** A fake AI provider (Anthropic Messages API) that shops predictably; see test/fake-ai.js. */
+export async function startFakeAi() {
+  const port = await freePort();
+  const p = launch('test/fake-ai.js', { FAKE_AI_PORT: String(port) });
+  const base = `http://localhost:${port}`;
+  await waitFor(`${base}/state`);
+  const control = async (body) => (await fetch(`${base}/control`, { method: 'POST', body: JSON.stringify(body) })).json().catch(() => ({}));
+  const state = async () => (await fetch(`${base}/state`)).json();
+  return { ...p, port, base, control, state };
+}
+
 /** The whole product. Call `stop()` in an `after` hook. */
 export async function startProduct({ env = {}, mock: mockOpts = {} } = {}) {
   const mock = await startMock(mockOpts);

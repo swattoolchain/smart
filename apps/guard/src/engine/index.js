@@ -13,6 +13,7 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { reviewScreens } from './visual-ai.js';
+import { runShopper } from './agent.js';
 import { aiEnabled } from '../ai.js';
 
 async function isLocked(ctx, origin) {
@@ -88,6 +89,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let metrics = {};
     let catalog = null;
     let ai = null;
+    let shopper = null;
     phase('journey');
     const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
     if (!fn.locked && !fn.down && !fn.blocked) {
@@ -115,6 +117,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         phase('ai');
         ai = await reviewScreens({ runDir, origin, rec });
       }
+      // The AI shopper finds its own way, so it also tests themes the scripted journey doesn't know.
+      if (kind === 'full' && storeId && on('ai.shopper') && aiEnabled() && !preview && info.isShopify) {
+        phase('shopper');
+        shopper = await runShopper({ rec, origin, password, shot });
+      }
     }
     // A home screenshot gives every report a visual anchor.
     // Drop anything from a switched-off group (some sections share page visits).
@@ -133,6 +140,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       metrics,
       catalog,
       ai,
+      shopper,
       testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,
       notes: info.notes,
       platform: info.platform,
