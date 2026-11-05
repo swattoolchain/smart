@@ -610,7 +610,7 @@ app.post('/api/stores/:id/incident', requireUser, async (req, res) => {
   try { row = startIncident(s, { reason: req.body?.reason, contacts: req.body?.contacts }); }
   catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
   // A full check right away, unless one is already running.
-  const runId = q.activeRunForStore.get(s.id) ? null : startRun({ storeId: s.id, origin: s.url, kind: 'full', password: s.storefront_password, trigger: 'incident' });
+  const runId = q.activeRunForStore.get(s.id) ? null : startRun({ storeId: s.id, origin: s.url, kind: 'full', password: storePassword(s), trigger: 'incident' });
   sendMail(incidentStartEmail(s, row, { shopify: onShopify(s) })).catch((e) => console.error('incident email failed', e));
   res.json({ ...incidentView(s, { shopify: onShopify(s) }), runId });
 });
