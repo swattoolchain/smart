@@ -193,7 +193,7 @@ describe('Alerts from real checks', () => {
   it('the test alert goes to the saved address and says email is not set up yet', async (t) => {
     const r = await owner.post(`/api/stores/${storeId}/test-alert`);
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json, { email: false, slack: null, emailConfigured: false });
+    assert.deepEqual(r.json, { email: false, slack: null, webhook: null, emailConfigured: false });
     assert.match(P.log(), /\[mail skipped\] to=team@shop\.test subject=Test alert for Mock Store/);
     assert.match(P.log(), /This is a test alert for Mock Store from Tharam Store Guard/);
     const other = await signup(P, 'alerts-other@shop.test');
