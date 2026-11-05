@@ -38,6 +38,7 @@ import * as themeClean from './theme-clean.js';
 import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
 import { recoveryPacket } from './recovery-packet.js';
 import { incidentView, startIncident, updateIncident, endIncident, incidentBrief, startEmail as incidentStartEmail, endEmail as incidentEndEmail } from './incident.js';
+import { warningsFor } from './early-warning.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -935,7 +936,7 @@ app.post('/api/stores/:id/sale-readiness/email', requireUser, async (req, res) =
 app.get('/api/stores/:id/apps', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
-  res.json(appHealth(s));
+  res.json({ ...appHealth(s), earlyWarnings: warningsFor(s.id) });
 });
 
 // ---------- Exports: CSV and printable / PDF report (owner only) ----------

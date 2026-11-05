@@ -1329,7 +1329,7 @@
       if (a.status === 'new') what.push(`First seen ${time(a.firstSeenAt)}.`);
       return `<tr class="app-row status-${a.status}" data-app="${esc(a.key)}">
         <td><span class="cell-main">${esc(a.name)}</span><div class="cell-sub">${esc(KIND[a.kind] || '')}</div></td>
-        <td><span class="pill ${cls}">${label}</span></td>
+        <td><span class="pill ${cls}">${label}</span>${(d.earlyWarnings || []).some((w) => w.appKey === a.key) ? '<div class="cell-sub">Changed on many stores</div>' : ''}</td>
         <td>${a.pages.map((p) => PG[p] || p).join(', ') || '–'}</td>
         <td class="num">${a.phone.bytes ? `${kb(a.phone.bytes)}<div class="cell-sub">about ${a.phone.slowS < 0.1 ? '<0.1' : a.phone.slowS} s on slow 4G</div>` : '–'}</td>
         <td class="num">${a.errors.length || '–'}</td>
@@ -1342,6 +1342,7 @@
     const t = d.totals;
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'App health')}${intro}
       <p class="muted" style="margin:-6px 0 14px">From the check ${time(d.checkedAt)}${d.compared ? `, compared with the one before (${time(d.comparedAt)})` : ''}.${d.phone ? ` Phone cost measured ${time(d.phone.at)}.` : ' Phone cost appears after the next full check.'}</p>
+      ${(d.earlyWarnings || []).map((w) => `<div class="notice early-warning" data-app="${esc(w.appKey)}"><p><b>Early warning: ${esc(w.appName)} changed its code on ${w.stores} stores we watch</b> (${time(w.at)}). ${w.changedHere ? 'The new code is already on your store. If something looks or works differently since then, this is the likely reason.' : 'It hasn\'t reached your store yet and may arrive soon.'} We keep checking and will tell you if buying breaks.</p></div>`).join('')}
       ${trouble.length ? `<div class="notice"><p>${trouble.map((a) => `<b>${esc(a.name)}</b> ${TROUBLE[a.status]}`).join('; ')}. Details below.</p></div>` : '<div class="notice ok"><p>No app is causing errors, every app from the last check still loads, and app widgets show for shoppers.</p></div>'}
       <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))">
         <div class="figure"><b>${t.apps}</b><span>apps and outside services</span></div>
