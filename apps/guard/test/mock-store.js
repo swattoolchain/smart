@@ -3,7 +3,7 @@
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
  * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below);
- * apps, appsbug, appsupdate (App Health: two outside apps, see APP_SCRIPTS below).
+ * apps, appsbug, appsupdate, appsnowidget, appscode (App Health: two outside apps, see APP_SCRIPTS below).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -25,8 +25,9 @@ const TRACK = EXTRA.includes('track');
 // Both can also be switched on and off while the store runs: GET /__extra?newscript=1&badscript=0.
 // App Health (APP_SCRIPTS): apps adds a reviews app (reviews-app.localhost, every page, ~60 KB, draws a widget) and a
 // chat app (chat-app.localhost, home page only, pings chat-api.localhost); appsbug makes the reviews script throw;
-// appsupdate gives the reviews app a second script. Tests name them with APP_NAMES.
-const LIVE_KEYS = ['newscript', 'badscript', 'apps', 'appsbug', 'appsupdate'];
+// appsupdate gives the reviews app a second script; appsnowidget: the reviews script loads but draws nothing;
+// appscode: new content in reviews.js at the same address. Tests name them with APP_NAMES and APP_WIDGETS.
+const LIVE_KEYS = ['newscript', 'badscript', 'apps', 'appsbug', 'appsupdate', 'appsnowidget', 'appscode'];
 const LIVE_EXTRA = new Set(LIVE_KEYS.filter((k) => EXTRA.split(',').includes(k)));
 let REQ_PATH = '/';
 const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127.0.0.1:${PORT}/apps/review-widget.js?v=${Date.now()}"></script>` : '')
@@ -35,7 +36,8 @@ const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127
   + (LIVE_EXTRA.has('apps') && LIVE_EXTRA.has('appsupdate') ? `<script src="http://reviews-app.localhost:${PORT}/apps/reviews-photos.js"></script>` : '')
   + (LIVE_EXTRA.has('apps') && REQ_PATH === '/' ? `<script src="http://chat-app.localhost:${PORT}/apps/chat.js" async></script>` : '');
 const APP_SCRIPTS = {
-  '/apps/reviews.js': () => `/* reviews app */${'/*' + 'x'.repeat(60000) + '*/'}document.addEventListener('DOMContentLoaded',function(){var d=document.createElement('div');d.className='reviews-widget';d.textContent='★★★★★ 128 reviews';(document.querySelector('main')||document.body).appendChild(d);});`
+  '/apps/reviews.js': () => `/* reviews app${LIVE_EXTRA.has('appscode') ? ' 2.0' : ''} */${'/*' + 'x'.repeat(60000) + '*/'}`
+    + (LIVE_EXTRA.has('appsnowidget') ? 'window.__reviewsOff=true;' : `document.addEventListener('DOMContentLoaded',function(){var d=document.createElement('div');d.className='reviews-widget';d.textContent='★★★★★ 128 reviews';(document.querySelector('main')||document.body).appendChild(d);});`)
     + (LIVE_EXTRA.has('appsbug') ? 'setTimeout(function reviewsInit(){ window.reviewsConfig.load(); }, 10);' : ''),
   '/apps/reviews-photos.js': () => 'window.__reviewPhotos=true;',
   '/apps/chat.js': () => `new Image().src='http://chat-api.localhost:${PORT}/ping.gif';window.__chat=true;`,

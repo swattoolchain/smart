@@ -14,7 +14,7 @@ import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { reviewScreens } from './visual-ai.js';
 import { watchScripts, scriptChecks, pageKind } from './scripts.js';
-import { watchCost } from './apps.js';
+import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js';
 import { aiEnabled } from '../ai.js';
 
 async function isLocked(ctx, origin) {
@@ -93,10 +93,19 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let scripts = null;
     phase('journey');
     const inventory = on('security.scripts') ? watchScripts(page, origin) : null;
+    const widgets = inventory ? await watchWidgets(page).catch(() => null) : null;
     const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
     // Script watch compares with the store's previous check; publish-check runs only record.
     if (inventory && !fn.locked && !fn.blocked && !fn.down) {
+      await inventory.settle();
       scripts = scriptChecks({ rec, inventory: inventory(), previous: previousScripts, monitored: !!storeId && !preview && !captureOnly });
+      // App Health: app widgets that should show where the app loads.
+      if (widgets && Object.keys(scripts.pages).length) {
+        const seen = widgets();
+        const w = missingWidgets(scripts, seen);
+        scripts.widgets = { seen, checked: w.checked, missing: w.missing };
+        widgetCheck(rec, w);
+      }
       // App Health: which script each error came from.
       scripts.errors = (fn.pageErrors || []).slice(0, 30).map((e) => ({ page: pageKind(e.url) || 'other', message: e.message, source: e.source || null }));
     }
