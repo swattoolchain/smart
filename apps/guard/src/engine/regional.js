@@ -1,3 +1,4 @@
+import { productUrl } from './discover.js';
 /**
  * Regional packs: the rules that apply where a store sells.
  *  - law.de       Germany and Austria: legal notice, withdrawal, price display, unit prices, withdrawal button
@@ -53,7 +54,7 @@ const CMP = /cookiebot|consentmanager|usercentrics|onetrust|cookielaw|klaro|iube
 const OVERLAYS = [[/acsbapp\.com|accessibe/i, 'accessiBe'], [/userway\.org/i, 'UserWay'], [/audioeye\.com/i, 'AudioEye'], [/equalweb\.com|nagich/i, 'EqualWeb'], [/maxaccess|max-access/i, 'MaxAccess'], [/accessiblyapp|accessibly\.app/i, 'Accessibly'], [/enable\.co\.il|enable-accessibility/i, 'Enable']];
 
 export async function runRegional({ page, rec, origin, info, password, on, preview = null }) {
-  const product = info.products[0] ? `${origin}/products/${info.products[0].handle}` : null;
+  const product = info.products[0] ? productUrl(origin, info.products[0]) : null;
   let home = null, pdp = null;
   try {
     await gotoStore(page, origin + '/', { password });

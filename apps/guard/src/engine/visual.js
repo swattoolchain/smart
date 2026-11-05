@@ -1,3 +1,4 @@
+import { productUrl } from './discover.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PNG } from 'pngjs';
@@ -20,7 +21,7 @@ export async function runVisual({ page, mobilePage, rec, origin, info, password,
   if (prime) await prime(tabletPage).catch(() => {});
   const devices = [['desktop', page], ['tablet', tabletPage], ['mobile', mobilePage]];
   const shots = devices.map(([d, p]) => ({ key: `home-${d}`, p, url: origin + '/' }));
-  if (info.products[0]) for (const [d, p] of devices) shots.push({ key: `product-${d}`, p, url: `${origin}/products/${info.products[0].handle}` });
+  if (info.products[0]) for (const [d, p] of devices) shots.push({ key: `product-${d}`, p, url: productUrl(origin, info.products[0]) });
   fs.mkdirSync(baselineDir, { recursive: true });
   const results = [];
   const texts = [];
