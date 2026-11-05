@@ -2,6 +2,7 @@ import { config } from './config.js';
 import { db, q } from './db.js';
 import { storePassword } from './secret.js';
 import { runScan } from './engine/index.js';
+import { assertPublicTarget } from './engine/browser.js';
 import { handleAlerts } from './alerts.js';
 import { earlyWarning } from './early-warning.js';
 import { storeConfig, saleActive } from './scheduler.js';
@@ -160,6 +161,9 @@ function startLocal(job) {
 async function prepare(job) {
   const { runId, kind, storeId, disabled, preview, captureOnly, release } = job;
   let { password } = job;
+  // Checked again at every run: a store's address can start pointing somewhere internal after it was added.
+  // (A store that can't be found is left to the check itself, which reports it as down.)
+  await assertPublicTarget(job.origin).catch((e) => { if (/private network/.test(e.message)) throw e; });
   const store = storeId ? q.storeById.get(storeId) : null;
   if (storeId && !store) throw new Error('Store was removed');
   if (store) {

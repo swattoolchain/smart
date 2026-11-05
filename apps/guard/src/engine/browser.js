@@ -1,16 +1,22 @@
 import crypto from 'node:crypto';
 import { chromium } from 'playwright';
 import { config } from '../config.js';
+import { startEgressProxy, isPrivateIp, resolvePublic } from '../egress.js';
 
 let browserPromise = null;
 
 export async function getBrowser() {
   if (!browserPromise) {
+    // Every request the browser makes goes through Tharam's egress filter, which refuses internal addresses
+    // (redirects, DNS rebinding and in-page requests included). '<-loopback>' stops Chromium's built-in
+    // habit of skipping the proxy for localhost. An outside BROWSER_PROXY replaces it (its own network rules apply).
+    const egress = config.browserProxy ? null : await startEgressProxy();
     const opts = {
         headless: true,
         executablePath: config.chromePath,
-        proxy: config.browserProxy ? { server: config.browserProxy } : undefined,
+        proxy: config.browserProxy ? { server: config.browserProxy } : { server: egress, bypass: '<-loopback>' },
         args: [
+          '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
           '--disable-blink-features=AutomationControlled',
           '--disable-dev-shm-usage',
           '--no-sandbox',
@@ -119,11 +125,10 @@ export function normalizeStoreUrl(input) {
   if (
     !allowLocal &&
     (host === 'localhost' ||
+      host.endsWith('.localhost') ||
       host.endsWith('.local') ||
       host.endsWith('.internal') ||
-      /^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(host) ||
-      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-      host === '[::1]')
+      ((/^[\d.]+$/.test(host) || host.startsWith('[')) && isPrivateIp(host)))
   ) {
     throw new Error('Internal addresses cannot be scanned');
   }
@@ -131,20 +136,16 @@ export function normalizeStoreUrl(input) {
   return `${u.protocol}//${u.host}`;
 }
 
-const PRIVATE_IP = /^(127\.|10\.|192\.168\.|169\.254\.|0\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|172\.(1[6-9]|2\d|3[01])\.)|^(::1|fc|fd|fe80)/i;
-
 /** Rejects domains that resolve to private or loopback addresses (prevents scanning internal networks). */
 export async function assertPublicTarget(origin) {
   if (process.env.ALLOW_LOCAL_TARGETS === '1') return;
-  const { lookup } = await import('node:dns/promises');
   const host = new URL(origin).hostname;
-  let addrs;
   try {
-    addrs = await lookup(host, { all: true });
-  } catch {
+    await resolvePublic(host);
+  } catch (e) {
+    if (e.private) throw new Error('This address points to a private network and cannot be scanned');
     throw new Error(`We couldn't find ${host}. Check the address is correct.`);
   }
-  if (addrs.some((a) => PRIVATE_IP.test(a.address))) throw new Error('This address points to a private network and cannot be scanned');
 }
 
 /** Opens a page and gets past a Shopify storefront password page when a password is provided. */
