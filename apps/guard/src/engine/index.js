@@ -12,6 +12,7 @@ import { groupOf } from './catalog.js';
 import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
+import { runVariantSweep } from './variants.js';
 import { reviewScreens } from './visual-ai.js';
 import { watchScripts, scriptChecks, pageKind } from './scripts.js';
 import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js';
@@ -101,6 +102,8 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     }
     let metrics = {};
     let catalog = null;
+    let variants = null;
+    const catalogKeep = {};
     let ai = null;
     let scripts = null;
     phase('journey');
@@ -148,9 +151,21 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       }
       if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
         phase('catalog');
-        catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on });
+        catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on, keep: catalogKeep });
         // The full catalog checks supersede the quick sample check; reporting both double-counts one mistake.
         if (catalog?.count) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
+      }
+      if (kind === 'full' && storeId && info.isShopify && on('catalog.variants') && !preview) {
+        phase('variants');
+        // Big catalogs are covered over several checks: start where the previous check stopped.
+        const posFile = path.join(config.dataDir, 'variants', `store-${storeId}.json`);
+        let offset = 0;
+        try { offset = Number(JSON.parse(fs.readFileSync(posFile, 'utf8')).next) || 0; } catch {}
+        variants = await runVariantSweep({ request: ctx.request, origin, rec, products: catalogKeep.snap?.products || null, offset });
+        if (variants) {
+          fs.mkdirSync(path.dirname(posFile), { recursive: true });
+          fs.writeFileSync(posFile, JSON.stringify({ next: variants.next, total: variants.total, at: new Date().toISOString() }));
+        }
       }
       if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
         phase('ai');
@@ -175,6 +190,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       isShopify: info.isShopify,
       metrics,
       catalog,
+      variants,
       ai,
       scripts,
       testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,

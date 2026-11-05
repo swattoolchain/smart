@@ -87,7 +87,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS payments_reference ON payments(reference) WHER
 export const FEATURES = [
   { key: 'journeys', label: 'Shopping checks: search, product, add to cart, checkout', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount'], always: true },
   { key: 'quality', label: 'Speed, Google, mobile, accessibility and broken links', groups: ['speed', 'seo', 'a11y', 'links', 'policies'] },
-  { key: 'catalog', label: 'Product and price checks on every product', groups: ['catalog'] },
+  { key: 'catalog', label: 'Product and price checks on every product', groups: ['catalog', 'catalog.variants'] },
   { key: 'visual', label: 'Design change detection with screenshots', groups: ['visual'] },
   { key: 'publish', label: 'Safe to publish: check a theme before it goes live' },
   { key: 'environments', label: 'Saved staging environments, checked daily' },
