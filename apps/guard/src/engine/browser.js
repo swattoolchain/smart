@@ -36,7 +36,7 @@ export async function getBrowser() {
   return browserPromise;
 }
 
-export async function newContext({ mobile = false, tablet = false, locale = 'en-US', timezoneId = 'Asia/Kolkata' } = {}) {
+export async function newContext({ mobile = false, tablet = false, locale = 'en-US', timezoneId = 'Asia/Kolkata', recordVideo = undefined } = {}) {
   const browser = await getBrowser();
   const ctx = await browser.newContext({
     userAgent: mobile
@@ -52,6 +52,7 @@ export async function newContext({ mobile = false, tablet = false, locale = 'en-
     timezoneId,
     extraHTTPHeaders: { 'Accept-Language': locale === 'en-US' ? 'en-US,en;q=0.9' : `${locale},${locale.slice(0, 2)};q=0.9,en;q=0.8` },
     ignoreHTTPSErrors: false,
+    recordVideo,
   });
   // Remove the automation fingerprints that bot protection looks for first.
   await ctx.addInitScript((langs) => {

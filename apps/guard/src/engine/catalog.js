@@ -87,6 +87,8 @@ export function normalizeConfig(input = {}, base = {}) {
   // Onboarding progress: the welcome flow and the first-report tour.
   if (typeof input.onboarded === 'boolean') cfg.onboarded = input.onboarded;
   if (typeof input.toured === 'boolean') cfg.toured = input.toured;
+  // Video replay of failed shopping journeys (kept 7 days).
+  if (typeof input.failureVideo === 'boolean') cfg.failureVideo = input.failureVideo;
   if (Array.isArray(input.disabled)) cfg.disabled = input.disabled.filter((k) => GROUPS.some((g) => g.key === k && !g.locked));
   if (input.testProduct !== undefined) cfg.testProduct = input.testProduct ? String(input.testProduct).slice(0, 200) : null;
   if (input.journeyIntervalMin !== undefined && INTERVALS.includes(Number(input.journeyIntervalMin))) cfg.journeyIntervalMin = Number(input.journeyIntervalMin);
