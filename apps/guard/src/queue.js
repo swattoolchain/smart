@@ -7,7 +7,9 @@ import { settleRelease } from './release.js';
 import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
-import { mainRunner, listRunners, healthy, chooseRunner, byPriority, wantedTags, L, leaseAge, LEASE_LIMIT_MS } from './runners.js';
+import { aiEnabled } from './ai.js';
+import { fullCheckInputs } from './runner-files.js';
+import { usesAi, mainRunner, listRunners, healthy, chooseRunner, byPriority, wantedTags, L, leaseAge, LEASE_LIMIT_MS } from './runners.js';
 
 /** Groups switched off for this run: the store's choices, markets, and anything the owner's plan doesn't include. */
 function planDisabled(store, cfg, picked) {
@@ -42,7 +44,9 @@ export function enqueue(job) {
   const store = job.storeId ? q.storeById.get(job.storeId) : null;
   const disabled = planDisabled(store, store ? storeConfig(store) : {}, job.disabled);
   live.set(job.runId, { phase: 'queued', kind: job.kind, disabled, rec: null });
-  Object.assign(job, routingInfo(store), { seqNo: ++seq });
+  // A full check with AI review stays on the main server (the AI key never goes to workers).
+  const needsAi = usesAi(job.kind, disabled, aiEnabled());
+  Object.assign(job, routingInfo(store), { seqNo: ++seq, needsAi });
   waiting.push(job);
   pump();
 }
@@ -235,6 +239,8 @@ function assignRemote(job, runner) {
   remote.set(job.runId, { job, runnerId: runner.id });
   prepare(job).then((spec) => {
     if (!remote.has(job.runId)) return; // cancelled meanwhile
+    // A full check: which baselines and catalog snapshot the worker should fetch before it starts.
+    if (spec.kind === 'full' && spec.storeId) spec.inputs = fullCheckInputs(spec.storeId, spec.runId);
     const attempt = L.attempts.get(job.runId).n + 1;
     L.insert.run(job.runId, runner.id, attempt, JSON.stringify(spec), jobJson(job));
   }).catch((e) => {

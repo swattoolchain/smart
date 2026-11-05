@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { config } from './config.js';
+import { q } from './db.js';
+import { readBaseline, readPreviousCatalog, saveFirstBaseline, saveCatalogSnapshot } from './runner-files.js';
 import { audit } from './license.js';
 import { createJoinToken, joinWithToken, authRunner, touchRunner, updateRunner, runnerById, L } from './runners.js';
 import { workerCheckIn, workerComplete, workerProgress, holdsLease, runnerStates } from './queue.js';
@@ -55,6 +57,48 @@ export function runnerRoutes(app, { requireUser, isAdmin }) {
     const dir = path.join(config.dataDir, 'shots', `run-${runId}`);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, req.params.file), body);
+    res.json({ ok: true });
+  });
+
+  // ---- full checks: files from and to the main server (src/runner-files.js) ----
+  /** The store of a check this worker holds right now, or null (and the response is sent). */
+  const heldStore = (req, res) => {
+    const runId = Number(req.params.id);
+    if (!holdsLease(req.runner, runId)) { res.status(409).json({ error: 'This check is not yours (any more).' }); return null; }
+    const run = q.runById.get(runId);
+    if (!run?.store_id || run.kind !== 'full') { res.status(400).json({ error: 'Only full checks of a store use these files.' }); return null; }
+    return run;
+  };
+
+  app.get('/api/runner/runs/:id/baselines/:file', worker, (req, res) => {
+    const run = heldStore(req, res);
+    if (!run) return;
+    const f = readBaseline(run.store_id, req.params.file);
+    if (!f) return res.status(404).json({ error: 'No such baseline' });
+    res.type('image/png').sendFile(f);
+  });
+
+  app.get('/api/runner/runs/:id/catalog-previous', worker, (req, res) => {
+    const run = heldStore(req, res);
+    if (!run) return;
+    const prev = readPreviousCatalog(run.store_id, run.id);
+    if (!prev) return res.status(404).json({ error: 'No earlier catalog snapshot' });
+    res.set('x-tharam-catalog-run', String(prev.runId)).type('application/json').send(prev.text);
+  });
+
+  app.post('/api/runner/runs/:id/baselines/:file', express.raw({ type: 'image/png', limit: '10mb' }), worker, (req, res) => {
+    const run = heldStore(req, res);
+    if (!run) return;
+    const r = saveFirstBaseline(run.store_id, req.params.file, req.body);
+    if (r !== 'saved' && r !== 'kept') return res.status(400).json({ error: r });
+    res.json({ ok: true, [r]: true });
+  });
+
+  app.post('/api/runner/runs/:id/catalog', big, worker, (req, res) => {
+    const run = heldStore(req, res);
+    if (!run) return;
+    const r = saveCatalogSnapshot(run.store_id, run.id, req.body);
+    if (r !== 'saved') return res.status(400).json({ error: r });
     res.json({ ok: true });
   });
 
