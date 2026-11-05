@@ -1805,7 +1805,20 @@
         ${x.runId ? `<li><div class="row"><span class="sev">Journey</span><span><span class="t">Shopping journey and checkout</span><span class="d">Tested with this check, like a shopper on your store.</span><div class="evidence"><a class="btn small secondary" href="#/s/${s.id}/reports/${x.runId}">${icon('reports', 14)}Open the report</a></div></span><span></span></div></li>` : ''}</ul></section>
       ${off.length ? `<section class="panel"><details class="still" open><summary>Prices to look at: ${off.length}</summary><div class="table-wrap flat" style="margin-top:10px"><table class="data"><thead><tr><th>Product</th><th class="num">Normal</th><th class="num">Plan</th><th class="num">Shown now</th><th>Note</th></tr></thead><tbody>
         ${off.map((r) => `<tr class="${r.state === 'normal' || r.state === 'wrong' ? 'row-new' : ''}"><td><span class="cell-main">${esc(r.product)}</span>${r.variant ? `<div class="cell-sub">${esc(r.variant)}</div>` : ''}</td><td class="num">${esc(r.normal)}</td><td class="num">${esc(r.expected)}</td><td class="num">${esc(r.shown)}</td><td class="cell-sub">${esc(LIVE_STATE[r.state])}</td></tr>`).join('')}</tbody></table></div></details></section>` : ''}
-      ${saleMarkets(p, sum.markets)}`;
+      ${saleMarkets(p, sum.markets)}${saleShipping(p, sum.shipping)}`;
+  }
+  // Free shipping in a real cart, per market: just above the amount (should be free) and just below (shouldn't).
+  function saleShipping(p, sh) {
+    if (!sh?.markets?.length || !sh.carts) return '';
+    const cell = (x, want, main) => {
+      if (!x) return '<td class="cell-sub">–</td>';
+      if (!x.reached) return `<td><span class="sev warn">Look</span> <span class="cell-sub">${esc(x.why || 'Not reached')}</span></td>`;
+      const ok = x.free === want;
+      return `<td><span class="sev ${ok ? 'ok' : main && want ? 'fail' : 'warn'}">${x.free ? 'Free' : 'Paid'}</span> <span class="cell-sub">${esc((x.rates || []).slice(0, 2).join(' · '))}</span></td>`;
+    };
+    return `<section class="panel sale-shipping-panel"><h2>Free shipping at checkout</h2><p class="sub">A real cart taken to checkout’s shipping step with an address in each market. Nothing is bought.</p>
+      <div class="table-wrap flat"><table class="data"><thead><tr><th>Market</th><th>Cart of ${esc(sh.carts.above.total)}</th>${sh.carts.below ? `<th>Cart of ${esc(sh.carts.below.total)}</th>` : ''}</tr></thead><tbody>
+      ${sh.markets.map((m, i) => `<tr><td><span class="cell-main">${esc(m.market)}</span></td>${cell(m.above, true, i === 0)}${sh.carts.below ? cell(m.below, false, i === 0) : ''}</tr>`).join('')}</tbody></table></div></section>`;
   }
   // Codes tried in each market of the plan: one row per market, one column per code.
   const MK_ST = { pass: ['OK', 'ok'], warn: ['Look', 'warn'], fail: ['Fix', 'fail'], skip: ['Not tried', ''] };

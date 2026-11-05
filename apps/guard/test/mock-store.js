@@ -220,7 +220,23 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(302, { Location: B.has('checkout') ? '/cart' : '/checkouts/cn/abc123' });
     return res.end();
   }
-  if (p.startsWith('/checkouts/')) return send(res, 200, layout('Checkout', '<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>'));
+  // Checkout, like Shopify's one-page checkout: contact, delivery address, then the shipping options for that address.
+  // MOCK_SALE.freeShipping { amount, countries }: once the sale is on, carts of `amount` or more ship free to those countries.
+  if (p === '/__rates.json') {
+    const cc = String(u.searchParams.get('country') || 'IN').toUpperCase();
+    const total = cartJson(cartFor(req, res), countryOf(req)).total_price / 100;
+    const fs = SALE?.freeShipping;
+    const free = saleOn && fs && total >= fs.amount && (!fs.countries || fs.countries.includes(cc));
+    const rates = [{ id: 'standard', title: 'Standard', price: cc === 'IN' ? '₹99.00' : '₹1,499.00' }];
+    if (free) rates.unshift({ id: 'free', title: 'Free shipping', price: 'Free' });
+    return send(res, 200, { rates, total }, 'application/json');
+  }
+  if (p.startsWith('/checkouts/')) return send(res, 200, layout('Checkout', `<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>
+<select name="countryCode" autocomplete="shipping country">${['IN', 'US', 'GB', 'DE', 'AT', 'FR', 'SG', 'AU', 'CA', 'AE'].map((c) => `<option value="${c}">${c}</option>`).join('')}</select>
+<input name="firstName" autocomplete="shipping given-name"><input name="lastName" autocomplete="shipping family-name"><input name="address1" autocomplete="shipping address-line1">
+<input name="city" autocomplete="shipping address-level2"><select name="zone" autocomplete="shipping address-level1"><option value="">State</option><option value="KA">Karnataka</option><option value="NY">New York</option></select>
+<input name="postalCode" autocomplete="shipping postal-code"><h2>Shipping method</h2><div id="rates"><p>Enter your shipping address to view available shipping methods.</p></div>
+<script>document.querySelector('[name=postalCode]').addEventListener('change',function(){var cc=document.querySelector('[name=countryCode]').value;fetch('/__rates.json?country='+cc).then(function(r){return r.json();}).then(function(j){document.getElementById('rates').innerHTML=j.rates.map(function(r){return '<label><input type="radio" name="shipping_rate" value="'+r.id+'"> '+r.title+' '+r.price+'</label>';}).join('');});});</script>`));
   if (p.startsWith('/policies/')) {
     if (!DE && (p.endsWith('terms-of-service') || p.endsWith('shipping-policy'))) return send(res, 404, layout('Not found', '<h1>404</h1>'));
     if (DE && p.endsWith('refund-policy')) return send(res, 200, layout('Widerrufsbelehrung', '<h1>Widerrufsbelehrung</h1><p>Sie haben das Recht, binnen 14 Tagen ohne Angabe von Gründen diesen Vertrag zu widerrufen.</p>'));
