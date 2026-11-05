@@ -93,7 +93,7 @@ export const FEATURES = [
   { key: 'environments', label: 'Saved staging environments, checked daily' },
   { key: 'pipeline', label: 'Deploy pipeline checks (GitHub and others)' },
   { key: 'regional', label: 'Laws where you sell (Germany, EU, UK, US)', groups: ['law.de', 'law.cookies', 'access.law', 'law.us'] },
-  { key: 'ai', label: 'AI that looks at your store like a shopper', groups: ['ai.visual', 'ai.copy'] },
+  { key: 'ai', label: 'AI that looks at your store like a shopper', groups: ['ai.visual', 'ai.copy', 'ai.shopper'] },
   { key: 'slack', label: 'Slack alerts' },
 ];
 const FEATURE_KEYS = FEATURES.map((f) => f.key);

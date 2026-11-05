@@ -1041,3 +1041,7 @@ ui-nav-menu { display: none !important; }
 .ws-item span { display: flex; flex-direction: column; } .ws-item small { color: var(--muted, #6b7280); font-size: 12px; }
 .ws-item.on b { color: var(--accent, inherit); }
 .team-table select { padding: 4px 8px; }
+/* AI shopper steps */
+.agent-steps { margin-top: 8px; font-size: 13px; }
+.agent-steps summary { cursor: pointer; font-weight: 600; }
+.agent-steps ol { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 4px; }

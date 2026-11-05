@@ -19,6 +19,7 @@ import { watchScripts, scriptChecks, pageKind } from './scripts.js';
 import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js';
 import { watchHijack, hijackChecks } from './hijack.js';
 import { watchForms, formChecks } from './forms.js';
+import { runShopper } from './agent.js';
 import { aiEnabled } from '../ai.js';
 import { VIDEO_FILE, VIDEO_DAYS } from '../video.js';
 
@@ -130,6 +131,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let trafficOut = null;
     let ai = null;
     let scripts = null;
+    let shopper = null;
     phase('journey');
     // With video replay on, the journey runs in the recorded window; the script, form and widget watchers follow it.
     const jpage = vpage || page;
@@ -212,6 +214,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         phase('ai');
         ai = await reviewScreens({ runDir, origin, rec });
       }
+      // The AI shopper finds its own way, so it also tests themes the scripted journey doesn't know.
+      if (kind === 'full' && storeId && on('ai.shopper') && aiEnabled() && !preview && info.isShopify) {
+        phase('shopper');
+        shopper = await runShopper({ rec, origin, password, shot });
+      }
     }
     // Checks made outside the browser (theme files through the Shopify API) count like any other.
     for (const c of extraChecks) rec.add(c);
@@ -236,6 +243,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       traffic: trafficOut,
       ai,
       scripts,
+      shopper,
       testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,
       notes: info.notes,
       platform: info.platform,

@@ -15,6 +15,7 @@
     const videoGone = video && c.evidence.videoUntil && new Date(c.evidence.videoUntil) < new Date();
     const traffic = c.evidence && c.evidence.traffic;
     const secs = (ms) => (ms == null ? '–' : ms < 100 ? '<0.1 s' : `${(ms / 1000).toFixed(1)} s`);
+    const agent = c.evidence && c.evidence.agent;
     return `<div class="chk ${esc(c.status)}">
       <div class="chk-top"><span class="st">${ST[c.status] || esc(c.status)}</span><h4>${esc(c.title)}</h4></div>
       <p class="detail">${esc(c.detail)}</p>
@@ -23,6 +24,7 @@
       ${variants ? `<ul class="ai-findings variant-list">${variants.map((x) => `<li><b>${esc(x.name)}</b> <span class="muted">(${x.problem === 'unpublished' ? 'cart can\'t find it' : x.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${x.message ? `<br><span class="fix-inline">Store said: ${esc(x.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}
       ${video ? (videoGone ? '<p class="fix video-gone">The video replay was deleted after 7 days.</p>' : `<details class="video-replay"><summary>Watch the replay</summary><video controls preload="metadata" playsinline src="${esc(video)}"></video><span class="muted">Kept until ${esc(new Date(c.evidence.videoUntil).toLocaleDateString())}</span></details>`) : ''}
       ${traffic && traffic.steps ? `<table class="traffic-table"><thead><tr><th>Step</th><th>One shopper</th><th>${traffic.shoppers} at once (typical)</th><th>Slowest</th></tr></thead><tbody>${traffic.steps.map((x) => `<tr><td>${esc(x.label)}</td><td>${secs(x.alone)}</td><td>${secs(x.median)}</td><td>${secs(x.max)}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${agent && agent.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${agent.steps.length} steps)</summary><ol>${agent.steps.map((x) => `<li><b>${esc(x.did || x.action)}</b> <span class="muted">on ${esc(x.at)}</span>${x.thought ? `<br><span class="fix-inline">${esc(x.thought)}</span>` : ''}</li>`).join('')}</ol>${agent.friction && agent.friction.length ? `<p class="fix"><b>Got in the way:</b> ${agent.friction.map((f) => `${esc(f.issue)} <span class="muted">(${esc(f.at)})</span>`).join('; ')}</p>` : ''}</details>` : ''}
       ${shot ? `<img class="shot" src="${esc(shot)}" alt="Screenshot when '${esc(c.title)}' was checked" loading="lazy">` : ''}
       ${visual && visual.some((v) => v.status === 'changed') ? `<p class="fix">${visual.filter((v) => v.status === 'changed').map((v) => `${esc(v.key)}: ${v.ratio}% changed`).join(' · ')}</p>` : ''}
       ${ai ? `<ul class="ai-findings">${ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${f.severity}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}
