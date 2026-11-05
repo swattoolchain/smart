@@ -11,7 +11,8 @@
 import { db, q } from './db.js';
 import { config } from './config.js';
 import { newContext, gotoStore, settle, themeOf } from './engine/browser.js';
-import { runDiscounts } from './engine/discount.js';
+import { runDiscounts, codesByMarket } from './engine/discount.js';
+import { MARKETS } from './engine/catalog.js';
 import { entitlements, has, blockReason } from './license.js';
 import { sendMail, sendSlack } from './alerts.js';
 import * as shopify from './shopify.js';
@@ -47,6 +48,30 @@ export function liveView(r, { full = false } = {}) {
   return v;
 }
 
+const marketName = (m) => MARKETS.find((x) => x.code === m)?.label || m;
+/** Findings from the codes tried in each market: one line per market, and one per code that fails there. */
+export function marketFindings(plan, byMarket) {
+  const out = [];
+  const f = (key, level, title, detail = '', fix = null) => out.push({ key, area: 'markets', level, title, detail, fix });
+  if (!byMarket) { f('markets', 'warn', 'We couldn’t try your codes in each market', 'The store didn’t answer in time. The next check tries again.'); return out; }
+  for (const m of byMarket) {
+    const name = marketName(m.market);
+    const key = `market.${m.market.toLowerCase()}`;
+    if (!m.ok) { f(key, 'warn', `We couldn’t switch your store to ${name}`, `Your store didn’t change to ${name} when a shopper picks it, so codes weren’t tried there.`, `If you sell in ${name}, check it is a market in Shopify admin → Settings → Markets, with the country picker on your theme. If you don’t, take it out of the sale plan.`); continue; }
+    const cur = m.currency ? ` (${m.currency})` : '';
+    const bad = m.codes.filter((c) => c.status === 'fail'), odd = m.codes.filter((c) => c.status === 'warn' || c.status === 'skip');
+    for (const c of bad) {
+      const want = plan.codes.find((x) => x.code === c.code)?.percent;
+      const wrongPct = c.off > 0 && want != null;
+      f(`${key}.code.${c.code.toLowerCase()}`, 'fail', wrongPct ? `Discount code ${c.code} takes ${c.pct}% off in ${name}, not ${want}%` : `Discount code ${c.code} doesn’t work for shoppers in ${name}`, c.detail,
+        wrongPct ? 'Check the discount’s value for this market in Shopify → Discounts, and any market price adjustments in Settings → Markets.' : `Check the discount in Shopify → Discounts is available in ${name} (its markets, or “all customers”), and that it applies to products sold there.`);
+    }
+    for (const c of odd) f(`${key}.code.${c.code.toLowerCase()}`, 'warn', c.status === 'warn' ? `Discount code ${c.code} needs a bigger cart in ${name}` : `We couldn’t try discount code ${c.code} in ${name}`, c.detail);
+    if (!bad.length && !odd.length && m.codes.length) f(key, 'pass', `Your ${m.codes.length === 1 ? 'code works' : `${m.codes.length} codes work`} for shoppers in ${name}${cur}`, m.codes.map((c) => `${c.code}: ${c.pct}% off`).join(' · '));
+  }
+  return out;
+}
+
 // ---------- one live check ----------
 async function checkLive(store, plan, { trigger }) {
   const findings = [];
@@ -59,7 +84,7 @@ async function checkLive(store, plan, { trigger }) {
     try { discounts = await scheduledDiscounts(shop.shop); } catch { add('shopify', 'codes', 'warn', 'We couldn’t read your discounts from Shopify', 'Shopify didn’t answer just now. The next check tries again.'); }
   }
 
-  let prices = null, isShopify = !!shop;
+  let prices = null, isShopify = !!shop, byMarket = null;
   const ctx = await newContext({ mobile: true });
   try {
     // The live homepage, on a phone: which theme is live, and is the banner there.
@@ -140,6 +165,17 @@ async function checkLive(store, plan, { trigger }) {
         else if (r.status === 'pass') add(key, 'codes', 'pass', `Discount code ${c.code} works`, r.detail);
         else add(key, 'codes', r.status === 'warn' ? 'warn' : 'fail', r.status === 'warn' ? `Discount code ${c.code} needs a bigger cart` : `Discount code ${c.code} doesn’t work`, r.detail, r.fix || null);
       }
+      // Each code in each market of the plan, in that market's currency (Shopify Markets, via the country picker).
+      if (isShopify && plan.markets.length) {
+        const mPage = await ctx.newPage();
+        try {
+          await gotoStore(mPage, store.url, { password: store.storefront_password });
+          const list = (await storeProducts(ctx.request, store.url)).slice(0, 6).map((p) => ({ handle: p.handle }));
+          byMarket = await codesByMarket({ page: mPage, origin: new URL(mPage.url()).origin, products: list, codes: plan.codes, markets: plan.markets });
+        } catch { byMarket = null; }
+        finally { await mPage.close().catch(() => {}); }
+        for (const f of marketFindings(plan, byMarket)) findings.push(f);
+      }
     }
   } finally {
     await ctx.close().catch(() => {});
@@ -159,7 +195,7 @@ async function checkLive(store, plan, { trigger }) {
 
   const counts = { fail: findings.filter((f) => f.level === 'fail').length, warn: findings.filter((f) => f.level === 'warn').length, pass: findings.filter((f) => f.level === 'pass').length };
   const verdict = counts.fail ? 'fail' : counts.warn ? 'warn' : 'ok';
-  const summary = { verdict, counts, findings, journey: runId ? 'started' : 'busy', prices: prices ? { counts: prices.counts, rows: prices.rows.slice(0, 300), more: Math.max(0, prices.rows.length - 300) } : null, trigger };
+  const summary = { verdict, counts, findings, markets: byMarket, journey: runId ? 'started' : 'busy', prices: prices ? { counts: prices.counts, rows: prices.rows.slice(0, 300), more: Math.max(0, prices.rows.length - 300) } : null, trigger };
   return { verdict, runId, summary };
 }
 

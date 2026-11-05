@@ -1804,7 +1804,24 @@
         ${!x.runId && sum.journey === 'busy' ? `<li><div class="row"><span class="sev">Journey</span><span><span class="t">Shopping journey and checkout</span><span class="d">Another check was running for your store, so the next sale check tests it.</span></span><span></span></div></li>` : ''}
         ${x.runId ? `<li><div class="row"><span class="sev">Journey</span><span><span class="t">Shopping journey and checkout</span><span class="d">Tested with this check, like a shopper on your store.</span><div class="evidence"><a class="btn small secondary" href="#/s/${s.id}/reports/${x.runId}">${icon('reports', 14)}Open the report</a></div></span><span></span></div></li>` : ''}</ul></section>
       ${off.length ? `<section class="panel"><details class="still" open><summary>Prices to look at: ${off.length}</summary><div class="table-wrap flat" style="margin-top:10px"><table class="data"><thead><tr><th>Product</th><th class="num">Normal</th><th class="num">Plan</th><th class="num">Shown now</th><th>Note</th></tr></thead><tbody>
-        ${off.map((r) => `<tr class="${r.state === 'normal' || r.state === 'wrong' ? 'row-new' : ''}"><td><span class="cell-main">${esc(r.product)}</span>${r.variant ? `<div class="cell-sub">${esc(r.variant)}</div>` : ''}</td><td class="num">${esc(r.normal)}</td><td class="num">${esc(r.expected)}</td><td class="num">${esc(r.shown)}</td><td class="cell-sub">${esc(LIVE_STATE[r.state])}</td></tr>`).join('')}</tbody></table></div></details></section>` : ''}`;
+        ${off.map((r) => `<tr class="${r.state === 'normal' || r.state === 'wrong' ? 'row-new' : ''}"><td><span class="cell-main">${esc(r.product)}</span>${r.variant ? `<div class="cell-sub">${esc(r.variant)}</div>` : ''}</td><td class="num">${esc(r.normal)}</td><td class="num">${esc(r.expected)}</td><td class="num">${esc(r.shown)}</td><td class="cell-sub">${esc(LIVE_STATE[r.state])}</td></tr>`).join('')}</tbody></table></div></details></section>` : ''}
+      ${saleMarkets(p, sum.markets)}`;
+  }
+  // Codes tried in each market of the plan: one row per market, one column per code.
+  const MK_ST = { pass: ['OK', 'ok'], warn: ['Look', 'warn'], fail: ['Fix', 'fail'], skip: ['Not tried', ''] };
+  function saleMarkets(p, markets) {
+    if (!markets?.length || !p.codes.length) return '';
+    const codes = p.codes.slice(0, 5);
+    const cell = (m, code) => {
+      if (!m.ok) return '<td class="cell-sub">–</td>';
+      const c = m.codes.find((x) => x.code === code.code);
+      if (!c) return '<td class="cell-sub">–</td>';
+      const [l, k] = MK_ST[c.status] || MK_ST.skip;
+      return `<td><span class="sev ${k}">${l}</span> ${c.pct != null ? `<span class="cell-sub">${esc(c.pct)}% off</span>` : ''}</td>`;
+    };
+    return `<section class="panel sale-markets-panel"><h2>Codes in each market</h2><p class="sub">Each code tried in a real cart after picking the country, the way a shopper there would.</p>
+      <div class="table-wrap flat"><table class="data"><thead><tr><th>Market</th><th>Currency</th>${codes.map((c) => `<th>${esc(c.code)}${c.percent != null ? ` <span class="cell-sub">(${esc(c.percent)}%)</span>` : ''}</th>`).join('')}</tr></thead><tbody>
+      ${markets.map((m) => `<tr class="${m.ok && !m.codes.some((c) => c.status === 'fail') ? '' : 'row-new'}"><td><span class="cell-main">${esc(m.market)}</span>${m.ok ? '' : '<div class="cell-sub">Couldn’t switch to this market</div>'}</td><td>${esc(m.currency || '–')}</td>${codes.map((c) => cell(m, c)).join('')}</tr>`).join('')}</tbody></table></div></section>`;
   }
 
   async function saleDetail(ctx, s, planId) {

@@ -12,6 +12,7 @@ const BREAK = new Set((process.env.MOCK_BREAK || '').split(',').filter(Boolean))
 const DRAFT_BREAK = new Set([...BREAK, ...(process.env.MOCK_DRAFT_BREAK ?? 'theme,atc').split(',').filter(Boolean)]);
 let B = BREAK; // the breakages for the request being handled
 let DRAFT = false;
+let COUNTRY = 'IN'; // the shopper's country for the request being handled (localization cookie)
 const carts = new Map();
 let PW_POSTS = 0; // how many times the password form was submitted
 
@@ -53,10 +54,19 @@ function cartFor(req, res) {
 // Discount codes, like Shopify's: BF20 takes 20% off; MIN5000 needs a cart of ₹5,000 or more; anything else is unknown.
 // MOCK_BREAK=discount makes BF20 stop working (e.g. it expired or a discount app broke it).
 const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
-function cartJson(items) {
+// Markets: shoppers pick a country with the localization form (POST /localization); the cart's currency follows it.
+// MOCK_SALE.codeCountries { CODE: [countries] } limits a code to some countries (like a Shopify discount set to some markets);
+// MOCK_SALE.countryPct { 'CODE:CC': pct } gives a code another % in a country. MOCK_BREAK=localization: no country picker.
+const CURRENCY = { IN: 'INR', US: 'USD', DE: 'EUR', AT: 'EUR', FR: 'EUR', GB: 'GBP', SG: 'SGD', AU: 'AUD', CA: 'CAD' }; // the store doesn't sell in the UAE
+const countryOf = (req) => /localization=([A-Z]{2})/.exec(req.headers.cookie || '')?.[1] || 'IN';
+function cartJson(items, country = 'IN') {
   const original = items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0);
   const code = items.discount;
-  const rule = code && !(B.has('discount') && code === 'BF20') ? CODES[code] : null;
+  let rule = code && !(B.has('discount') && code === 'BF20') ? CODES[code] : null;
+  const only = SALE?.codeCountries?.[code];
+  if (rule && only && !only.includes(country)) rule = null;
+  const pct = SALE?.countryPct?.[`${code}:${country}`];
+  if (rule && pct) rule = { ...rule, pct };
   const applicable = !!rule && original >= rule.min;
   const off = applicable ? Math.round((original * rule.pct) / 100) : 0;
   return {
@@ -66,7 +76,7 @@ function cartJson(items) {
     total_price: original - off,
     discount_codes: code ? [{ code, applicable }] : [],
     cart_level_discount_applications: off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : [],
-    currency: 'INR',
+    currency: CURRENCY[country] || 'INR',
     items,
   };
 }
@@ -76,7 +86,7 @@ function layout(title, body, { noindex = false } = {}) {
 ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta name="description" content="Handmade Indian clothing and decor from small artisans.">
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
-<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : saleOn && SALE.themeId ? `{id:${Number(SALE.themeId)},name:'Dawn – Sale',role:'main'}` : "{id:111,name:'Dawn',role:'main'}"}};</script>
+<script>window.Shopify={shop:'mock.myshopify.com',country:'${COUNTRY}',currency:{active:'${CURRENCY[COUNTRY] || 'INR'}'},theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : saleOn && SALE.themeId ? `{id:${Number(SALE.themeId)},name:'Dawn – Sale',role:'main'}` : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${saleOn && SALE.banner && !DRAFT ? `<div class="announcement">${SALE.banner}</div>` : ''}${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
 <main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
@@ -101,10 +111,18 @@ const server = http.createServer(async (req, res) => {
   if (previewId) res.setHeader('Set-Cookie', `preview_theme=${previewId}; Path=/`);
   DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
   saleClock();
+  COUNTRY = countryOf(req);
   B = DRAFT ? DRAFT_BREAK : BREAK;
   if (B.has('cloudflare')) {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
+  }
+  if (p === '/localization' && req.method === 'POST' && !BREAK.has('localization')) {
+    const f = new URLSearchParams(await readBody(req));
+    const cc = String(f.get('country_code') || '').toUpperCase();
+    if (!CURRENCY[cc]) return send(res, 422, layout('Error', '<h1>Country not available</h1>'));
+    res.writeHead(302, { 'Set-Cookie': `localization=${cc}; Path=/`, Location: f.get('return_to') || '/' });
+    return res.end();
   }
   if (p === '/__sale') { if (SALE) { SALE.at = 0; saleClock(); } return send(res, 200, { on: saleOn }, 'application/json'); } // tests: start the sale now
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
@@ -162,7 +180,7 @@ const server = http.createServer(async (req, res) => {
       )
     );
   }
-  if (p === '/cart.js') return send(res, 200, cartJson(cartFor(req, res)), 'application/json');
+  if (p === '/cart.js') return send(res, 200, cartJson(cartFor(req, res), countryOf(req)), 'application/json');
   if (p === '/cart/add.js' && req.method === 'POST') {
     const items = cartFor(req, res);
     const body = JSON.parse((await readBody(req)) || '{}');
@@ -177,7 +195,7 @@ const server = http.createServer(async (req, res) => {
     const items = cartFor(req, res);
     const body = JSON.parse((await readBody(req)) || '{}');
     if (body.discount !== undefined) items.discount = String(body.discount || '').toUpperCase() || undefined;
-    return send(res, 200, cartJson(items), 'application/json');
+    return send(res, 200, cartJson(items, countryOf(req)), 'application/json');
   }
   if (p.startsWith('/discount/')) {
     cartFor(req, res).discount = decodeURIComponent(p.slice(10)).toUpperCase();

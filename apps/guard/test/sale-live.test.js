@@ -71,7 +71,8 @@ describe('Go-live burst: schedule and prices (no server)', () => {
 describe('Go-live burst in the product', () => {
   let P, owner, storeId, mallory, browser, planId;
   // From the start: kurta Small at its sale price, Medium sold out, Large at a wrong price, saree at its new price.
-  const sale = { at: Date.now() + 365 * DAY, prices: { 101: 1199.2, 103: 1300, 201: 6999 }, soldOut: [102], banner: 'BLACK FRIDAY · 20% OFF', themeId: 333 };
+  // Markets: BF20 is set up for India and the UK only, and takes 10% in the UK; the store doesn't sell in the UAE.
+  const sale = { at: Date.now() + 365 * DAY, prices: { 101: 1199.2, 103: 1300, 201: 6999 }, soldOut: [102], banner: 'BLACK FRIDAY · 20% OFF', themeId: 333, codeCountries: { BF20: ['IN', 'GB'] }, countryPct: { 'BF20:GB': 10 } };
   async function waitCheck(s, pid, id) {
     for (let i = 0; i < 240; i++) {
       const r = await s.get(`/api/stores/${storeId}/sale-plans/${pid}/live-checks/${id}`);
@@ -92,7 +93,7 @@ describe('Go-live burst in the product', () => {
   it('a sale that started: the pre-check’s normal prices are kept for comparison', async (t) => {
     const start = Math.floor(Date.now() / MIN) * MIN; // this minute
     const r = await owner.post(`/api/stores/${storeId}/sale-plans`, {
-      name: 'Black Friday 2026', timeZone: TZ, startsLocal: local(start), endsLocal: local(start + 2 * DAY), markets: ['IN'],
+      name: 'Black Friday 2026', timeZone: TZ, startsLocal: local(start), endsLocal: local(start + 2 * DAY), markets: ['IN', 'US', 'UK', 'AE'],
       rules: [{ scope: 'tag', type: 'percent', value: 20, target: 'cotton' }, { scope: 'product', type: 'price', value: 6999, target: 'silk-saree' }],
       codes: [{ code: 'BF20', percent: 20 }], banner: 'Black Friday · 20% off',
     });
@@ -134,12 +135,23 @@ describe('Go-live burst in the product', () => {
     assert.match(f('prices.normal').title, /^4 prices still at the normal price/);
     assert.match(f('prices.normal').detail, /Organic Cotton Kurta \(Small\): 1499, should be 1199.2/);
     assert.equal(f('code.bf20').level, 'pass', 'BF20 takes 20% off in a real cart');
+    // Each code in each market, after picking the country like a shopper (T101).
+    assert.equal(f('market.in').level, 'pass'); assert.match(f('market.in').title, /Your code works for shoppers in India \(INR\)/);
+    assert.equal(f('market.us.code.bf20').level, 'fail'); assert.match(f('market.us.code.bf20').title, /BF20 doesn’t work for shoppers in United States/);
+    assert.match(f('market.us.code.bf20').detail, /USD/);
+    assert.equal(f('market.uk.code.bf20').level, 'fail'); assert.match(f('market.uk.code.bf20').title, /BF20 takes 10% off in United Kingdom, not 20%/);
+    assert.equal(f('market.ae').level, 'warn'); assert.match(f('market.ae').title, /couldn’t switch your store to United Arab Emirates/);
+    const mk = Object.fromEntries(first.summary.markets.map((m) => [m.market, m]));
+    assert.deepEqual([mk.IN.currency, mk.US.currency, mk.UK.currency], ['INR', 'USD', 'GBP'], 'the cart follows the market’s currency');
+    assert.equal(mk.UK.codes[0].pct, 10);
+    assert.equal(mk.AE.ok, false);
     assert.equal(first.verdict, 'fail');
     assert.ok(first.runId, 'the shopping journey (checkout included) is started with the check');
     assert.equal(first.summary.journey, 'started');
     const mail = P.log();
     assert.match(mail, /Sale problem on Mock Store: /);
     assert.match(mail, /What to do: Publish the sale theme/);
+    assert.match(mail, /Discount code BF20 doesn’t work for shoppers in United States/);
     note(t, first.summary.findings.map((x) => `${x.level}: ${x.title}`).join(' | '));
   });
 
@@ -222,6 +234,11 @@ describe('Go-live burst in the product', () => {
     assert.match(txt, /1 price different from your plan/);
     assert.match(txt, /Different from plan/);
     assert.match(txt, /Last rehearsal before the sale/);
+    assert.match(await p.textContent('.sale-markets-panel'), /Codes in each market/);
+    assert.equal(await p.locator('.sale-markets-panel tbody tr').count(), 4, 'one row per market');
+    assert.match(await p.textContent('.sale-markets-panel'), /Couldn’t switch to this market/);
+    await p.locator('.sale-markets-panel').scrollIntoViewIfNeeded();
+    await screenshot(t, p, 'Codes in each market');
     assert.equal(await p.locator('#sp-run').count(), 0, 'no “Rehearse now” while the sale runs; “Check now” instead');
     assert.equal(await p.locator('#sl-run').count(), 1);
     await screenshot(t, p, 'Sale plan while the sale is live', { fullPage: true });
