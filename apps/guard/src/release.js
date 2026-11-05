@@ -3,6 +3,7 @@
  * then compares them and gives one verdict.
  */
 import { q } from './db.js';
+import { seal, readSecret, storePassword } from './secret.js';
 import { comparePair } from './compare.js';
 import { startRun, storeConfig } from './scheduler.js';
 import { config } from './config.js';
@@ -46,7 +47,7 @@ export function cleanEnvironment(store, input = {}, base = {}) {
   const url = kind === 'theme' ? previewUrlFor(store, raw) : stagingUrlFor(store, raw);
   // An empty password field keeps the saved one; "clear" removes it.
   let password = base.password || null;
-  if (input.password !== undefined && input.password !== '') password = input.password === null ? null : String(input.password).slice(0, 200);
+  if (input.password !== undefined && input.password !== '') password = input.password === null ? null : seal(String(input.password).slice(0, 200));
   if (kind === 'theme') password = null; // theme previews use the live store's password
   const auto = (input.auto ?? base.auto) === 'daily' ? 'daily' : 'off';
   return { name, kind, url, password, auto };
@@ -60,10 +61,10 @@ export function startRelease(store, { url, label, env = null, trigger = 'manual'
   const info = q.insertRelease.run(store.id, url, label || null, env?.id || null, trigger, store.id);
   const id = Number(info.lastInsertRowid);
   const disabled = [...new Set([...effectiveDisabled(storeConfig(store)), ...SKIP])];
-  const common = { storeId: store.id, origin: store.url, kind: 'full', password: store.storefront_password, trigger: 'release', disabled, captureOnly: true, release: id };
+  const common = { storeId: store.id, origin: store.url, kind: 'full', password: storePassword(store), trigger: 'release', disabled, captureOnly: true, release: id };
   const liveId = startRun({ ...common });
   const draftId = env?.kind === 'store'
-    ? startRun({ ...common, origin: url, password: env.password || null, ownPassword: true })
+    ? startRun({ ...common, origin: url, password: readSecret(env.password), ownPassword: true })
     : startRun({ ...common, preview: { url } });
   q.setReleaseRuns.run(liveId, draftId, id);
   return id;

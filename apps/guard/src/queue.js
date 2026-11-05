@@ -1,5 +1,6 @@
 import { config } from './config.js';
 import { q } from './db.js';
+import { storePassword } from './secret.js';
 import { runScan } from './engine/index.js';
 import { handleAlerts } from './alerts.js';
 import { storeConfig } from './scheduler.js';
@@ -88,7 +89,7 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     }
     const cfg = store ? storeConfig(store) : {};
     // A staging environment brings its own password; everything else uses the live store's latest one.
-    if (store && !ownPassword) password = store.storefront_password || password;
+    if (store && !ownPassword) password = storePassword(store) || password;
     // Shopify stores: the store's active discount codes are picked up automatically, alongside any typed in.
     let codes = cfg.discountCodes || [];
     const link = store ? shopForStore(store.id) : null;
