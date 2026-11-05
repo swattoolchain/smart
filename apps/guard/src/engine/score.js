@@ -14,6 +14,7 @@ const PROBLEM = {
   'nf.seo.noindex.home': 'your homepage is hidden from Google',
   'nf.seo.noindex.product': 'product pages are hidden from Google',
   'cat.pricing': 'some products have pricing mistakes (a zero price or a fake discount)',
+  'sec.deface': 'your store shows a hacker\'s message instead of your shop',
 };
 
 export function scoreChecks(checks) {

@@ -9,6 +9,8 @@ export const CATEGORIES = {
   trust: { label: 'Catalog & products', weight: 10 },
   // Shown as "rules met", not as a score: legal rules don't change whether customers can buy.
   compliance: { label: 'Legal and compliance', weight: 0, rules: true },
+  // Security watch: shown on its own, never part of the health score.
+  security: { label: 'Security', weight: 0 },
 };
 
 export function check(id, category, title, status, { severity = 'major', detail = '', evidence = null, fix = '' } = {}) {

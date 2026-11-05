@@ -13,6 +13,7 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { reviewScreens } from './visual-ai.js';
+import { runSpam } from './spam.js';
 import { aiEnabled } from '../ai.js';
 
 async function isLocked(ctx, origin) {
@@ -96,14 +97,16 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind !== 'journeys') {
         phase('quality');
         metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;
+        if (on('security.spam')) await runSpam({ page, rec, origin, info, password, shot });
       }
       if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
         phase('regional');
         await runRegional({ page, rec, origin, info, password, on, preview });
       }
-      if (kind === 'full' && storeId && on('visual')) {
+      if (kind === 'full' && storeId && (on('visual') || on('security.deface'))) {
         phase('visual');
-        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
+        // Defacement is judged against the approved look, so it rides on the visual screenshots.
+        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null, deface: on('security.deface') && !preview });
       }
       if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
         phase('catalog');
