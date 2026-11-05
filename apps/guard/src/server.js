@@ -27,6 +27,7 @@ import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
+import { teamRoutes, membership, memberMay, teamAllowed } from './team.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -80,6 +81,15 @@ function requireUser(req, res, next) {
   const v = sessionValid(req, u.id);
   if (!v.ok) { req.session = null; return res.status(401).json({ error: v.error || 'Please log in' }); }
   req.user = u;
+  // Working in someone else's workspace as a team member: act as that account, within the member's role.
+  if (req.session.acct) {
+    const m = membership(req.session.acct, u.id);
+    const acc = m && teamAllowed(req.session.acct) && q.userById.get(req.session.acct);
+    if (!acc) { delete req.session.acct; return next(); } // removed from the team: back to their own account
+    if (!memberMay(m.role, req.method, req.path)) return res.status(403).json({ error: m.role === 'viewer' ? 'You can view this workspace but not change it. Ask the account owner for admin access.' : 'Only the account owner can do this.', role: m.role });
+    req.member = { user: u, role: m.role, accountId: acc.id };
+    req.user = acc;
+  }
   next();
 }
 function ownStore(req, res) {
@@ -119,7 +129,12 @@ app.post('/api/scan', async (req, res) => {
 
 /** The signed-in user: a login cookie on the website, or a Shopify session token inside Shopify admin. */
 function currentUserId(req) {
-  if (req.session?.uid) return sessionValid(req, req.session.uid).ok ? req.session.uid : null;
+  if (req.session?.uid) {
+    if (!sessionValid(req, req.session.uid).ok) return null;
+    // A team member sees the workspace they are working in (screenshots, reports), and only while still a member.
+    if (req.session.acct) return membership(req.session.acct, req.session.uid) && teamAllowed(req.session.acct) ? req.session.acct : req.session.uid;
+    return req.session.uid;
+  }
   const auth = req.get('authorization') || '';
   if (/^Bearer\s+ey/i.test(auth) && shopify.shopifyEnabled()) {
     try {
@@ -218,6 +233,7 @@ app.post('/api/auth/signup', async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
   const info = q.insertUser.run(e, hash, String(name || '').slice(0, 80));
   req.session.uid = Number(info.lastInsertRowid);
+  delete req.session.acct; // a fresh login starts in the person's own account
   // Signing up from a free-check report ("Start monitoring") adds that store with recommended settings.
   let store = null;
   if (storeUrl) {
@@ -257,6 +273,7 @@ app.post('/api/auth/login', async (req, res) => {
   if (!v.ok) return res.status(401).json({ error: v.error || 'Email or password is incorrect' });
   loginAttempts.delete(key);
   req.session.uid = u.id;
+  delete req.session.acct; // a fresh login starts in the person's own account
   req.session.ep = sessionEpoch(u.id);
   res.json({ ok: true });
 });
@@ -267,8 +284,11 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', requireUser, (req, res) => {
-  res.json({ user: req.user, admin: isAdmin(req.user), license: licenseView(req.user.id) });
+  const member = req.member ? { email: req.member.user.email, name: req.member.user.name, role: req.member.role } : null;
+  // Founder access belongs to the person, never to a workspace they visit.
+  res.json({ user: req.user, member, admin: !req.member && isAdmin(req.user), license: licenseView(req.user.id), team: !req.member && teamAllowed(req.user.id) });
 });
+teamRoutes(app, { requireUser });
 
 // The customer's own plan and payment history.
 app.get('/api/account/billing', requireUser, (req, res) => {
