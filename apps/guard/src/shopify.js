@@ -14,6 +14,7 @@ import { config } from './config.js';
 import { db, q } from './db.js';
 import { ensureLicense, updateLicense, listPlans, getPlan, audit, setting } from './license.js';
 import { seal, open } from './secret.js';
+import { sendMail } from './alerts.js';
 
 const S = config.shopify;
 export const shopifyEnabled = () => !!(S.apiKey && S.apiSecret);
@@ -261,11 +262,54 @@ export async function activeCodes(shop) {
 // ---------- uninstall and privacy ----------
 export function uninstalled(shop) {
   const row = Q.get.get(shop);
+  // Shopify may deliver the same webhook more than once: only the first one (while installed) counts.
+  const wasInstalled = !!row && !row.uninstalled_at;
   Q.uninstall.run(shop);
   if (!row?.user_id) return;
   db.prepare('UPDATE stores SET monitoring = 0 WHERE user_id = ?').run(row.user_id);
   try { updateLicense('shopify', row.user_id, { status: 'cancelled' }); } catch (e) { console.error('licence on uninstall', e); }
   audit('shopify', row.user_id, 'note', { text: `Uninstalled from Shopify (${shop})` });
+  if (wasInstalled) removalAlarm(shop, row.user_id).catch((e) => console.error('removal alarm', shop, e.message));
+}
+
+const isEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s);
+/** Who hears that Tharam was removed: the confirmed browser-access email and every store's alert email. */
+export function removalRecipients(userId) {
+  const u = q.userById.get(userId);
+  const all = [u?.login_email, ...q.storesByUser.all(userId).map((s) => s.alert_email)];
+  const seen = new Set();
+  return all.filter((e) => isEmail(e) && !seen.has(e.toLowerCase()) && seen.add(e.toLowerCase()));
+}
+
+/**
+ * S16 removal alarm: someone who takes over a Shopify admin often removes monitoring first. Tell the
+ * owner straight away, outside Shopify, in one email.
+ */
+export async function removalAlarm(shop, userId) {
+  const to = removalRecipients(userId);
+  if (!to.length) return false;
+  const name = q.storesByUser.all(userId)[0]?.name || shop;
+  const when = new Date().toUTCString().replace('GMT', 'UTC');
+  const admin = `https://admin.shopify.com/store/${storeHandle(shop)}`;
+  const text = [
+    `Tharam was removed from your store ${name} (${shop}) on ${when}.`,
+    '',
+    "If this wasn't you, your admin may be compromised.",
+    '',
+    'What to do now:',
+    `1. Sign in to Shopify admin (${admin}) and change your password.`,
+    '2. Check Settings > Users and permissions for staff you don\'t know, and remove them.',
+    '3. Check Apps for apps you didn\'t install, and remove them.',
+    '4. Turn on two-step login for every staff account.',
+    '5. Add Tharam again from the Shopify App Store so your store is watched again.',
+    '',
+    "If it was you, there's nothing to do. Your store is no longer checked. Shopify asks us to delete your store's data 48 hours after the app is removed; add Tharam again before then to keep your history.",
+    '',
+    'Tharam',
+  ].join('\n');
+  await sendMail({ to: to.join(', '), subject: `Tharam was removed from ${name}`, text });
+  audit('shopify', userId, 'note', { text: `Removal alarm emailed to ${to.join(', ')}` });
+  return true;
 }
 /** shop/redact: 48 hours after uninstall, Shopify asks us to delete the shop's data. */
 export function redactShop(shop) {
