@@ -31,12 +31,12 @@ describe('Runner routing and join tokens', () => {
     assert.equal(r.chooseRunner(JOURNEY, [{ ...MAIN, used: 2 }, R(2, { used: 2 })]), null, 'every slot busy: the check waits');
   });
 
-  it('only active, healthy runners take checks; workers take journey checks only', () => {
+  it('only active, healthy runners take checks; workers take journey and full checks (not AI, publish or free)', () => {
     const busyMain = { ...MAIN, used: 2 };
     assert.equal(r.chooseRunner(JOURNEY, [busyMain, R(2, { healthy: false })]), null, 'a worker that stopped checking in');
     assert.equal(r.chooseRunner(JOURNEY, [busyMain, R(2, { status: 'draining' })]), null, 'draining');
     assert.equal(r.chooseRunner(JOURNEY, [busyMain, R(2, { status: 'paused' })]), null, 'paused');
-    for (const job of [{ kind: 'full', storeId: 5 }, { kind: 'journeys', storeId: 5, release: 3 }, { kind: 'journeys', storeId: 5, preview: { url: 'x' } }, { kind: 'free' }]) {
+    for (const job of [{ kind: 'full', storeId: 5, needsAi: true }, { kind: 'journeys', storeId: 5, release: 3 }, { kind: 'journeys', storeId: 5, preview: { url: 'x' } }, { kind: 'free' }]) {
       assert.equal(r.chooseRunner(job, [busyMain, R(2)]), null, `${JSON.stringify(job)} stays on the main server`);
       assert.equal(r.chooseRunner(job, [MAIN, R(2, { slots: 9 })]).id, 1);
     }
@@ -50,7 +50,8 @@ describe('Runner routing and join tokens', () => {
     assert.equal(r.chooseRunner({ ...JOURNEY, tags: ['india'] }, runners).id, 2);
     assert.equal(r.chooseRunner({ ...JOURNEY, tags: ['sale', 'india'] }, [MAIN, R(2, { tags: ['india'] }), R(3, { tags: ['sale'], slots: 1, used: 1 })]).id, 2, 'sale runner full: next tag');
     assert.equal(r.chooseRunner({ ...JOURNEY, tags: ['eu'] }, runners).id, 1, 'nobody tagged eu: any runner');
-    assert.equal(r.chooseRunner({ kind: 'full', storeId: 5, tags: ['india'] }, runners).id, 1, 'a tag never sends a full check to a worker');
+    assert.equal(r.chooseRunner({ kind: 'full', storeId: 5, needsAi: true, tags: ['india'] }, runners).id, 1, 'a tag never sends a full check with AI review to a worker');
+    assert.equal(r.chooseRunner({ kind: 'full', storeId: 5, tags: ['india'] }, runners).id, 2, 'a full check without AI follows the tag');
   });
 
   it('a retried check avoids the runner that lost it, unless nothing else can take it', () => {
