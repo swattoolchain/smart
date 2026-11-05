@@ -409,11 +409,34 @@ app.get('/api/stores/:id', requireUser, (req, res) => {
   res.json({ store: storeView(s) });
 });
 
-app.patch('/api/stores/:id', requireUser, (req, res) => {
+/**
+ * Where alerts go when the owner clears the alert email. Website accounts: their account email. Shopify accounts
+ * sign in as their myshopify domain, which is not an address: use the confirmed browser-access email, else the
+ * shop's contact email from Shopify, else nothing (the caller asks for one).
+ */
+async function fallbackAlertEmail(store) {
+  const user = q.userById.get(store.user_id);
+  const shop = shopify.shopForStore(store.id) || shopify.shopForUser(store.user_id);
+  if (!shop) return user && isEmail(user.email) ? user.email : null;
+  if (user?.login_email && isEmail(user.login_email)) return user.login_email;
+  if (shop.uninstalled_at) return null;
+  try {
+    const d = await shopify.gql(shop.shop, '{ shop { email contactEmail } }');
+    return [d.shop?.contactEmail, d.shop?.email].find((e) => e && isEmail(e)) || null;
+  } catch { return null; }
+}
+
+app.patch('/api/stores/:id', requireUser, async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   const b = req.body || {};
   if (b.alertEmail && !isEmail(b.alertEmail)) return res.status(400).json({ error: 'Alert email is not valid' });
+  // Clearing the alert email falls back to an address that can receive mail (never a myshopify domain).
+  let alertEmail = b.alertEmail === undefined ? s.alert_email : b.alertEmail || null;
+  if (b.alertEmail !== undefined && !b.alertEmail) {
+    alertEmail = await fallbackAlertEmail(s);
+    if (!alertEmail) return res.status(400).json({ error: 'Enter an email address for alerts. We need one to tell you when something breaks.' });
+  }
   if (b.slack && !/^https:\/\/hooks\.slack\.com\//.test(b.slack)) return res.status(400).json({ error: 'Slack webhook must start with https://hooks.slack.com/' });
   if (b.name !== undefined && !String(b.name).trim()) return res.status(400).json({ error: 'Give the store a name' });
   const ent = entitlements(req.user.id);
@@ -423,7 +446,7 @@ app.patch('/api/stores/:id', requireUser, (req, res) => {
   q.updateStoreSettings.run(
     b.name === undefined ? s.name : String(b.name).trim().slice(0, 80),
     b.password === undefined ? s.storefront_password : seal(b.password || null),
-    b.alertEmail === undefined ? s.alert_email : b.alertEmail || q.userById.get(s.user_id).email,
+    alertEmail,
     b.slack === undefined ? s.slack_webhook : b.slack || null,
     b.monitoring === undefined ? s.monitoring : b.monitoring ? 1 : 0,
     s.id
