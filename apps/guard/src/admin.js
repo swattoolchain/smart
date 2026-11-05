@@ -7,8 +7,9 @@ import {
 import { sendReceipt } from './billing-mail.js';
 import { capacityReport } from './capacity.js';
 import { queueDepth } from './queue.js';
+import { usageReport } from './usage.js';
 
-const SETTINGS = ['signup_plan', 'trial_days', 'grace_days', 'payment_note'];
+const SETTINGS = ['signup_plan', 'trial_days', 'grace_days', 'payment_note', 'browser_hour_cost', 'cost_currency'];
 
 export function adminRoutes(app, { requireUser, isAdmin }) {
   const admin = (req, res, next) => requireUser(req, res, () => (isAdmin(req.user) ? next() : res.status(403).json({ error: 'Forbidden' })));
@@ -128,6 +129,11 @@ export function adminRoutes(app, { requireUser, isAdmin }) {
     try { res.json({ plan: savePlan(actor(req), req.params.key, req.body || {}) }); } catch (e) { fail(res, e); }
   });
 
+  // Usage: browser minutes per store and account for a day or a month, with estimated cost (read-only).
+  app.get('/api/admin/usage', admin, (req, res) => {
+    try { res.json(usageReport({ period: String(req.query.period || 'month'), date: req.query.date ? String(req.query.date) : null })); } catch (e) { fail(res, e); }
+  });
+
   // Capacity: how busy the check machine is (read-only).
   app.get('/api/admin/capacity', admin, (req, res) => {
     const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
@@ -156,6 +162,16 @@ export function adminRoutes(app, { requireUser, isAdmin }) {
       if (b.trial_days !== undefined) clean.trial_days = int(b.trial_days, 1, 90, 'Trial days');
       if (b.grace_days !== undefined) clean.grace_days = int(b.grace_days, 0, 90, 'Grace days');
       if (b.payment_note !== undefined) { const t = String(b.payment_note).trim(); if (!t) throw new Error('Write how customers can pay'); clean.payment_note = t.slice(0, 2000); }
+      // Usage report: what one browser hour costs (machines divided by the browser hours they give).
+      if (b.browser_hour_cost !== undefined) {
+        const n = typeof b.browser_hour_cost === 'number' || (typeof b.browser_hour_cost === 'string' && b.browser_hour_cost.trim() !== '') ? Number(b.browser_hour_cost) : NaN;
+        if (!Number.isFinite(n) || n < 0 || n > 100) throw new Error('Cost per browser hour must be a number from 0 to 100');
+        clean.browser_hour_cost = String(Math.round(n * 10000) / 10000);
+      }
+      if (b.cost_currency !== undefined) {
+        if (!CURRENCIES.includes(String(b.cost_currency))) throw new Error(`Cost currency must be one of: ${CURRENCIES.join(', ')}`);
+        clean.cost_currency = String(b.cost_currency);
+      }
       for (const [k, v] of Object.entries(clean)) if (v !== setting(k)) setSetting(actor(req), k, v);
       res.json({ ok: true });
     } catch (e) { fail(res, e); }

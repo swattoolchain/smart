@@ -47,6 +47,15 @@ export function enqueue(job) {
   pump();
 }
 
+/** Checks running right now, on this server and on workers (for the founder console's Runners page). */
+export function currentChecks() {
+  const main = mainRunner();
+  const list = [];
+  for (const [runId, x] of running) list.push({ runId, runnerId: main.id, storeId: x.job.storeId || null, kind: x.job.kind, release: !!x.job.release });
+  for (const [runId, x] of remote) list.push({ runId, runnerId: x.runnerId, storeId: x.job.storeId || null, kind: x.job.kind, release: !!x.job.release });
+  return list;
+}
+
 /** `active`: checks running on this server; `remote`: checks on workers. */
 export function queueDepth() {
   return { waiting: waiting.length, active, remote: remote.size };
@@ -202,6 +211,7 @@ async function execute(job) {
   const controller = new AbortController();
   running.set(runId, { controller, job });
   q.setRunRunning.run(runId);
+  q.setRunRunner.run(mainRunner().id, runId);
   let timer;
   let timedOut = false;
   // At the limit, also close the browser so a stuck run doesn't keep working in the background.
@@ -258,6 +268,7 @@ export function workerCheckIn(runner, runningIds = []) {
   for (const l of L.assignedFor.all(runner.id)) {
     if (L.take.run(l.id).changes !== 1) continue;
     q.setRunRunning.run(l.run_id);
+    q.setRunRunner.run(runner.id, l.run_id);
     const p = live.get(l.run_id);
     if (p) p.phase = 'open';
     jobs.push(JSON.parse(l.spec_json));
@@ -319,6 +330,7 @@ function lose(l, why) {
   remote.delete(l.run_id);
   if (L.attempts.get(l.run_id).n < 2) {
     q.requeueRun.run(l.run_id);
+    q.markRunRetried.run(l.run_id);
     const p = live.get(l.run_id);
     if (p) { p.phase = 'queued'; p.rec = null; } else live.set(l.run_id, { phase: 'queued', kind: job.kind, disabled: [], rec: null });
     waiting.push(Object.assign(job, { avoid: l.runner_id, retry: true, seqNo: job.seqNo ?? ++seq }));

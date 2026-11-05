@@ -2103,19 +2103,34 @@
     const d = await api('/api/admin/runners');
     if (!ctx.alive()) return;
     const STAT = { active: ['healthy', 'Active'], draining: ['warning', 'Draining'], paused: ['', 'Paused'] };
+    const RUNSTAT = { done: 'Finished', error: 'Didn’t finish', cancelled: 'Stopped', running: 'Running', queued: 'Waiting' };
+    const secs = (x) => (x < 90 ? `${x} s` : `${Math.round(x / 6) / 10} min`);
+    const now = d.runners.flatMap((r) => r.current.map((c) => ({ ...c, runner: r.name })));
     const row = (r) => {
       const [cls, label] = STAT[r.status] || ['', r.status];
       const health = r.kind === 'main' ? '<span class="pill healthy">This server</span>' : r.healthy ? `<span class="pill healthy">Checking in</span><div class="cell-sub">${time(r.lastSeen)}</div>` : `<span class="pill critical">Not responding</span><div class="cell-sub">last seen ${time(r.lastSeen)}</div>`;
       const btn = (st, txt) => (r.status === st ? '' : `<button type="button" class="btn small secondary" data-runner="${r.id}" data-status="${st}">${txt}</button>`);
       return `<tr class="runner-row" data-name="${esc(r.name)}"><td><span class="cell-main">${esc(r.name)}</span><div class="cell-sub">${r.kind === 'main' ? 'Main server · web, database, scheduler' : 'Worker'}</div></td>
         <td><span class="pill ${cls}">${label}</span></td><td>${health}</td><td class="num">${r.used} of ${r.slots}</td>
+        <td class="num">${r.today ? `${r.today.checks}<div class="cell-sub">${r.today.minutes} min</div>` : '–'}</td>
+        <td class="num">${r.totals ? `${r.totals.checks}<div class="cell-sub">${r.totals.minutes} min</div>` : '–'}</td>
+        <td class="num">${r.totals && r.totals.failed + r.totals.lost ? `<span class="pill ${r.totals.lost ? 'critical' : 'warning'}">${r.totals.failed} failed${r.totals.lost ? ` · ${r.totals.lost} lost` : ''}</span>` : '<span class="muted">0</span>'}</td>
         <td>${r.tags.length ? r.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join(' ') : '<span class="muted">–</span>'}</td>
         <td class="actions">${btn('active', 'Activate')} ${btn('draining', 'Drain')} ${btn('paused', 'Pause')}</td></tr>`;
     };
     ctx.main.innerHTML = `<div class="main-inner">${head}
       <p class="lede-sm">Checks go to the active runner with the most free slots. Stores in sale mode prefer runners tagged <code>sale</code>, paid plans prefer their plan's tag (for example <code>pro</code>), and stores prefer their region's tag (<code>india</code>, <code>eu</code>, <code>us</code>). If no such runner has room, any runner takes the check. Workers take journey checks; full and publish checks run on the main server. A worker that stops checking in for a minute gets no new checks, and its unfinished checks are retried once elsewhere. <b>Drain</b> finishes current checks and takes no new ones.</p>
-      <section class="panel"><div class="table-wrap flat"><table class="data" id="runners"><thead><tr><th>Runner</th><th>Status</th><th>Health</th><th class="num">Slots in use</th><th>Tags</th><th></th></tr></thead>
-        <tbody>${d.runners.map(row).join('')}</tbody></table></div></section>
+      <section class="panel"><div class="table-wrap flat"><table class="data" id="runners"><thead><tr><th>Runner</th><th>Status</th><th>Health</th><th class="num">Slots in use</th><th class="num">Today</th><th class="num">Last ${d.days} days</th><th class="num">Problems, ${d.days} days</th><th>Tags</th><th></th></tr></thead>
+        <tbody>${d.runners.map(row).join('')}</tbody></table></div>
+        <p class="muted" style="margin-bottom:0">Checks and browser minutes go to the day a check started (UTC). <b>Failed</b>: checks that ended with an error on this runner. <b>Lost</b>: checks this runner stopped answering for; they were retried on another runner.</p></section>
+      <section class="panel"><h2>Running now</h2>${now.length ? `<div class="table-wrap flat"><table class="data" id="runners-now"><thead><tr><th>Runner</th><th>Store</th><th>Check</th><th>Since</th></tr></thead><tbody>
+        ${now.map((c) => `<tr><td>${esc(c.runner)}</td><td>${esc(c.store || 'Free website check')}</td><td>${esc(c.kind)}</td><td>${c.since ? time(c.since) : '<span class="muted">getting ready</span>'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No checks running right now.</p>'}</section>
+      <section class="panel"><h2>Per day</h2><div class="table-wrap flat"><table class="data" id="runners-days"><thead><tr><th>Day (UTC)</th>${d.runners.map((r) => `<th class="num">${esc(r.name)}</th>`).join('')}</tr></thead><tbody>
+        ${(d.runners[0]?.days || []).map((x, i) => `<tr><td>${esc(x.date)}</td>${d.runners.map((r) => { const y = r.days[i]; return `<td class="num">${y.checks ? `${y.checks} · ${y.minutes} min` : '–'}${y.failed || y.lost ? `<div class="cell-sub">${y.failed} failed${y.lost ? `, ${y.lost} lost` : ''}</div>` : ''}</td>`; }).join('')}</tr>`).join('')}</tbody></table></div></section>
+      <section class="panel"><h2>Latest checks</h2><div class="table-wrap flat"><table class="data" id="runners-recent"><thead><tr><th>Check</th><th>Store</th><th>Runner</th><th>Queued</th><th class="num">Waited</th><th class="num">Took</th><th>Result</th></tr></thead><tbody>
+        ${d.recent.map((x) => `<tr><td>#${x.id} ${esc(x.kind)}<div class="cell-sub">${esc(x.trigger || '')}</div></td><td>${x.store ? `${esc(x.store.name)}<div class="cell-sub">${esc(x.store.account || '')}</div>` : '<span class="muted">Free website check</span>'}</td>
+          <td>${x.runner ? esc(x.runner) : '<span class="muted">–</span>'}${x.retried ? ' <span class="pill warning">Retried</span>' : ''}</td><td class="nowrap">${esc(exact(x.queuedAt))}</td>
+          <td class="num">${x.waitSec == null ? '–' : secs(x.waitSec)}</td><td class="num">${x.tookSec == null ? '–' : secs(x.tookSec)}</td><td>${esc(RUNSTAT[x.status] || x.status)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No checks yet.</td></tr>'}</tbody></table></div></section>
       <section class="panel"><h2>Add a worker</h2><p class="muted" style="margin-top:0">Creates a join token that works once, for 24 hours. Start the worker with it; the worker then gets its own credentials.</p>
         <form id="rjoin" class="inline-form"><div class="field"><label>Name</label><input name="name" required maxlength="40" placeholder="worker-1"></div>
           <div class="field"><label>Slots</label><input name="slots" type="number" min="1" max="16" value="2"></div>
@@ -2134,6 +2149,44 @@
         $("#rjoin-out").innerHTML = `<div class="notice" style="display:block"><p><b>Join token for ${esc(t.name)}</b>, shown once, valid ${t.expiresInHours} hours:</p><pre class="code" id="rjoin-token">${esc(t.token)}</pre><p class="muted">On the worker machine: <code>MAIN_URL=${esc(location.origin)} JOIN_TOKEN=… node src/worker.js</code></p></div>`;
       } catch (ex) { $('#rjoin-err').textContent = ex.message; }
     };
+  }
+
+  // Browser minutes per store and account, by plan, with an estimated cost next to what each customer pays.
+  async function adminUsage(ctx, head) {
+    const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+    const period = qs.get('period') === 'day' ? 'day' : 'month';
+    let d;
+    try { d = await api(`/api/admin/usage?period=${period}${qs.get('date') ? `&date=${encodeURIComponent(qs.get('date'))}` : ''}`); }
+    catch (ex) { if (ctx.alive()) ctx.main.innerHTML = `<div class="main-inner">${head}<p class="error-msg">${esc(ex.message)}</p></div>`; return; }
+    if (!ctx.alive()) return;
+    const cur = d.rate.currency;
+    const money = (v, c = cur) => (v == null ? '–' : v > 0 && v < 0.01 ? `&lt; ${esc(c)} 0.01` : `${esc(c)} ${v < 1 && v > 0 ? v.toFixed(2) : Math.round(v * 100) / 100}`);
+    const pct = (p) => (p == null ? '<span class="muted">–</span>' : `<span class="pill ${p > 50 ? 'critical' : p > 20 ? 'warning' : 'healthy'}">${p}%</span>`);
+    const pays = (a) => (a.pays ? `${money(a.pays.amount, a.pays.currency)}${a.pays.currency !== cur && a.pays.inCostCurrency != null ? `<div class="cell-sub">≈ ${money(a.pays.inCostCurrency)}</div>` : ''}` : '<span class="muted">Nothing</span>');
+    const label = period === 'day' ? d.date : new Date(d.date + '-01T00:00:00Z').toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    const plans = [...new Set(d.days.flatMap((x) => Object.keys(x.byPlan)))].sort();
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <form id="usage-pick" class="inline-form" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:16px">
+        <div class="field" style="margin:0"><label>Period</label><select name="period">${opt('month', 'Month', period)}${opt('day', 'Day', period)}</select></div>
+        <div class="field" style="margin:0"><label>${period === 'day' ? 'Day' : 'Month'}</label><input name="date" type="${period === 'day' ? 'date' : 'month'}" value="${esc(d.date)}"></div>
+        <div class="field" style="margin:0"><button class="btn secondary" type="submit">Show</button></div></form>
+      <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="figure"><b>${d.totals.minutes}</b><span>Browser minutes, ${esc(label)}</span></div>
+        <div class="figure"><b>${money(d.totals.cost)}</b><span>Estimated cost</span></div>
+        <div class="figure"><b>${d.totals.accounts}</b><span>Accounts with checks</span></div>
+        <div class="figure"><b>${d.freeChecks.minutes}</b><span>Minutes on free website checks (${d.freeChecks.checks})</span></div></div>
+      <p class="muted">Estimated at <b>${money(d.rate.perHour)}</b> per browser hour (change it in <a href="#/admin/settings">Settings</a>). ${period === 'day' ? 'For a day, “pays” is one day’s share of the monthly price.' : '“Pays” is the monthly price of active plans; yearly plans count as one twelfth.'} Prices in another currency are converted with rough rates, so treat the percentage as a guide.</p>
+      <section class="panel"><h2>By plan</h2><div class="table-wrap flat"><table class="data" id="usage-plans"><thead><tr><th>Plan</th><th class="num">Accounts</th><th class="num">Stores</th><th class="num">Checks</th><th class="num">Browser minutes</th><th class="num">Est. cost</th><th class="num">Customers pay</th><th class="num">Cost of price</th></tr></thead><tbody>
+        ${d.plans.map((p) => `<tr><td>${esc(p.plan)}</td><td class="num">${p.accounts}</td><td class="num">${p.stores}</td><td class="num">${p.checks}</td><td class="num"><b>${p.minutes}</b></td><td class="num">${money(p.cost)}</td><td class="num">${p.pays ? money(p.pays) : '<span class="muted">Nothing</span>'}</td><td class="num">${pct(p.costPct)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No checks in this period.</td></tr>'}</tbody></table></div></section>
+      <section class="panel"><h2>By account and store</h2><div class="table-wrap flat"><table class="data" id="usage-accounts"><thead><tr><th>Account</th><th>Plan</th><th class="num">Checks</th><th class="num">Browser minutes</th><th class="num">Est. cost</th><th class="num">Pays</th><th class="num">Cost of price</th></tr></thead><tbody>
+        ${d.accounts.map((a) => `<tr class="link usage-account" data-href="#/admin/customers/${a.userId}" tabindex="0"><td><span class="cell-main">${esc(a.email)}</span></td><td>${esc(a.plan)}${a.billing === 'shopify' ? '<div class="cell-sub">Shopify billing</div>' : ''}</td><td class="num">${a.checks}</td><td class="num"><b>${a.minutes}</b></td><td class="num">${money(a.cost)}</td><td class="num">${pays(a)}</td><td class="num">${pct(a.costPct)}</td></tr>
+          ${a.stores.map((st) => `<tr class="usage-store"><td style="padding-left:28px"><span class="cell-sub">${esc(st.name)}</span></td><td></td><td class="num cell-sub">${st.checks}</td><td class="num cell-sub">${st.minutes}</td><td class="num cell-sub">${money(st.cost)}</td><td></td><td></td></tr>`).join('')}`).join('') || '<tr><td colspan="7" class="muted">No checks in this period.</td></tr>'}</tbody></table></div></section>
+      ${period === 'month' ? `<section class="panel"><h2>Per day</h2><div class="table-wrap flat"><table class="data" id="usage-days"><thead><tr><th>Day (UTC)</th>${plans.map((p) => `<th class="num">${esc(p)}</th>`).join('')}<th class="num">All</th></tr></thead><tbody>
+        ${d.days.filter((x) => x.minutes).map((x) => `<tr><td><a href="#/admin/usage?period=day&date=${esc(x.date)}">${esc(x.date)}</a></td>${plans.map((p) => `<td class="num">${x.byPlan[p] ?? '–'}</td>`).join('')}<td class="num"><b>${x.minutes}</b></td></tr>`).join('') || `<tr><td colspan="${plans.length + 2}" class="muted">No checks in this month.</td></tr>`}</tbody></table></div></section>` : ''}</div>`;
+    rowsLink(ctx.main);
+    const f = $('#usage-pick');
+    f.period.onchange = () => { location.hash = `#/admin/usage?period=${f.period.value}`; };
+    f.onsubmit = (e) => { e.preventDefault(); location.hash = `#/admin/usage?period=${f.period.value}&date=${encodeURIComponent(f.date.value)}`; };
   }
 
   // ---------- Founder console ----------
@@ -2162,7 +2215,7 @@
     if (!S.admin) { location.hash = '#/'; return; }
     const tab = ctx.r.a;
     const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder console</h1><div class="meta">Customers, plans and revenue · only visible to founders</div></div></div>`
-      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity'], ['runners', 'Runners']], tab);
+      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity'], ['runners', 'Runners'], ['usage', 'Usage']], tab);
     if (tab === 'customers' && ctx.r.b) return adminCustomer(ctx, head, ctx.r.b);
     if (tab === 'customers') return adminCustomers(ctx, head);
     if (tab === 'plans') return adminPlans(ctx, head);
@@ -2172,6 +2225,7 @@
     if (tab === 'leads') return adminLeads(ctx, head);
     if (tab === 'capacity') return adminCapacity(ctx, head);
     if (tab === 'runners') return adminRunners(ctx, head);
+    if (tab === 'usage') return adminUsage(ctx, head);
     const d = await api('/api/admin/billing');
     if (!ctx.alive()) return;
     const c = d.counts;
@@ -2375,6 +2429,9 @@
         <div class="controls"><div class="field"><label>Grace days</label><input name="grace_days" type="number" min="0" max="90" value="${esc(st.grace_days)}"></div></div></div>
       <div class="form-section"><div><h3>How customers pay</h3><p class="explain">Shown on every customer’s Plan and billing page and in reminder emails.</p></div>
         <div class="controls"><div class="field"><label>Payment instructions</label><textarea name="payment_note" rows="4" maxlength="2000">${esc(st.payment_note)}</textarea></div></div></div>
+      <div class="form-section"><div><h3>Running costs</h3><p class="explain">What one browser hour costs you (machine price ÷ the browser hours it gives). Used for the estimated cost on the Usage page.</p></div>
+        <div class="controls"><div class="field"><label>Cost per browser hour</label><input name="browser_hour_cost" type="number" min="0" max="100" step="0.0001" value="${esc(st.browser_hour_cost)}"></div>
+        <div class="field"><label>Currency</label><select name="cost_currency">${CURS.map((c) => opt(c, c, st.cost_currency)).join('')}</select></div></div></div>
       <div class="form-section"><div></div><div class="controls"><p class="error-msg" id="set-err" role="alert"></p><div><button class="btn" type="submit">Save settings</button></div></div></div></form></div>`;
     $('#setf').onsubmit = async (e) => {
       e.preventDefault();

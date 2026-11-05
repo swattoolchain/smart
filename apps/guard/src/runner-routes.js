@@ -11,7 +11,8 @@ import express from 'express';
 import { config } from './config.js';
 import { audit } from './license.js';
 import { createJoinToken, joinWithToken, authRunner, touchRunner, updateRunner, runnerById, L } from './runners.js';
-import { workerCheckIn, workerComplete, workerProgress, holdsLease, runnerStates } from './queue.js';
+import { workerCheckIn, workerComplete, workerProgress, holdsLease, runnerStates, currentChecks } from './queue.js';
+import { runnerReport, recentRuns } from './usage.js';
 
 export const RUNNER_TYPE = 'application/vnd.tharam.runner+json';
 
@@ -70,10 +71,21 @@ export function runnerRoutes(app, { requireUser, isAdmin }) {
   const admin = (req, res, next) => requireUser(req, res, () => (isAdmin(req.user) ? next() : res.status(403).json({ error: 'Forbidden' })));
 
   app.get('/api/admin/runners', admin, (req, res) => {
-    const runners = runnerStates().map((r) => ({
-      id: r.id, name: r.name, kind: r.kind, slots: r.slots, used: r.used, tags: r.tags, status: r.status, healthy: r.healthy, lastSeen: r.kind === 'main' ? null : r.last_seen, createdAt: r.created_at,
-    }));
-    res.json({ runners });
+    const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+    const stats = new Map(runnerReport({ days, states: runnerStates(), current: currentChecks() }).map((r) => [r.id, r]));
+    const runners = runnerStates().map((r) => {
+      const st = stats.get(r.id) || {};
+      return {
+        id: r.id, name: r.name, kind: r.kind, slots: r.slots, used: r.used, tags: r.tags, status: r.status, healthy: r.healthy, lastSeen: r.kind === 'main' ? null : r.last_seen, createdAt: r.created_at,
+        current: st.current || [], today: st.today || null, totals: st.totals || null, days: st.days || [],
+      };
+    });
+    res.json({ days, runners, recent: recentRuns({ limit: 30 }) });
+  });
+
+  /** The latest checks with the runner that ran them, wait and duration (optionally one runner's). */
+  app.get('/api/admin/runs', admin, (req, res) => {
+    res.json({ runs: recentRuns({ limit: req.query.limit, runnerId: req.query.runner || null }) });
   });
 
   app.post('/api/admin/runners/join-tokens', admin, (req, res) => {
