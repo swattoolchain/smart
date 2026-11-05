@@ -77,7 +77,7 @@ async function act(page, origin, obs, action) {
 /**
  * Runs the AI shopper in its own fresh browser window (a first-time visitor) and adds the check `ai.shopper`.
  */
-export async function runShopper({ rec, origin, password, shot, maxSteps = MAX_STEPS }) {
+export async function runShopper({ rec, origin, password, shot, maxSteps = MAX_STEPS, prime = null }) {
   const title = 'An AI shopper can find a product and reach checkout';
   const ctx = await newContext();
   ctx.setDefaultTimeout(15000);
@@ -88,6 +88,8 @@ export async function runShopper({ rec, origin, password, shot, maxSteps = MAX_S
   let outcome = null; // 'checkout' | 'stuck' | 'limit' | 'error'
   let reason = '';
   try {
+    // Safe to publish: open the draft theme's preview in this window first, so every page shows the draft.
+    if (prime) await prime(page);
     const g = await gotoStore(page, origin + '/', { password });
     if (g.locked) { rec.add(check('ai.shopper', 'functional', title, 'skip', { severity: 'minor', detail: 'The store is password protected and could not be opened.' })); return null; }
     await settle(page, 600);

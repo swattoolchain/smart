@@ -215,9 +215,10 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         ai = await reviewScreens({ runDir, origin, rec });
       }
       // The AI shopper finds its own way, so it also tests themes the scripted journey doesn't know.
-      if (kind === 'full' && storeId && on('ai.shopper') && aiEnabled() && !preview && info.isShopify) {
+      // In Safe to publish it shops the draft theme too (its own window opens the preview first).
+      if (kind === 'full' && storeId && on('ai.shopper') && aiEnabled() && info.isShopify) {
         phase('shopper');
-        shopper = await runShopper({ rec, origin, password, shot });
+        shopper = await runShopper({ rec, origin, password, shot, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
       }
     }
     // Checks made outside the browser (theme files through the Shopify API) count like any other.

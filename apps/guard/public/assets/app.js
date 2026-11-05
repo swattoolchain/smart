@@ -1874,6 +1874,18 @@
         ${breaks.length ? `<ul class="list">${breaks.map((x) => findRow(x, 'break')).join('')}</ul>` : `<p class="muted" style="margin:0">Nothing breaks on ${esc(cand)}.</p>`}</section>
       <section class="panel"><h2>Fixed by ${esc(cand)}</h2><p class="sub">Problems on your live store that ${esc(cand)} fixes.</p>
         ${sum.fixes.length ? `<ul class="list">${sum.fixes.map((x) => findRow(x, 'fix')).join('')}</ul>` : `<p class="muted" style="margin:0">No live problems are fixed by ${esc(cand)}.</p>`}</section></div>`;
+    // The AI shopper on live and on the candidate, step by step, side by side.
+    const OUT = { checkout: ['healthy', 'Reached checkout'], stuck: ['critical', 'Got stuck'], limit: ['warning', 'Ran out of steps'], error: ['', 'Did not run'] };
+    const shopperCol = (label, a) => {
+      if (!a) return `<div class="pub-shopper-col"><h3>${esc(label)}</h3><p class="muted">The AI shopper did not run here.</p></div>`;
+      const [cls, txt] = OUT[a.outcome] || OUT.error;
+      return `<div class="pub-shopper-col" data-side="${esc(label)}"><h3>${esc(label)} <span class="pill ${cls}">${txt}</span></h3>
+        <ol class="agent-steps-list">${a.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol>
+        ${a.friction.length ? `<p class="sub" style="margin-top:8px">It noticed: ${a.friction.map((f) => esc(f.issue)).join('; ')}</p>` : ''}</div>`;
+    };
+    const shopper = sum.shopper ? `<section class="panel pub-shopper"><h2>AI shopper on live and ${esc(cand)}</h2>
+        <p class="sub">The same AI shopper starts on the homepage of each, with no help, and tries to reach checkout. It only clicks and chooses options, never types or pays.</p>
+        <div class="grid-2 tight">${shopperCol(r.environment?.kind === 'store' ? 'Live store' : 'Live theme', sum.shopper.live)}${shopperCol(candCap, sum.shopper.draft)}</div></section>` : '';
     const cmp = r.compare || { visual: [], metrics: [], areas: [] };
     const DEV = [['desktop', 'Desktop'], ['tablet', 'Tablet'], ['mobile', 'Phone']].filter(([dv]) => cmp.visual.some((v) => v.key.endsWith(dv)));
     const visual = cmp.visual.length ? `<section class="panel"><div class="panel-head"><h2>How ${esc(cand)} looks</h2>
@@ -1887,7 +1899,7 @@
     const checks = cmp.areas.length ? `<section class="panel"><details class="still"><summary>All ${allChecks.length} checks compared · ${same} unchanged</summary>
       <div class="table-wrap flat" style="margin-top:10px"><table class="data"><thead><tr><th style="width:90px">Live</th><th style="width:90px">Draft</th><th>Check</th></tr></thead><tbody>
       ${allChecks.map((x) => `<tr class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.b)}</td><td>${stat(x.a)}</td><td><span class="cell-main">${esc(x.title)}</span><div class="cell-sub">${esc(x.detail || x.prevDetail)}</div></td></tr>`).join('')}</tbody></table></div></details></section>` : '';
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb, meta, actions: preview + `<a class="btn secondary" href="#/s/${s.id}/publish">${icon('publish', 16)}New check</a>` })}${hero}${findings}${visual}${metrics}${checks}</div>`;
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb, meta, actions: preview + `<a class="btn secondary" href="#/s/${s.id}/publish">${icon('publish', 16)}New check</a>` })}${hero}${findings}${shopper}${visual}${metrics}${checks}</div>`;
     $$('[data-shot]', ctx.main).forEach((x) => (x.onclick = () => lightbox(x.dataset.shot, 'Screenshot')));
     const draw = (dv) => {
       $('#pub-shots').innerHTML = cmp.visual.filter((v) => v.key.endsWith(dv)).map((v) => {

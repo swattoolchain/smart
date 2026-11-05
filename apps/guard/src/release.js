@@ -11,7 +11,9 @@ import { effectiveDisabled } from './engine/catalog.js';
 import { entitlements, has, blockReason, envAllowed } from './license.js';
 import { sendMail, sendSlack } from './alerts.js';
 
-const SKIP = ['catalog', 'catalog.variants', 'sale.traffic', 'ai.copy', 'ai.visual', 'ai.shopper']; // the catalog and cart are the same for both themes
+// The catalog, the cart and the copy are the same for both themes. The AI shopper runs on both (when the store's
+// suite has it) and its outcomes are compared below.
+const SKIP = ['catalog', 'catalog.variants', 'sale.traffic', 'ai.copy', 'ai.visual'];
 
 /** Accepts a Shopify preview link for this store. Returns the URL to open, or throws a merchant-readable error. */
 export function previewUrlFor(store, input) {
@@ -72,10 +74,34 @@ export function startRelease(store, { url, label, env = null, trigger = 'manual'
 
 const BLOCK = new Set(['critical', 'major']);
 
+const SHOPPER_TITLE = 'An AI shopper can find a product and reach checkout';
+const shopperView = (s) => (s && s.outcome ? { outcome: s.outcome, steps: s.steps || [], friction: s.friction || [] } : null);
+const reached = (s) => s.steps.length - 1; // the last step is "reached checkout"
+
+/**
+ * The AI shopper on live and on the candidate. When it reaches checkout on live but not on the candidate,
+ * that alone is a reason not to publish: returns that blocker (otherwise null).
+ */
+export function shopperBlocker({ live, draft, draftCheck = null }, where = 'the draft') {
+  if (!live || !draft || live.outcome !== 'checkout' || draft.outcome === 'checkout') return null;
+  const last = draft.steps.at(-1);
+  const how = draft.outcome === 'stuck'
+    ? `got stuck on ${last?.at || 'the store'}${last?.did?.startsWith('stuck: ') ? `: ${last.did.slice(7)}` : ''}`
+    : `did not reach checkout within ${draft.steps.length} steps`;
+  return {
+    id: 'ai.shopper', title: SHOPPER_TITLE, status: 'fail', severity: 'major',
+    detail: `On ${where}, an AI shopper ${how}.${draft.friction.length ? ` It noticed: ${draft.friction.slice(0, 3).map((f) => f.issue).join('; ')}.` : ''}`,
+    liveDetail: `An AI shopper reached checkout in ${reached(live)} steps.`,
+    fix: `Follow the AI shopper's steps below on ${where}. Where it got stuck is where new customers would get stuck after you publish.`,
+    evidence: draftCheck?.evidence?.screenshot ? { screenshot: draftCheck.evidence.screenshot } : null,
+  };
+}
+
 /** Turns a draft-vs-live comparison into a verdict and the lists the merchant needs. */
-export function judge(cmp, where = 'the draft') {
+export function judge(cmp, where = 'the draft', shopper = null) {
   const item = (x) => ({ id: x.id, title: x.title, status: x.a, severity: x.severity, detail: x.detail, liveDetail: x.prevDetail, fix: x.fix, evidence: x.evidence || null });
-  const breaks = cmp.changes.new.map(item);
+  const stuck = shopper ? shopperBlocker(shopper, where) : null;
+  const breaks = [...(stuck ? [stuck] : []), ...cmp.changes.new.filter((x) => !(stuck && x.id === 'ai.shopper')).map(item)];
   const blockers = breaks.filter((x) => x.status === 'fail' && BLOCK.has(x.severity));
   const reviews = breaks.filter((x) => !blockers.includes(x));
   const fixes = cmp.changes.fixed.map(item);
@@ -89,7 +115,9 @@ export function judge(cmp, where = 'the draft') {
     : verdict === 'review'
       ? [reviews.length && n(reviews.length, 'new warning'), visualChanged.length && `${n(visualChanged.length, 'page')} look${visualChanged.length === 1 ? 's' : ''} different`, slower.length && `${n(slower.length, 'speed measure')} got worse`].filter(Boolean).join(', ') + '. Nothing is broken.'
       : `Everything that works on your live store also works on ${where}.`;
-  return { verdict, headline, blockers, reviews, fixes, visual, visualChanged: visualChanged.length, slower: slower.map((m) => ({ page: m.page, name: m.name, unit: m.unit, live: m.b, draft: m.a })) };
+  const out = { verdict, headline, blockers, reviews, fixes, visual, visualChanged: visualChanged.length, slower: slower.map((m) => ({ page: m.page, name: m.name, unit: m.unit, live: m.b, draft: m.a })) };
+  if (shopper && (shopper.live || shopper.draft)) out.shopper = { live: shopper.live, draft: shopper.draft };
+  return out;
 }
 
 /** Called when either run of a publish check ends. Finishes the check once both have. */
@@ -110,8 +138,10 @@ export function settleRelease(releaseId) {
   if (preview?.status === 'fail') return q.finishRelease.run('error', null, JSON.stringify({ error: preview.detail }), releaseId);
   const cmp = comparePair(r.store_id, draft.id, live.id);
   const env = r.environment_id ? q.envById.get(r.environment_id) : null;
-  const j = judge(cmp, env ? env.name : 'the draft');
-  j.theme = { draft: dres.theme || null, live: JSON.parse(live.result_json).theme || null };
+  const lres = JSON.parse(live.result_json);
+  const shopper = { live: shopperView(lres.shopper), draft: shopperView(dres.shopper), draftCheck: (dres.checks || []).find((c) => c.id === 'ai.shopper') };
+  const j = judge(cmp, env ? env.name : 'the draft', shopper);
+  j.theme = { draft: dres.theme || null, live: lres.theme || null };
   j.scores = { draft: draft.score, live: live.score };
   q.finishRelease.run('done', j.verdict, JSON.stringify(j), releaseId);
   // Checks nobody is watching (daily, or started by a deploy pipeline) tell the owner when something needs a look.

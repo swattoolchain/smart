@@ -1045,3 +1045,6 @@ ui-nav-menu { display: none !important; }
 .agent-steps { margin-top: 8px; font-size: 13px; }
 .agent-steps summary { cursor: pointer; font-weight: 600; }
 .agent-steps ol { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 4px; }
+
+.pub-shopper h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; margin: 0 0 8px; }
+.agent-steps-list { margin: 0; padding-left: 22px; display: grid; gap: 6px; font-size: 13px; }
