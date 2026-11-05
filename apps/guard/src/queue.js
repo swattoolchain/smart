@@ -101,7 +101,7 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     }
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
-      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
+      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly, release: !!release }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.

@@ -441,6 +441,7 @@ app.delete('/api/stores/:id', requireUser, (req, res) => {
   if (shopify.shopForStore(s.id)) return res.status(400).json({ error: 'This is the store Tharam was installed on. To stop checking it, uninstall Tharam from your Shopify admin.' });
   q.deleteStore.run(s.id, req.user.id);
   fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
+  fs.rmSync(path.join(config.dataDir, 'domain', `store-${s.id}.json`), { force: true });
   res.json({ ok: true });
 });
 

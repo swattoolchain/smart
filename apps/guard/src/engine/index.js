@@ -13,6 +13,7 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { reviewScreens } from './visual-ai.js';
+import { runDomain } from './domain.js';
 import { aiEnabled } from '../ai.js';
 
 async function isLocked(ctx, origin) {
@@ -30,7 +31,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, release = false }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -110,6 +111,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on });
         // The full catalog checks supersede the quick sample check; reporting both double-counts one mistake.
         if (catalog?.count) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
+      }
+      // Domain, certificate and records belong to the live store: not to a draft theme or a Safe to publish check.
+      if (kind === 'full' && storeId && !preview && !release && on('security.domain')) {
+        phase('domain');
+        await runDomain({ rec, request: ctx.request, origin, storeId }).catch((e) => rec.add(check('sec.domain.dns', 'security', 'Domain and email records unchanged', 'skip', { severity: 'minor', detail: shortErr(e) })));
       }
       if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
         phase('ai');

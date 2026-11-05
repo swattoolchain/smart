@@ -56,7 +56,8 @@ export async function handleAlerts(storeId, runId, result) {
     }
     if (prev.status !== now) {
       q.upsertCheckState.run(storeId, c.id, now);
-      changes.push({ c, state: now === 'failing' ? 'failing' : 'recovered' });
+      // Notices (like a changed domain record) are news once; they don't "recover".
+      if (now === 'failing' || !c.notice) changes.push({ c, state: now === 'failing' ? 'failing' : 'recovered' });
     }
   }
   // A failure whose check no longer runs (switched off in the suite, or replaced by a better check) can never

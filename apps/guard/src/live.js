@@ -12,6 +12,7 @@ export const PHASES = [
   { key: 'regional', label: 'Laws where you sell', run: ['full'], groups: ['law.de', 'law.cookies', 'access.law', 'law.us'] },
   { key: 'visual', label: 'Comparing screenshots', run: ['full'], groups: ['visual'] },
   { key: 'catalog', label: 'Checking every product', run: ['full'], groups: ['catalog'] },
+  { key: 'domain', label: 'Domain, certificate and email records', run: ['full'], groups: ['security.domain'] },
   { key: 'ai', label: 'AI review', run: ['full'], groups: ['ai.visual'] },
 ];
 
