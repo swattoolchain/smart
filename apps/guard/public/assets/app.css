@@ -1012,3 +1012,12 @@ ui-nav-menu { display: none !important; }
 .theme-diff pre .d-del { display: block; background: var(--fail-bg); }
 /* Change attribution: the script a failure started after, under a newly broken check */
 .started-after { display: block; margin-top: 6px; font-size: 13px; color: var(--fail); }
+
+/* App health */
+.apps-table td { vertical-align: top; }
+.apps-table tr.app-row.status-errors td:first-child, .apps-table tr.app-detail.status-errors td { box-shadow: inset 3px 0 0 var(--fail); }
+.apps-table tr.app-row.status-missing td:first-child, .apps-table tr.app-row.status-changed td:first-child, .apps-table tr.app-detail.status-missing td, .apps-table tr.app-detail.status-changed td { box-shadow: inset 3px 0 0 var(--warn); }
+.apps-table tr.app-row:has(+ .app-detail) td { border-bottom: 0; }
+.apps-table tr.app-detail td { font-size: 13px; color: var(--ink-soft); padding-top: 0; }
+.apps-table tr.app-detail code { font-size: 12px; word-break: break-all; }
+.app-us p { margin: 0; }
