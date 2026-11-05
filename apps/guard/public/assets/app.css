@@ -1107,3 +1107,11 @@ ui-nav-menu { display: none !important; }
 .sc-body p { margin: 4px 0 0; font-size: 13.5px; }
 .sc-how { color: var(--muted); }
 .sc-meta { font-size: 12.5px !important; }
+
+/* Recovery packet */
+.rp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 24px; }
+.rp-grid h3 { margin: 0 0 8px; font-size: 14px; }
+.rp-reset ol { margin: 0 0 12px; padding-left: 20px; font-size: 13.5px; }
+.rp-msg textarea { width: 100%; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.rp-msg .inline-row { flex-wrap: wrap; gap: 8px; }
+@media (max-width: 860px) { .rp-grid { grid-template-columns: 1fr; } }

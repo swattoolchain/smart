@@ -19,6 +19,7 @@ const STORE_ROUTES = [
   ['get', '/api/stores/:id/export/runs.csv'], ['get', '/api/stores/:id/export/checks.csv'], ['get', '/api/stores/:id/export/products.csv'],
   ['get', '/api/stores/:id/runs/1/report.html'], ['get', '/api/stores/:id/runs/1/report.pdf'],
   ['post', '/api/stores/:id/test-alert'], ['get', '/api/stores/:id/webhook-deliveries'],
+  ['get', '/api/stores/:id/recovery-packet'], ['get', '/api/stores/:id/recovery-packet.txt'],
 ];
 
 describe('Data isolation', () => {

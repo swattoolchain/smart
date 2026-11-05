@@ -36,6 +36,7 @@ import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportN
 import { teamRoutes, membership, memberMay, teamAllowed } from './team.js';
 import * as themeClean from './theme-clean.js';
 import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
+import { recoveryPacket } from './recovery-packet.js';
 import { incidentView, startIncident, updateIncident, endIncident, incidentBrief, startEmail as incidentStartEmail, endEmail as incidentEndEmail } from './incident.js';
 
 const app = express();
@@ -603,6 +604,19 @@ app.post('/api/stores/:id/incident/end', requireUser, (req, res) => {
   if (!row) return res.status(404).json({ error: 'Incident mode is not on for this store.' });
   sendMail(incidentEndEmail(s, row)).catch((e) => console.error('incident email failed', e));
   res.json(incidentView(s, { shopify: onShopify(s) }));
+});
+
+// Recovery packet (S17): password reset link and a ready-to-send message to Shopify Support.
+app.get('/api/stores/:id/recovery-packet', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(recoveryPacket(s, { shopify: onShopify(s) }));
+});
+app.get('/api/stores/:id/recovery-packet.txt', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const p = recoveryPacket(s, { shopify: onShopify(s) });
+  res.set('Content-Disposition', `attachment; filename="recovery-${p.store.host.replace(/[^a-z0-9.-]/gi, '-')}.txt"`).type('text/plain; charset=utf-8').send(`Subject: ${p.message.subject}\n\n${p.message.text}\n`);
 });
 
 app.get('/api/stores/:id/scorecard', requireUser, (req, res) => {
