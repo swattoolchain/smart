@@ -20,6 +20,39 @@
     if (!r.ok) throw Object.assign(new Error(j.error || 'Something went wrong. Try again.'), { status: r.status });
     return j;
   }
+  // Downloads and printing go through fetch, so they work with a session cookie and inside Shopify admin alike.
+  async function fetchFile(path) {
+    const headers = {};
+    if (EMB) headers.Authorization = `Bearer ${await window.shopify.idToken()}`;
+    const r = await fetch(path, { headers, credentials: 'same-origin' });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'The file could not be made. Try again.'); }
+    const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || 'tharam-export';
+    return { blob: await r.blob(), name };
+  }
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-download],[data-print]');
+    if (!b || b.disabled) return;
+    e.preventDefault();
+    const label = b.innerHTML;
+    b.disabled = true;
+    b.classList.add('busy');
+    try {
+      if (b.dataset.download) {
+        const { blob, name } = await fetchFile(b.dataset.download);
+        const url = URL.createObjectURL(blob);
+        const a = Object.assign(document.createElement('a'), { href: url, download: name });
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+      } else {
+        const { blob } = await fetchFile(b.dataset.print);
+        let f = document.getElementById('print-frame');
+        if (!f) { f = Object.assign(document.createElement('iframe'), { id: 'print-frame', title: 'Printable report' }); f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'; document.body.appendChild(f); }
+        f.onload = () => setTimeout(() => f.contentWindow.print(), 200);
+        f.srcdoc = await blob.text();
+      }
+    } catch (err) { toast(err.message, 'error'); }
+    finally { b.disabled = false; b.classList.remove('busy'); b.innerHTML = label; }
+  });
   const host = (u) => { try { return new URL(u).host; } catch { return u || ''; } };
   const parseTs = (ts) => (ts ? new Date(/[TZ]/.test(ts) ? ts : ts.replace(' ', 'T') + 'Z') : null);
   function ago(ts) {
@@ -954,7 +987,7 @@
     if (filter === 'problems') runs = runs.filter((r) => r.status === 'error' || (r.verdict && r.verdict !== 'healthy'));
     if (filter === 'stopped') runs = runs.filter((r) => r.status === 'cancelled');
     const active = data.runs.some((r) => r.status === 'queued' || r.status === 'running');
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Runs', { actions: runButtons(s) })}
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Runs', { actions: `<button type="button" class="btn secondary" data-download="/api/stores/${s.id}/export/runs.csv?days=90" title="Every check of the last 90 days, for Excel or Google Sheets">Export CSV</button>` + runButtons(s) })}
       ${tabs(`#/s/${s.id}/runs`, [[null, 'All runs'], ['full', 'Full checks'], ['journeys', 'Journey tests'], ['problems', 'With problems'], ['stopped', 'Stopped']], filter)}
       ${runs.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Started</th><th>Type</th><th>Started by</th><th>Result</th><th class="num">Checks</th><th class="num">Score</th><th class="num">Took</th><th aria-label="Open"></th></tr></thead><tbody>
         ${runs.map((r) => `<tr class="link" data-href="#/s/${s.id}/runs/${r.id}" tabindex="0"><td><span class="cell-main">${time(r.created_at)}</span><div class="cell-sub">${esc(exact(r.created_at))}</div></td><td>${esc(kindLabel(r))}</td><td class="cell-sub">${esc(TRIGGER[r.trigger] || 'Scheduled')}</td>
@@ -1000,7 +1033,8 @@
       return;
     }
     const visualChanged = run.result.checks.some((c) => c.id === 'nf.visual' && c.status === 'warn');
-    renderReport(el, run.result, { actions: `<div class="inline-row" style="margin-top:12px"><a class="btn small" href="#/s/${s.id}/reports/${run.id}">Open in Reports and compare</a>${visualChanged ? `<a class="btn small secondary" href="#/s/${s.id}/visual">Review visual changes</a>` : ''}</div>` });
+    renderReport(el, run.result, { actions: `<div class="inline-row" style="margin-top:12px"><a class="btn small" href="#/s/${s.id}/reports/${run.id}">Open in Reports and compare</a>${visualChanged ? `<a class="btn small secondary" href="#/s/${s.id}/visual">Review visual changes</a>` : ''}</div>
+      <div class="inline-row export-row" style="margin-top:8px"><button type="button" class="btn small secondary" data-download="/api/stores/${s.id}/runs/${run.id}/report.pdf">Download PDF</button><button type="button" class="btn small secondary" data-print="/api/stores/${s.id}/runs/${run.id}/report.html">Print</button><button type="button" class="btn small ghost" data-download="/api/stores/${s.id}/export/checks.csv?run=${run.id}">Checks as CSV</button></div>` });
   }
 
   // Monitoring
@@ -1367,7 +1401,7 @@
     const base = `#/s/${s.id}/catalog`;
     CUR = c.currency || null;
     const sum = c.summary;
-    const head = storeHead(s, 'Catalog') + `<p class="lede-sm">${sum.products} products${c.run.truncated ? ' (first 2,000)' : ''} read ${time(c.run.takenAt)}${c.base ? `, compared with ${time(c.base.takenAt)}` : ''}.</p>`;
+    const head = storeHead(s, 'Catalog', { actions: `<button type="button" class="btn secondary" data-download="/api/stores/${s.id}/export/products.csv">Export products (CSV)</button>` }) + `<p class="lede-sm">${sum.products} products${c.run.truncated ? ' (first 2,000)' : ''} read ${time(c.run.takenAt)}${c.base ? `, compared with ${time(c.base.takenAt)}` : ''}.</p>`;
     const figures = `<div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
       <div class="figure"><b>${sum.products}</b><span>products</span></div>
       <div class="figure"><b>${sum.withIssues}</b><span>with issues</span></div>
