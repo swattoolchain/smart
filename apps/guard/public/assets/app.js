@@ -1200,7 +1200,16 @@
         <div class="rp-msg"><h3>2. Send this to ${p.support ? 'Shopify Support' : 'support'}</h3>
           <div class="field"><label for="rp-subject">Subject</label><input id="rp-subject" readonly value="${esc(p.message.subject)}"></div>
           <div class="field"><label for="rp-text">Message</label><textarea id="rp-text" readonly rows="14">${esc(p.message.text)}</textarea></div>
-          <p class="inline-row"><button class="btn" type="button" id="rp-copy">${icon('copy', 16)}Copy message</button><a class="btn secondary" id="rp-download" href="/api/stores/${s.id}/recovery-packet.txt" download>Download</a>${p.support ? `<a class="btn secondary" href="${esc(p.support.url)}" target="_blank" rel="noopener">${icon('external', 16)}Contact Shopify Support</a>` : ''}</p></div></div>`;
+          <p class="inline-row"><button class="btn" type="button" id="rp-copy">${icon('copy', 16)}Copy message</button><button class="btn secondary" type="button" id="rp-download">Download</button>${p.support ? `<a class="btn secondary" href="${esc(p.support.url)}" target="_blank" rel="noopener">${icon('external', 16)}Contact Shopify Support</a>` : ''}</p></div></div>`;
+      // Built in the browser from the packet already loaded: a plain link would carry no session inside Shopify admin.
+      $('#rp-download').addEventListener('click', () => {
+        const blob = new Blob([`Subject: ${p.message.subject}\n\n${p.message.text}\n`], { type: 'text/plain;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `recovery-${p.store.host.replace(/[^a-z0-9.-]/gi, '-')}.txt`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      });
       $('#rp-copy').addEventListener('click', async () => {
         const text = `Subject: ${p.message.subject}\n\n${p.message.text}`;
         try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into your message to support.'); }
