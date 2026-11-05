@@ -10,7 +10,7 @@ import { appFor } from './engine/apps.js';
 const WINDOW = 30; // checks looked at for "first seen" and "last code change"
 // A slow 4G phone connection (the speed test baseline Lighthouse uses): 1.6 Mbit/s ≈ 200 KB a second.
 const SLOW_PHONE_BYTES_PER_S = 200 * 1024;
-const ORDER = { errors: 0, missing: 1, changed: 2, new: 3, ok: 4 };
+const ORDER = { errors: 0, widget: 1, missing: 2, changed: 3, new: 4, ok: 5 };
 
 // SQLite times are UTC without a zone: make them ISO so browsers read them right.
 const iso = (t) => (t && !t.includes('T') ? t.replace(' ', 'T') + 'Z' : t);
@@ -36,7 +36,7 @@ function appsIn(run, storeHost) {
   const host = storeHostOf(run, storeHost);
   const apps = new Map();
   const at = (a) => {
-    if (!apps.has(a.key)) apps.set(a.key, { key: a.key, name: a.name, kind: a.kind, pages: new Set(), keys: new Set(), scripts: [], sites: new Set() });
+    if (!apps.has(a.key)) apps.set(a.key, { key: a.key, name: a.name, kind: a.kind, pages: new Set(), keys: new Set(), scripts: [], sites: new Set(), hashes: new Map() });
     return apps.get(a.key);
   };
   for (const [page, p] of Object.entries(run.scripts.pages)) {
@@ -44,6 +44,7 @@ function appsIn(run, storeHost) {
       const a = at(appFor(s.url, host));
       a.pages.add(page);
       if (!a.keys.has(s.key)) { a.keys.add(s.key); a.scripts.push(s.url); }
+      if (s.hash && !a.hashes.has(s.key)) a.hashes.set(s.key, { hash: s.hash, url: s.url });
     }
     for (const site of p.sites) {
       const a = at(appFor(`http://${site}/`, host));
@@ -55,6 +56,9 @@ function appsIn(run, storeHost) {
 }
 
 const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
+/** Script files whose content changed at the same address (only where both checks fingerprinted them). */
+const updatedFiles = (x, y) => [...x.hashes].filter(([k, h]) => y.hashes.has(k) && y.hashes.get(k).hash !== h.hash).map(([, h]) => h.url);
+const codeDiffers = (x, y) => !sameSet(x.keys, y.keys) || updatedFiles(x, y).length > 0;
 
 export function appHealth(store) {
   let storeHost;
@@ -74,7 +78,7 @@ export function appHealth(store) {
 
   const rows = new Map();
   const row = (a) => {
-    if (!rows.has(a.key)) rows.set(a.key, { key: a.key, name: a.name, kind: a.kind, pages: [], scripts: [], sites: [], errors: [], phone: { bytes: 0, files: 0, ms: 0, slowS: 0 }, changes: { added: [], removed: [], lastChangedAt: null }, firstSeenAt: null, lastSeenAt: latest.at, status: 'ok' });
+    if (!rows.has(a.key)) rows.set(a.key, { key: a.key, name: a.name, kind: a.kind, pages: [], scripts: [], sites: [], errors: [], phone: { bytes: 0, files: 0, ms: 0, slowS: 0 }, changes: { added: [], removed: [], updated: [], lastChangedAt: null }, widget: null, firstSeenAt: null, lastSeenAt: latest.at, status: 'ok' });
     return rows.get(a.key);
   };
 
@@ -89,18 +93,29 @@ export function appHealth(store) {
       const keys = [...a.keys], keysBefore = [...before.keys];
       r.changes.added = a.scripts.filter((u, i) => !before.keys.has(keys[i]));
       r.changes.removed = before.scripts.filter((u, i) => !a.keys.has(keysBefore[i]));
+      r.changes.updated = updatedFiles(a, before);
     }
     // Last code change and first seen, within the window.
     for (let i = 0; i < perRun.length - 1; i++) {
       const x = perRun[i].get(a.key), y = perRun[i + 1].get(a.key);
-      if (x && y && !sameSet(x.keys, y.keys)) { r.changes.lastChangedAt = runs[i].at; break; }
+      if (x && y && codeDiffers(x, y)) { r.changes.lastChangedAt = runs[i].at; break; }
       if (!x || !y) break;
     }
     let first = 0;
     while (first + 1 < perRun.length && perRun[first + 1].has(a.key)) first++;
     r.firstSeenAt = runs[first].at;
     if (prev && !before && a.scripts.length) r.status = 'new';
-    if (r.changes.added.length || r.changes.removed.length) r.status = 'changed';
+    if (r.changes.added.length || r.changes.removed.length || r.changes.updated.length) r.status = 'changed';
+  }
+
+  // Widgets: apps that loaded where their widget should show, but shoppers didn't see it.
+  const w = latest.scripts.widgets;
+  for (const c of w?.checked || []) {
+    const r = rows.get(c.key);
+    if (!r) continue;
+    const gone = w.missing.find((m) => m.key === c.key);
+    r.widget = { pages: c.pages, missingOn: gone ? gone.pages : [] };
+    if (gone) r.status = 'widget';
   }
 
   // Apps that loaded last time but not now, on pages this check did reach: a missing widget.

@@ -1203,7 +1203,7 @@
       return;
     }
     const STATUS = {
-      errors: ['critical', 'Causing errors'], missing: ['warning', 'Stopped loading'], changed: ['warning', 'Code changed'], new: ['running', 'New'], ok: ['healthy', 'Healthy'],
+      errors: ['critical', 'Causing errors'], widget: ['warning', 'Widget missing'], missing: ['warning', 'Stopped loading'], changed: ['warning', 'Code changed'], new: ['running', 'New'], ok: ['healthy', 'Healthy'],
     };
     const KIND = { theme: 'Your store\'s own files', app: 'App', tracking: 'Ads and analytics', service: 'Outside service', shopify: 'Shopify', unknown: 'Outside site' };
     const shortUrl = (u) => { try { const x = new URL(u); return x.host + (x.pathname.length > 48 ? '…' + x.pathname.slice(-47) : x.pathname); } catch { return u; } };
@@ -1211,8 +1211,10 @@
       const [cls, label] = STATUS[a.status] || STATUS.ok;
       const what = [];
       if (a.status === 'missing') what.push(`Loaded on the ${a.pages.map((p) => PG[p] || p).join(', ').toLowerCase()} page${a.pages.length > 1 ? 's' : ''} last check ${time(a.lastSeenAt)}, not this time. If you didn't remove it, its widget may be missing for shoppers.`);
+      if (a.widget?.missingOn.length) what.push(`Loads on the ${a.widget.missingOn.map((p) => PG[p] || p).join(', ').toLowerCase()} page${a.widget.missingOn.length > 1 ? 's' : ''}, but shoppers don't see its widget there. Check the app is switched on under Online Store → Themes → Customize → App embeds.`);
       for (const e of a.errors) what.push(`Error on the ${(PG[e.page] || e.page).toLowerCase()} page: “${esc(e.message)}”`);
       if (a.changes.added.length) what.push(`New code: ${a.changes.added.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
+      if (a.changes.updated?.length) what.push(`Code updated at the same address: ${a.changes.updated.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
       if (a.changes.removed.length && a.status !== 'missing') what.push(`Code removed: ${a.changes.removed.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
       if (a.status === 'new') what.push(`First seen ${time(a.firstSeenAt)}.`);
       return `<tr class="app-row status-${a.status}" data-app="${esc(a.key)}">
@@ -1225,11 +1227,12 @@
         <td class="cell-sub">${a.sites.length ? a.sites.map(esc).join(', ') : '–'}</td>
       </tr>${what.length ? `<tr class="app-detail status-${a.status}"><td colspan="7">${what.map((w) => `<div>${w}</div>`).join('')}</td></tr>` : ''}`;
     };
-    const trouble = d.apps.filter((a) => a.status === 'errors' || a.status === 'missing');
+    const trouble = d.apps.filter((a) => ['errors', 'widget', 'missing'].includes(a.status));
+    const TROUBLE = { errors: 'is causing script errors', widget: 'loads, but shoppers don\'t see its widget', missing: 'stopped loading' };
     const t = d.totals;
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'App health')}${intro}
       <p class="muted" style="margin:-6px 0 14px">From the check ${time(d.checkedAt)}${d.compared ? `, compared with the one before (${time(d.comparedAt)})` : ''}.${d.phone ? ` Phone cost measured ${time(d.phone.at)}.` : ' Phone cost appears after the next full check.'}</p>
-      ${trouble.length ? `<div class="notice"><p>${trouble.map((a) => `<b>${esc(a.name)}</b> ${a.status === 'errors' ? 'is causing script errors' : 'stopped loading'}`).join('; ')}. Details below.</p></div>` : '<div class="notice ok"><p>No app is causing errors, and every app from the last check still loads.</p></div>'}
+      ${trouble.length ? `<div class="notice"><p>${trouble.map((a) => `<b>${esc(a.name)}</b> ${TROUBLE[a.status]}`).join('; ')}. Details below.</p></div>` : '<div class="notice ok"><p>No app is causing errors, every app from the last check still loads, and app widgets show for shoppers.</p></div>'}
       <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))">
         <div class="figure"><b>${t.apps}</b><span>apps and outside services</span></div>
         <div class="figure"><b>${kb(t.phoneBytes)}</b><span>they add to a page on a phone</span></div>

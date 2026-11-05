@@ -15,7 +15,7 @@
  * Hijack extras (env MOCK_EXTRA or live via /__extra): redirect, phoneredirect, hiddenframe, badframe, miner (see HIJACK below).
  * Script extras (env MOCK_EXTRA): newscript, badscript, atcscript (see LIVE_EXTRA below).
  * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below);
- * apps, appsbug, appsupdate (App Health: two outside apps, see APP_SCRIPTS below).
+ * apps, appsbug, appsupdate, appsnowidget, appscode (App Health: two outside apps, see APP_SCRIPTS below).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -43,6 +43,8 @@ const US = EXTRA.split(',').includes('us'); // US privacy: the "Your privacy cho
 // Both can also be switched on and off while the store runs: GET /__extra?newscript=1&badscript=0.
 // App Health (APP_SCRIPTS): apps adds a reviews app (reviews-app.localhost, every page, ~60 KB, draws a widget) and a
 // chat app (chat-app.localhost, home page only, pings chat-api.localhost); appsbug makes the reviews script throw;
+// appsupdate gives the reviews app a second script; appsnowidget: the reviews script loads but draws nothing;
+// appscode: new content in reviews.js at the same address. Tests name them with APP_NAMES and APP_WIDGETS.
 // appsupdate gives the reviews app a second script. Tests name them with APP_NAMES.
 // atcscript: an outside "upsell pop-up" script (127.0.0.1) that stops Add to cart from working.
 // FORM_EXTRAS: both add an email sign-up box to every page, read by the store's own script (never reported).
@@ -55,8 +57,8 @@ const FORM_EXTRAS = ['skimmer', 'formreader'];
 //   hiddenframe    product and cart pages load an invisible 1×1 page from stat-counter.localhost
 //   badframe       the same from evil-cdn.localhost (on the known-bad list in tests)
 //   miner          the home page loads /assets/perf.js, CoinHive-style mining code that opens a pool connection
-const LIVE_KEYS = ['newscript', 'badscript', 'redirect', 'phoneredirect', 'hiddenframe', 'badframe', 'miner', ...FORM_EXTRAS, 'atcscript', 'apps', 'appsbug', 'appsupdate'];
-const LIVE_EXTRA = new Set(LIVE_KEYS.filter((k) => EXTRA.split(',').includes(k) || (['newscript', 'badscript', 'apps', 'appsbug', 'appsupdate', 'atcscript', ...FORM_EXTRAS].includes(k) && EXTRA.includes(k))));
+const LIVE_KEYS = ['newscript', 'badscript', 'redirect', 'phoneredirect', 'hiddenframe', 'badframe', 'miner', ...FORM_EXTRAS, 'atcscript', 'apps', 'appsbug', 'appsupdate', 'newscript', 'badscript', 'apps', 'appsbug', 'appsupdate', 'appsnowidget', 'appscode'];
+const LIVE_EXTRA = new Set(LIVE_KEYS.filter((k) => EXTRA.split(',').includes(k) || (['newscript', 'badscript', 'newscript', 'badscript', 'apps', 'appsbug', 'appsupdate', 'appsnowidget', 'appscode', 'apps', 'appsbug', 'appsupdate', 'atcscript', ...FORM_EXTRAS].includes(k) && EXTRA.includes(k))));
 let PATH = '/'; // the page being served
 const COLLECTED = []; // what the skimmer sent, for tests: GET /__collected
 const formBox = () => (FORM_EXTRAS.some((k) => LIVE_EXTRA.has(k)) ? '<form class="newsletter" onsubmit="return false"><label for="NewsletterEmail">Email</label> <input type="email" id="NewsletterEmail" name="contact[email]" autocomplete="email"></form>' : '');
@@ -87,7 +89,8 @@ document.addEventListener('DOMContentLoaded',function(){document.querySelectorAl
   '/apps/chat-widget.js': "document.addEventListener('DOMContentLoaded',function(){var i=document.getElementById('NewsletterEmail');if(!i)return;i.addEventListener('input',function(){window.__chatEmail=i.value;});});",
 };
 const APP_SCRIPTS = {
-  '/apps/reviews.js': () => `/* reviews app */${'/*' + 'x'.repeat(60000) + '*/'}document.addEventListener('DOMContentLoaded',function(){var d=document.createElement('div');d.className='reviews-widget';d.textContent='★★★★★ 128 reviews';(document.querySelector('main')||document.body).appendChild(d);});`
+  '/apps/reviews.js': () => `/* reviews app${LIVE_EXTRA.has('appscode') ? ' 2.0' : ''} */${'/*' + 'x'.repeat(60000) + '*/'}`
+    + (LIVE_EXTRA.has('appsnowidget') ? 'window.__reviewsOff=true;' : `document.addEventListener('DOMContentLoaded',function(){var d=document.createElement('div');d.className='reviews-widget';d.textContent='★★★★★ 128 reviews';(document.querySelector('main')||document.body).appendChild(d);});`)
     + (LIVE_EXTRA.has('appsbug') ? 'setTimeout(function reviewsInit(){ window.reviewsConfig.load(); }, 10);' : ''),
   '/apps/reviews-photos.js': () => 'window.__reviewPhotos=true;',
   '/apps/chat.js': () => `new Image().src='http://chat-api.localhost:${PORT}/ping.gif';window.__chat=true;`,

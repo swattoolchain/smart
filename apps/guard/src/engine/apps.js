@@ -7,14 +7,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pageKind } from './scripts.js';
+import { check } from './checks.js';
 
 const DATA = path.join(path.dirname(fileURLToPath(import.meta.url)), 'apps.json');
 let MAP = null;
+let WIDGETS = null;
+const readApps = () => { try { return JSON.parse(fs.readFileSync(DATA, 'utf8')).apps; } catch { return []; } };
 /** [{ host, name, kind }] longest host first, so a specific entry wins over a general one. */
 export function appMap() {
   if (!MAP) {
-    let apps = [];
-    try { apps = JSON.parse(fs.readFileSync(DATA, 'utf8')).apps; } catch {}
+    const apps = readApps();
     const rows = apps.flatMap((a) => a.hosts.map((h) => ({ host: h.toLowerCase(), name: a.name, kind: a.kind })));
     for (const pair of String(process.env.APP_NAMES || '').split(',')) {
       const [h, ...name] = pair.split('=');
@@ -24,7 +26,29 @@ export function appMap() {
   }
   return MAP;
 }
-export const resetAppMap = () => { MAP = null; };
+export const resetAppMap = () => { MAP = null; WIDGETS = null; };
+
+const PAGE_KINDS = ['home', 'product', 'cart'];
+/**
+ * What apps draw for shoppers: appKey → { name, selector, pages|null } (pages null = every page the app loads on).
+ * From apps.json, plus APP_WIDGETS in the environment: 'Name=selector@product+cart;Other=selector'.
+ */
+export function widgetMap() {
+  if (!WIDGETS) {
+    WIDGETS = new Map();
+    for (const a of readApps()) if (a.widget?.selector) WIDGETS.set(slug(a.name), { name: a.name, selector: a.widget.selector, pages: a.widget.pages || null });
+    for (const pair of String(process.env.APP_WIDGETS || '').split(';')) {
+      const i = pair.indexOf('=');
+      if (i < 1) continue;
+      const name = pair.slice(0, i).trim();
+      const [selector, pages] = pair.slice(i + 1).split('@');
+      if (!name || !selector?.trim()) continue;
+      const pg = pages ? pages.split('+').map((x) => x.trim()).filter((x) => PAGE_KINDS.includes(x)) : [];
+      WIDGETS.set(slug(name), { name, selector: selector.trim(), pages: pg.length ? pg : null });
+    }
+  }
+  return WIDGETS;
+}
 
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 /** "judge-me-reviews-260" → "Judge Me Reviews" */
@@ -99,4 +123,98 @@ export function errorSource(e) {
   const m = /(https?:\/\/[^\s)]+?)(?::\d+){1,2}\)?(?:\s|$)/.exec(String(e?.stack || ''));
   if (!m) return null;
   try { const u = new URL(m[1]); return `${u.origin}${u.pathname}`; } catch { return null; }
+}
+
+/**
+ * Widget watch: on every store page the journey opens, notes which known app widgets become visible to a
+ * shopper (polled for 10 s after the page starts, so widgets drawn late still count). Only looks; never clicks.
+ * Returns a function that gives { home: [appKey…], product: [...], cart: [...] }.
+ */
+export async function watchWidgets(page) {
+  const list = [...widgetMap().entries()].map(([key, w]) => ({ key, selector: w.selector }));
+  const seen = {};
+  if (!list.length) return () => seen;
+  await page.exposeBinding('__tharamWidget', (source, i) => {
+    let url;
+    try { url = source.frame.url(); } catch { return; }
+    const kind = pageKind(url);
+    const w = list[i];
+    if (!kind || !w) return;
+    (seen[kind] ||= new Set()).add(w.key);
+  });
+  await page.addInitScript((selectors) => {
+    if (window.top !== window) return;
+    const found = new Set();
+    const visible = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0;
+    };
+    const scan = () => {
+      selectors.forEach((sel, i) => {
+        if (found.has(i)) return;
+        let els = [];
+        try { els = document.querySelectorAll(sel); } catch { found.add(i); return; }
+        for (const el of els) if (visible(el)) { found.add(i); try { window.__tharamWidget(i); } catch {} break; }
+      });
+    };
+    let n = 0;
+    const timer = setInterval(() => { if (document.body) scan(); if (++n >= 40 || found.size === selectors.length) clearInterval(timer); }, 250);
+    addEventListener('load', scan);
+  }, list.map((w) => w.selector));
+  return () => Object.fromEntries(Object.entries(seen).map(([k, v]) => [k, [...v].sort()]));
+}
+
+/**
+ * Apps with a known widget that loaded on a page where the widget should show, but it never became visible.
+ * `inventory` is the script watch record of this check, `seen` what watchWidgets saw.
+ * Returns { checked: [{ key, name, pages }], missing: [{ key, name, pages: [pages where it's missing] }] }.
+ */
+export function missingWidgets(inventory, seen = {}) {
+  const widgets = widgetMap();
+  const host = inventory?.storeHost || '';
+  const loads = new Map(); // appKey → Set(pages it loads on)
+  for (const [kind, p] of Object.entries(inventory?.pages || {})) {
+    for (const s of p.scripts) {
+      const a = appFor(s.url, host);
+      if (!widgets.has(a.key)) continue;
+      if (!loads.has(a.key)) loads.set(a.key, new Set());
+      loads.get(a.key).add(kind);
+    }
+  }
+  const checked = [];
+  const missing = [];
+  for (const [key, pages] of loads) {
+    const w = widgets.get(key);
+    const expected = [...pages].filter((pg) => !w.pages || w.pages.includes(pg)).sort();
+    if (!expected.length) continue;
+    checked.push({ key, name: w.name, pages: expected });
+    const gone = expected.filter((pg) => !(seen[pg] || []).includes(key));
+    if (gone.length) missing.push({ key, name: w.name, pages: gone });
+  }
+  return { checked, missing };
+}
+
+const PAGE_NAMES = { home: 'home page', product: 'product page', cart: 'cart page' };
+const pagesText = (pages) => { const n = pages.map((p) => PAGE_NAMES[p] || p); return n.length > 1 ? `${n.slice(0, -1).join(', ')} and ${n.at(-1)}` : n[0]; };
+
+/** The widget check (Script watch group): a notice, so it never changes the score or sends a "fixed" email. */
+export function widgetCheck(rec, result) {
+  if (!result.checked.length) return;
+  const title = 'App widgets show for shoppers';
+  if (!result.missing.length) {
+    rec.add({ ...check('sec.scripts.widgets', 'functional', title, 'pass', { severity: 'major', detail: `${result.checked.map((a) => a.name).join(', ')}: ${result.checked.length > 1 ? 'their widgets show' : 'its widget shows'} where ${result.checked.length > 1 ? 'they load' : 'it loads'}.` }), notice: true });
+    return;
+  }
+  const list = result.missing.map((a) => `${a.name} loads on the ${pagesText(a.pages)}, but shoppers don't see its widget there`).join('. ');
+  rec.add({
+    ...check('sec.scripts.widgets', 'functional', title, 'fail', {
+      severity: 'major',
+      detail: `${list}.`,
+      fix: 'Open the page and look for it. If it is missing, check the app is switched on in Online Store → Themes → Customize → App embeds and that its block is still on the page, then contact the app\'s support. If you removed the widget on purpose, there is nothing to do.',
+      evidence: { missing: result.missing },
+    }),
+    notice: true,
+  });
 }
