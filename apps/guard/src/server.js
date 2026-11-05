@@ -35,6 +35,7 @@ import { runnerRoutes } from './runner-routes.js';
 import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportName } from './export.js';
 import { teamRoutes, membership, memberMay, teamAllowed } from './team.js';
 import * as themeClean from './theme-clean.js';
+import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -541,6 +542,29 @@ app.get('/api/stores/:id/theme/clean.zip', requireUser, (req, res) => {
   const name = `${String(v.themeName || 'theme').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'theme'}-clean-${String(v.savedAt).slice(0, 10)}.zip`;
   res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' });
   res.send(themeClean.cleanZip(s.id));
+});
+
+// ---------- Security checklist (S11): the owner ticks off what they did; reviews come due again ----------
+const securityView = (s) => securityChecklist(s, { shopify: !!shopify.shopForStore(s.id) || /shopify/i.test(s.platform || '') });
+app.get('/api/stores/:id/security-checklist', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(securityView(s));
+});
+app.post('/api/stores/:id/security-checklist/:item', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (!isSecurityItem(req.params.item)) return res.status(404).json({ error: 'There is no such item on the checklist.' });
+  if (typeof req.body?.done !== 'boolean') return res.status(400).json({ error: 'Say whether it is done (true or false).' });
+  tickSecurity(s.id, req.params.item, req.body.done);
+  res.json(securityView(s));
+});
+app.patch('/api/stores/:id/security-checklist', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (typeof req.body?.reminders !== 'boolean') return res.status(400).json({ error: 'Say whether reminders are on (true or false).' });
+  setSecurityReminders(s.id, req.body.reminders);
+  res.json(securityView(s));
 });
 
 app.get('/api/stores/:id/scorecard', requireUser, (req, res) => {

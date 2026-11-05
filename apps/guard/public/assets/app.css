@@ -1061,3 +1061,22 @@ ui-nav-menu { display: none !important; }
 /* Domain record changes (before / now) in report rows */
 .record-changes{margin-top:8px;font-size:13px}
 .record-changes code{word-break:break-all;white-space:normal}
+
+/* Security checklist */
+.sc-summary { display: flex; gap: 22px; align-items: center; }
+.sc-summary h2 { margin: 0 0 4px; }
+.sc-list { list-style: none; margin: 0; padding: 0; }
+.sc-item { display: flex; gap: 14px; padding: 16px 0; border-top: 1px solid var(--line); }
+.sc-item:first-child { border-top: 0; padding-top: 4px; }
+.sc-tick { position: relative; flex: none; margin: 2px 0 0; cursor: pointer; }
+.sc-tick input { position: absolute; opacity: 0; width: 24px; height: 24px; margin: 0; cursor: pointer; }
+.sc-box { width: 24px; height: 24px; border-radius: 7px; border: 1.5px solid var(--line-strong, #c7ccd6); display: grid; place-items: center; color: transparent; background: var(--white); }
+.sc-tick input:checked + .sc-box { background: var(--pass); border-color: var(--pass); color: #fff; }
+.sc-tick input:focus-visible + .sc-box { outline: 2px solid var(--focus, #2563eb); outline-offset: 2px; }
+.sc-due .sc-box { border-color: var(--warn); }
+.sc-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.sc-body p { margin: 4px 0 0; font-size: 13.5px; }
+.sc-why { color: var(--ink); }
+.sc-how { color: var(--muted); }
+.sc-meta { font-size: 12.5px !important; }
+@media (max-width: 640px) { .sc-summary { flex-direction: column; align-items: flex-start; } }

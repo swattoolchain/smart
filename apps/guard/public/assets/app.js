@@ -453,6 +453,7 @@
       ${item(`${base}/sale`, 'sparkle', 'Sale readiness', at('sale'))}
       ${item(`${base}/apps`, 'apps', 'App health', at('apps'))}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
+      ${item(`${base}/security`, 'shield', 'Security checklist', at('security'))}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
       ${item(`${base}/monitoring`, 'monitoring', 'Monitoring', at('monitoring'))}
@@ -1349,6 +1350,40 @@
         <tbody>${d.apps.map(row).join('')}</tbody></table></div>
         ${d.unattributedErrors ? `<p class="muted" style="margin:10px 4px 0">${plural(d.unattributedErrors, 'script error')} could not be traced to one app. See the latest report's checks.</p>` : ''}</section>
       ${tharamRow}</div>`;
+  };
+
+  // ---------- Security checklist (S11) ----------
+  STORE_PAGES.security = async (ctx, s) => {
+    let d = await api(`/api/stores/${s.id}/security-checklist`);
+    if (!ctx.alive()) return;
+    const day = (iso) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    const STATE = { done: ['healthy', 'Done'], due: ['warning', 'Review again'], todo: ['', 'To do'] };
+    const draw = () => {
+      const color = d.score >= 90 ? 'var(--pass)' : d.score >= 60 ? 'var(--warn)' : 'var(--fail)';
+      const rows = d.items.map((i) => `<li class="sc-item sc-${i.state}" data-item="${esc(i.key)}">
+        <label class="sc-tick"><input type="checkbox" ${i.state === 'done' ? 'checked' : ''} aria-label="${esc(i.title)}"><span class="sc-box">${icon('check', 15)}</span></label>
+        <div class="sc-body"><div class="sc-head"><b>${esc(i.title)}</b><span class="pill ${STATE[i.state][0]}">${STATE[i.state][1]}</span></div>
+          <p class="sc-why">${esc(i.why)}</p>
+          <p class="sc-how"><b>How:</b> ${esc(i.how)}</p>
+          <p class="sc-meta muted">${i.doneAt ? `Ticked ${day(i.doneAt)} · ${i.state === 'due' ? 'was due again' : 'review again by'} ${day(i.dueAt)}` : `Worth ${i.weight} points · confirm again every ${i.every >= 365 ? 'year' : `${Math.round(i.every / 30)} months`}`}${i.state === 'due' ? ' · tick it again once you have checked' : ''}</p></div></li>`).join('');
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Security checklist')}
+        <p class="lede-sm">Most store break-ins start with a stolen password, an old staff account or a forgotten app. Tharam can't see inside your admin, so these are things you do and tick off here. Reviews come due again every few months.</p>
+        <section class="panel sc-summary"><div class="dial" style="--v:${d.score};--c:${color}"><div><span><b>${d.score}</b><small>of 100</small></span></div></div>
+          <div><h2>${esc(d.grade)}</h2><p class="muted">${d.counts.done} of ${d.counts.total} done${d.counts.due ? ` · ${d.counts.due} to review again` : ''}${d.counts.todo ? ` · ${d.counts.todo} to do` : ''}.</p>
+          <label class="toggle-line" style="margin-top:10px"><span class="switch"><input type="checkbox" id="sc-remind" ${d.reminders ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Email me reminders</b><span>At most once a month, only while something is open. Sent to ${esc(s.alert_email || 'your email')}.</span></span></label></div></section>
+        <section class="panel"><h2>Checklist</h2><ul class="sc-list">${rows}</ul></section></div>`;
+      $$('.sc-item input', ctx.main).forEach((box) => box.addEventListener('change', async () => {
+        const key = box.closest('[data-item]').dataset.item;
+        box.disabled = true;
+        try { d = await api(`/api/stores/${s.id}/security-checklist/${key}`, { method: 'POST', body: { done: box.checked } }); if (ctx.alive()) draw(); }
+        catch (ex) { box.checked = !box.checked; box.disabled = false; toast(ex.message, 'error'); }
+      }));
+      $('#sc-remind').addEventListener('change', async (e) => {
+        try { d = await api(`/api/stores/${s.id}/security-checklist`, { method: 'PATCH', body: { reminders: e.target.checked } }); toast(d.reminders ? 'Reminders on' : 'Reminders off'); }
+        catch (ex) { e.target.checked = !e.target.checked; toast(ex.message, 'error'); }
+      });
+    };
+    draw();
   };
 
   STORE_PAGES.visual = async (ctx, s) => {
@@ -2923,7 +2958,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false;
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', security: '/security', suite: '/suite', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {

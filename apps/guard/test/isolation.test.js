@@ -13,6 +13,7 @@ const STORE_ROUTES = [
   ['post', '/api/stores/:id/approve-visual'], ['post', '/api/stores/:id/discover'], ['post', '/api/stores/:id/environments'],
   ['post', '/api/stores/:id/explain-change'], ['post', '/api/stores/:id/releases'], ['post', '/api/stores/:id/run'],
   ['post', '/api/stores/:id/sale-readiness/email'], ['post', '/api/stores/:id/test-alert'],
+  ['get', '/api/stores/:id/security-checklist'], ['post', '/api/stores/:id/security-checklist/two_step'], ['patch', '/api/stores/:id/security-checklist'],
   ['get', '/api/stores/:id/theme/clean'], ['get', '/api/stores/:id/theme/clean/file?name=layout%2Ftheme.liquid'], ['get', '/api/stores/:id/theme/clean.zip'],
   ['get', '/api/stores/:id/export/runs.csv'], ['get', '/api/stores/:id/export/checks.csv'], ['get', '/api/stores/:id/export/products.csv'],
   ['get', '/api/stores/:id/runs/1/report.html'], ['get', '/api/stores/:id/runs/1/report.pdf'],
