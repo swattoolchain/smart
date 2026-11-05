@@ -12,6 +12,7 @@ import { groupOf } from './catalog.js';
 import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
+import { runPriceRules } from './pricing.js';
 import { reviewScreens } from './visual-ai.js';
 import { aiEnabled } from '../ai.js';
 
@@ -30,7 +31,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], priceRules = [], signal, progress, preview = null, captureOnly = false }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -92,6 +93,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
+      if (on('pricing.journey') && priceRules.length && info.isShopify) await runPriceRules({ page, rec, origin, rules: priceRules });
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
       if (kind !== 'journeys') {
         phase('quality');

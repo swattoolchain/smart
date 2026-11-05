@@ -85,7 +85,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS payments_reference ON payments(reference) WHER
 
 /** What a plan can include. Each feature switches validation groups or product areas on. */
 export const FEATURES = [
-  { key: 'journeys', label: 'Shopping checks: search, product, add to cart, checkout', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount'], always: true },
+  { key: 'journeys', label: 'Shopping checks: search, product, add to cart, checkout', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'pricing.journey', 'errors.js', 'sale.discount'], always: true },
   { key: 'quality', label: 'Speed, Google, mobile, accessibility and broken links', groups: ['speed', 'seo', 'a11y', 'links', 'policies'] },
   { key: 'catalog', label: 'Product and price checks on every product', groups: ['catalog'] },
   { key: 'visual', label: 'Design change detection with screenshots', groups: ['visual'] },
@@ -224,7 +224,7 @@ export function entitlements(userId) {
   const exp = toMs(l.expires_at);
   return {
     license: l, plan, state, usable, features, maxStores, storesUsed: storeIds.length, covered,
-    limits: { journeyMinInterval: plan.limits.journeyMinInterval || 60, fullMinInterval: plan.limits.fullMinInterval || 720, environments: plan.limits.environments ?? 0, manualRunsPerDay: plan.limits.manualRunsPerDay || 20 },
+    limits: { journeyMinInterval: plan.limits.journeyMinInterval || 60, fullMinInterval: plan.limits.fullMinInterval || 720, environments: plan.limits.environments ?? 0, manualRunsPerDay: plan.limits.manualRunsPerDay || 20, priceRules: plan.limits.priceRules ?? 10 },
     daysLeft: exp == null ? null : Math.ceil((exp - Date.now()) / 864e5),
   };
 }
@@ -427,6 +427,7 @@ export function savePlan(actor, key, input, { create = false } = {}) {
     environments: int(L.environments, 0, 50, 'Environments') ?? 0,
     maxStores: int(L.maxStores, 1, 1000, 'Max stores'),
     manualRunsPerDay: int(L.manualRunsPerDay, 1, 500, 'Tests you can start per store per day') ?? 20,
+    priceRules: int(L.priceRules, 0, 10, 'Price rules per store') ?? 10,
   };
   const bool = (v, d, label) => { if (v === undefined) return d; if (v === true || v === 1 || v === '1' || v === 'true') return true; if (v === false || v === 0 || v === '0' || v === 'false') return false; throw new Error(`${label} must be true or false`); };
   const pub = bool(input.public, cur.public, 'Public'), hl = bool(input.highlight, cur.highlight, 'Highlight'), act = bool(input.active, cur.active, 'Available');

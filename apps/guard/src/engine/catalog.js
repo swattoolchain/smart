@@ -1,4 +1,5 @@
 import { cleanCodes } from './discount.js';
+import { cleanPriceRules } from './pricing.js';
 /**
  * The test suite catalog: every check belongs to one group, and merchants switch groups on or off per store.
  * `run`: 'journeys' groups run on every scheduled journey test; 'full' groups run on the daily full check.
@@ -15,6 +16,8 @@ export const GROUPS = [
     description: 'Picking a different size or colour selects it in the product form.', checks: ['fn.variant'] },
   { key: 'journey.checkout', label: 'Cart and checkout', run: 'journeys', area: 'Shopping journey',
     description: 'The cart lists the item and checkout opens. Stops before payment, then empties the cart.', checks: ['fn.cart', 'fn.checkout'] },
+  { key: 'pricing.journey', label: 'Prices stay the same', run: 'journeys', area: 'Shopping journey',
+    description: 'The price on the product page is what the cart and checkout ask for. Also checks your own price rules, like “3 of this product cost 1,299 each”. Add rules under Test suite → Price rules.', checks: ['fn.price', 'fn.price.'] },
   { key: 'sale.discount', label: 'Discount codes', run: 'full', area: 'Shopping journey',
     description: 'Your sale codes applied to a real cart: the price really drops, by the amount you expect. Nothing is bought; the cart is emptied. Add codes under Test suite → Discount codes.', checks: ['fn.discount.'] },
   { key: 'errors.js', label: 'JavaScript errors', run: 'journeys', area: 'Errors and links',
@@ -84,6 +87,7 @@ export const FULL_INTERVALS = [720, 1440, 10080];
 export function normalizeConfig(input = {}, base = {}) {
   const cfg = { ...base };
   if (input.discountCodes !== undefined) cfg.discountCodes = cleanCodes(input.discountCodes);
+  if (input.priceRules !== undefined) cfg.priceRules = cleanPriceRules(input.priceRules);
   // Onboarding progress: the welcome flow and the first-report tour.
   if (typeof input.onboarded === 'boolean') cfg.onboarded = input.onboarded;
   if (typeof input.toured === 'boolean') cfg.toured = input.toured;

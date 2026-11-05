@@ -1,7 +1,9 @@
 /**
  * A small fake Shopify storefront for testing Store Guard offline.
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
- * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
+ * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
+ *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
+ *   checkoutprice (checkout subtotal ₹200 more than the cart)
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -54,8 +56,10 @@ function cartJson(items) {
     total_price: original - off,
     discount_codes: code ? [{ code, applicable }] : [],
     cart_level_discount_applications: off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : [],
+    items_subtotal_price: original,
     currency: 'INR',
-    items,
+    // Like Shopify's cart.js: prices in paise, one entry per line.
+    items: items.map((i) => { const unit = Math.round(Number(i.price) * 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: unit, line_price: unit * i.quantity, original_line_price: unit * i.quantity, final_line_price: unit * i.quantity }; }),
   };
 }
 function layout(title, body, { noindex = false } = {}) {
@@ -155,7 +159,9 @@ const server = http.createServer(async (req, res) => {
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
       const hit = byId.get(Number(it.id));
       if (!hit || !hit.v.available) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
-      items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price: hit.v.price, handle: hit.p.handle });
+      // pricedrift / pricelow: an app or cart script changes the price after the shopper saw it.
+      const price = (Number(hit.v.price) + (B.has('pricedrift') ? 150 : B.has('pricelow') ? -100 : 0)).toFixed(2);
+      items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price, handle: hit.p.handle });
     }
     return send(res, 200, { items }, 'application/json');
   }
@@ -188,7 +194,15 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(302, { Location: B.has('checkout') ? '/cart' : '/checkouts/cn/abc123' });
     return res.end();
   }
-  if (p.startsWith('/checkouts/')) return send(res, 200, layout('Checkout', '<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>'));
+  if (p.startsWith('/checkouts/')) {
+    // Order summary like Shopify's checkout: lines and a subtotal, before any payment details.
+    const c = cartJson(cartFor(req, res));
+    const sub = c.items_subtotal_price + (B.has('checkoutprice') ? 20000 : 0);
+    const inr = (m) => '₹' + (m / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+    return send(res, 200, layout('Checkout', `<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>
+<aside class="order-summary"><h2>Order summary</h2>${c.items.map((i) => `<div class="line"><span>${i.title} × ${i.quantity}</span> <span>${inr(i.final_line_price)}</span></div>`).join('')}
+<div class="row"><span>Subtotal · ${c.item_count} ${c.item_count === 1 ? 'item' : 'items'}</span> <span>${inr(sub)}</span></div><div class="row"><span>Shipping</span> <span>Enter shipping address</span></div></aside>`));
+  }
   if (p.startsWith('/policies/')) {
     if (!DE && (p.endsWith('terms-of-service') || p.endsWith('shipping-policy'))) return send(res, 404, layout('Not found', '<h1>404</h1>'));
     if (DE && p.endsWith('refund-policy')) return send(res, 200, layout('Widerrufsbelehrung', '<h1>Widerrufsbelehrung</h1><p>Sie haben das Recht, binnen 14 Tagen ohne Angabe von Gründen diesen Vertrag zu widerrufen.</p>'));

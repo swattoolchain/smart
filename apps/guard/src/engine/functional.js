@@ -1,6 +1,7 @@
 import { check, shortErr, plural } from './checks.js';
 import { gotoStore, settle, settleChallenge } from './browser.js';
 import { searchTermFrom } from './discover.js';
+import { pagePrice, checkoutSubtotal, cartLine, priceCheck, toMinor } from './pricing.js';
 
 const ATC_SELECTORS = [
   'form[action*="/cart/add"] button[type="submit"][name="add"]',
@@ -228,6 +229,7 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
   const pdpUrl = `${origin}/products/${product.handle}?variant=${variant.id}`;
   rec.step(`Open product "${product.title}"`);
   let atcOk = false;
+  let trail = null; // what the shopper is asked to pay at each step (Prices stay the same)
   try {
     const res = await page.goto(pdpUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await settle(page, 1000);
@@ -282,6 +284,12 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
       await page.goto(pdpUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await settle(page, 800);
       await dismissOverlays(page);
+    }
+
+    if (on('pricing.journey')) {
+      rec.step('Read the price on the product page');
+      const pp = await pagePrice(page, toMinor(variant.price));
+      if (pp.minor != null) trail = { product: product.title, variant: variant.title, variantId: variant.id, quantity: 1, page: pp };
     }
 
     // Add to cart through the real button, then confirm with Shopify's cart API.
@@ -369,6 +377,15 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
     );
   }
 
+  if (trail && atcOk) {
+    const cart = await cartJs(page);
+    trail.currency = cart.currency;
+    trail.cart = cartLine(cart, trail.variantId);
+    if (trail.cart) trail.quantity = trail.cart.quantity;
+    else trail = null; // the cart holds something else (a theme or app swapped the item): fn.cart reports it
+  }
+  if (trail && !on('journey.checkout')) await priceCheck(rec, trail, { shot: () => shot(page, 'price') });
+
   // 5. Cart page and checkout reach (stops before any payment details)
   if (atcOk && !on('journey.checkout')) await clearCart(page);
   if (atcOk && on('journey.checkout')) {
@@ -429,6 +446,11 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
         detail = cbtn
           ? 'Clicking the checkout button did not open checkout.'
           : 'No checkout button was found on the cart page, and checkout did not open.';
+      }
+      if (trail) {
+        trail.checkoutReached = reached && hasForm;
+        if (trail.checkoutReached) trail.checkout = await checkoutSubtotal(page);
+        await priceCheck(rec, trail, { shot: () => shot(page, 'checkout-price') });
       }
       rec.add(
         check('fn.checkout', 'functional', 'Checkout opens', status, {
