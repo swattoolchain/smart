@@ -5,6 +5,8 @@ import {
   stateOf, mrrOf, priceOf, ensureLicense, setting, setSetting, audit, blockReason,
 } from './license.js';
 import { sendReceipt } from './billing-mail.js';
+import { capacityReport } from './capacity.js';
+import { queueDepth } from './queue.js';
 
 const SETTINGS = ['signup_plan', 'trial_days', 'grace_days', 'payment_note'];
 
@@ -124,6 +126,12 @@ export function adminRoutes(app, { requireUser, isAdmin }) {
   });
   app.patch('/api/admin/plans/:key', admin, (req, res) => {
     try { res.json({ plan: savePlan(actor(req), req.params.key, req.body || {}) }); } catch (e) { fail(res, e); }
+  });
+
+  // Capacity: how busy the check machine is (read-only).
+  app.get('/api/admin/capacity', admin, (req, res) => {
+    const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+    res.json(capacityReport({ days, queue: queueDepth() }));
   });
 
   app.get('/api/admin/payments', admin, (req, res) => {

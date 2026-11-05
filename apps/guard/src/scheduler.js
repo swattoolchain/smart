@@ -9,6 +9,8 @@ import { dueEnvironmentChecks } from './release.js';
 import { entitlements, blockReason } from './license.js';
 import { sendLicenseNotices } from './billing-mail.js';
 import { syncAllBilling } from './shopify.js';
+import { checkCapacityAlerts, sqlTime } from './capacity.js';
+import { queueDepth } from './queue.js';
 
 export function minutesSince(ts) {
   if (!ts) return Infinity;
@@ -50,11 +52,22 @@ export function nextRunIn(store) {
   return Math.max(0, Math.round(Math.min(j, f)));
 }
 
-export function startRun({ storeId, origin, kind, password, ownPassword, ip = null, trigger = 'manual', disabled, preview, captureOnly, release }) {
+export function startRun({ storeId, origin, kind, password, ownPassword, ip = null, trigger = 'manual', disabled, preview, captureOnly, release, dueAt }) {
   const info = q.insertRun.run(storeId || null, origin, kind, ip, trigger);
   const runId = Number(info.lastInsertRowid);
+  if (dueAt) q.setRunDue.run(dueAt, runId);
   enqueue({ runId, origin, kind, password, ownPassword, storeId, disabled, preview, captureOnly, release });
   return runId;
+}
+
+/**
+ * When a scheduled check was due, for the capacity page's "late starts". A store that was paused, blocked or
+ * busy for a while counts as due at most one scheduler tick (5 minutes) before it was queued, so time when it
+ * couldn't be checked anyway is not counted as lateness.
+ */
+export function dueTime(last, intervalMin, now = Date.now()) {
+  const due = last ? new Date(last.replace(' ', 'T') + 'Z').getTime() + intervalMin * 60000 : now;
+  return sqlTime(Math.min(now, Math.max(due, now - 5 * 60000)));
 }
 
 /** Every 5 minutes, queue monitoring runs for stores that are due. */
@@ -72,12 +85,21 @@ export function startScheduler() {
       // Re-check failing stores sooner so recoveries arrive quickly.
       const interval = failingCritical ? Math.min(30, journeyIntervalMin) : journeyIntervalMin;
       const dueJourney = minutesSince(s.last_run_at) >= interval;
+<<<<<<< ours
       if (dueFull) startRun({ storeId: s.id, origin: s.url, kind: 'full', password: storePassword(s), trigger: 'schedule' });
       else if (dueJourney) startRun({ storeId: s.id, origin: s.url, kind: 'journeys', password: storePassword(s), trigger: 'schedule' });
+||||||| base
+      if (dueFull) startRun({ storeId: s.id, origin: s.url, kind: 'full', password: s.storefront_password, trigger: 'schedule' });
+      else if (dueJourney) startRun({ storeId: s.id, origin: s.url, kind: 'journeys', password: s.storefront_password, trigger: 'schedule' });
+=======
+      if (dueFull) startRun({ storeId: s.id, origin: s.url, kind: 'full', password: s.storefront_password, trigger: 'schedule', dueAt: dueTime(s.last_full_at, fullIntervalMin) });
+      else if (dueJourney) startRun({ storeId: s.id, origin: s.url, kind: 'journeys', password: s.storefront_password, trigger: 'schedule', dueAt: dueTime(s.last_run_at, interval) });
+>>>>>>> theirs
     }
     try { dueEnvironmentChecks(); } catch (e) { console.error('environment checks failed', e); }
     sendLicenseNotices().catch((e) => console.error('licence notices failed', e));
     pruneOldRuns();
+    checkCapacityAlerts({ queue: queueDepth() }).catch((e) => console.error('capacity alerts failed', e));
   });
   // Once a day: keep Shopify-billed plans in step with Shopify (managed pricing sends no webhooks).
   cron.schedule('17 3 * * *', () => syncAllBilling().catch((e) => console.error('billing sync failed', e)));

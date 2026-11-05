@@ -2219,6 +2219,47 @@
       <section class="panel"><h2>Free checks</h2>${t(d.recentScans, [['url', 'Store'], ['score', 'Score'], ['verdict', 'Result'], ['created_at', 'When'], ['id', 'Report']], (r, c) => (c === 'created_at' ? time(r[c]) : c === 'id' ? `<a href="/scan/${r.id}" target="_blank" rel="noopener">Open</a>` : c === 'verdict' ? esc(VERDICT[r.verdict] || r.status) : esc(r[c] ?? '')))}</section></div>`;
   };
 
+  // How busy the check machine is, and when to add a worker. Read-only.
+  async function adminCapacity(ctx, head) {
+    const d = await api('/api/admin/capacity');
+    if (!ctx.alive()) return;
+    const T = d.thresholds;
+    const mins = (m) => (m == null ? '–' : m < 1 && m > 0 ? '<1 min' : `${Math.round(m)} min`);
+    const secs = (x) => (x == null ? '–' : x < 90 ? `${x} s` : `${Math.round(x / 6) / 10} min`);
+    const fig = (v, l, warn) => `<div class="figure"${warn ? ' style="border-color:var(--fail)"' : ''}><b>${v}</b><span>${esc(l)}</span></div>`;
+    const ln = d.lateStarts.now;
+    const lateNow = ln.started + ln.waiting > 0;
+    const busy = d.slotUse.lastHourPct > T.busyPct;
+    const verdict = lateNow || busy
+      ? `<div class="notice warn-n"><p><b>Time to add a worker.</b> ${lateNow ? `Scheduled checks are starting more than ${T.lateMin} minutes late (longest wait ${ln.worstMin} min). ` : ''}${busy ? `Check slots were ${d.slotUse.lastHourPct}% busy over the last hour. ` : ''}We email the founders once when this starts.</p></div>`
+      : `<div class="notice ok"><p>Capacity is fine. We email the founders if scheduled checks start more than ${T.lateMin} minutes late or check slots stay above ${T.busyPct}% busy for an hour.</p></div>`;
+    const plans = d.browserMinutes.plans;
+    const bm = `<div class="table-wrap flat"><table class="data" id="cap-minutes"><thead><tr><th>Day (UTC)</th>${plans.map((p) => `<th class="num">${esc(p)}</th>`).join('')}<th class="num">All plans</th><th class="num">Checks</th><th class="num">Peak slots</th></tr></thead><tbody>
+      ${d.browserMinutes.days.map((x, i) => { const pk = d.slotUse.peaks[i]; return `<tr><td>${esc(x.date)}</td>${plans.map((p) => `<td class="num">${x.byPlan[p] != null ? esc(x.byPlan[p]) : '–'}</td>`).join('')}<td class="num"><b>${esc(x.total)}</b></td><td class="num">${x.checks}</td><td class="num">${pk.peak} of ${d.slots}${pk.pct > T.busyPct ? ` <span class="pill warning">${pk.pct}%</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
+    const dur = d.durations.length ? `<div class="table-wrap flat"><table class="data" id="cap-durations"><thead><tr><th>Kind of check</th><th class="num">Checks</th><th class="num">Typical</th><th class="num">Slowest 5%</th><th class="num">Average</th></tr></thead><tbody>
+      ${d.durations.map((x) => `<tr><td>${esc(x.kind)}</td><td class="num">${x.count}</td><td class="num">${secs(x.medianSec)}</td><td class="num">${secs(x.p95Sec)}</td><td class="num">${secs(x.avgSec)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No finished checks in this period.</p>';
+    const m = d.machine;
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      ${verdict}
+      <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        ${fig(`${d.queue.active} of ${d.slots}`, 'Check slots in use now')}
+        ${fig(d.queue.waiting, d.queue.oldestWaitingMin != null ? `Waiting · oldest ${d.queue.oldestWaitingMin} min` : 'Waiting', d.queue.oldestWaitingMin > T.lateMin)}
+        ${fig(`${d.slotUse.lastHourPct}%`, 'Slot use, last hour', busy)}
+        ${fig(mins(d.lateStarts.p95Min), `Late starts, slowest 5% (${d.days} days)`, d.lateStarts.p95Min > T.lateMin)}</div>
+      <section class="panel"><h2>Scheduled checks: how late they start</h2>
+        <p class="muted" style="margin-top:0">Time from when a check was due until it got a browser. ${d.lateStarts.count} scheduled checks in the last ${d.days} days.</p>
+        <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))" id="cap-late">
+          ${fig(mins(d.lateStarts.medianMin), 'Typical (median)')}${fig(mins(d.lateStarts.p95Min), 'Slowest 5% (p95)', d.lateStarts.p95Min > T.lateMin)}${fig(d.lateStarts.overLimit, `More than ${T.lateMin} min late`, d.lateStarts.overLimit > 0)}</div></section>
+      <section class="panel"><h2>Browser minutes per day, by plan</h2>${bm}
+        <p class="muted" style="margin-bottom:0">${d.browserMinutes.total} browser minutes in ${d.days} days. A day has ${24 * 60 * d.slots} slot minutes (${d.slots} slots × 24 h). Plans are each customer's current plan.</p></section>
+      <section class="panel"><h2>How long checks take</h2>${dur}</section>
+      <section class="panel"><h2>This machine</h2><div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        ${fig(`${m.memUsedPct}%`, `Memory used of ${Math.round(m.memTotalMb / 1024 * 10) / 10} GB`, m.memUsedPct > 85)}
+        ${fig(`${m.rssMb} MB`, 'Used by Tharam (server)')}
+        ${fig(m.diskFreeGb != null ? `${m.diskFreeGb} GB` : '–', m.diskUsedPct != null ? `Disk free · ${m.diskUsedPct}% used` : 'Disk free', m.diskUsedPct > 85)}
+        ${fig(m.load1, `Load, ${m.cpus} CPUs`, m.load1 > m.cpus)}</div></section></div>`;
+  }
+
   // ---------- Founder console ----------
   const STATE_PILL = (st) => { const [l, k] = STATE[st] || [st, '']; return `<span class="pill ${k}">${esc(l)}</span>`; };
   const sumMoney = (obj) => Object.entries(obj || {}).map(([c, v]) => minorMoney(v, c)).join(' + ') || '0';
@@ -2245,7 +2286,7 @@
     if (!S.admin) { location.hash = '#/'; return; }
     const tab = ctx.r.a;
     const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder console</h1><div class="meta">Customers, plans and revenue · only visible to founders</div></div></div>`
-      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['leads', 'Leads and free checks']], tab);
+      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity']], tab);
     if (tab === 'customers' && ctx.r.b) return adminCustomer(ctx, head, ctx.r.b);
     if (tab === 'customers') return adminCustomers(ctx, head);
     if (tab === 'plans') return adminPlans(ctx, head);
@@ -2253,6 +2294,7 @@
     if (tab === 'audit') return adminAudit(ctx, head);
     if (tab === 'settings') return adminSettings(ctx, head);
     if (tab === 'leads') return adminLeads(ctx, head);
+    if (tab === 'capacity') return adminCapacity(ctx, head);
     const d = await api('/api/admin/billing');
     if (!ctx.alive()) return;
     const c = d.counts;

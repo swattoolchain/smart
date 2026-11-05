@@ -123,6 +123,9 @@ ensureColumn('releases', 'trigger', "TEXT NOT NULL DEFAULT 'manual'");
 // Browser access for accounts created by a Shopify install, and "sign out everywhere".
 ensureColumn('users', 'login_email', 'TEXT');
 ensureColumn('users', 'session_epoch', 'INTEGER NOT NULL DEFAULT 0');
+// Capacity: when a check actually got a browser (queue wait = started_at - created_at), and when a scheduled check was due.
+ensureColumn('runs', 'started_at', 'TEXT');
+ensureColumn('runs', 'due_at', 'TEXT');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_login_email ON users(login_email) WHERE login_email IS NOT NULL');
 // Storefront and staging passwords are kept encrypted; encrypt any still stored in plain text (in place).
 migratePasswords(db);
@@ -152,7 +155,8 @@ export const q = {
   runsByStore: db.prepare(
     "SELECT id, seq, kind, status, score, verdict, trigger, error, created_at, finished_at, json_array_length(result_json, '$.checks') AS checks FROM runs WHERE store_id = ? AND (trigger IS NULL OR trigger != 'release') ORDER BY id DESC LIMIT ?"
   ),
-  setRunRunning: db.prepare("UPDATE runs SET status = 'running' WHERE id = ?"),
+  setRunRunning: db.prepare("UPDATE runs SET status = 'running', started_at = datetime('now') WHERE id = ?"),
+  setRunDue: db.prepare('UPDATE runs SET due_at = ? WHERE id = ?'),
   finishRun: db.prepare(
     "UPDATE runs SET status = 'done', score = ?, verdict = ?, result_json = ?, finished_at = datetime('now') WHERE id = ?"
   ),
