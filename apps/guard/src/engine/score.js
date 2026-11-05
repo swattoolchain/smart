@@ -15,6 +15,7 @@ const PROBLEM = {
   'nf.seo.noindex.product': 'product pages are hidden from Google',
   'cat.pricing': 'some products have pricing mistakes (a zero price or a fake discount)',
   'sec.scripts.bad': 'a script from a known malicious website is running on your store',
+  'sec.scripts.forms': 'a script is reading what shoppers type and sending it to another website',
 };
 
 export function scoreChecks(checks) {

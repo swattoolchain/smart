@@ -980,4 +980,5 @@ ui-nav-menu { display: none !important; }
 
 /* Script watch: a known malicious site in the Scripts and apps tab */
 .callout.fail { border: 1px solid var(--fail); background: var(--fail-bg); padding: 12px 14px; border-radius: 10px; margin: 0 0 14px; }
+.callout.warn { border: 1px solid var(--warn); background: var(--warn-bg); padding: 12px 14px; border-radius: 10px; margin: 0 0 14px; }
 .scripts-table td .cell-main { word-break: break-all; }

@@ -1287,6 +1287,11 @@
       return `<section class="panel" id="scripts"><h2>Scripts and apps</h2>
         <p class="sub">Every script and outside site your home, product and cart pages used during this check. New scripts since the last check are marked; we alert you about each one once.</p>
         ${(sw.bad || []).length ? `<div class="callout fail" role="alert"><b>Known malicious site:</b> ${sw.bad.map(esc).join(', ')}. Remove whatever loads it now.</div>` : ''}
+        ${(() => { const fm = sw.forms; if (!fm || !(fm.readers || []).length) return ''; const PGN = { product: 'Product page', cart: 'Cart page' }; const leak = fm.readers.some((r) => r.sentTo.length || r.bad) || (fm.sentTo || []).length;
+          return `<div class="callout ${leak ? 'fail' : 'warn'}" ${leak ? 'role="alert"' : ''} id="form-readers"><b>${leak ? 'A script sends what shoppers type to another website.' : 'Outside scripts read what shoppers type.'}</b> ${leak ? 'Remove it now.' : 'Fine if it is an app you use; remove it if you don’t recognise it.'}
+            <div class="table-wrap flat" style="margin-top:8px"><table class="data"><thead><tr><th>Script</th><th>Page</th><th>Fields</th><th>Sent to</th></tr></thead><tbody>
+            ${fm.readers.map((r) => `<tr><td><span class="cell-main">${esc(r.script)}</span></td><td>${esc(PGN[r.page] || r.page)}</td><td class="cell-sub">${esc([...new Set([...r.reads, ...r.listens])].join(', '))}</td><td>${r.sentTo.length ? `<b>${esc(r.sentTo.join(', '))}</b>` : '<span class="muted">Nothing seen</span>'}</td></tr>`).join('')}
+            </tbody></table></div></div>`; })()}
         <div class="figures" style="margin:0 0 14px"><div class="figure"><b>${sw.counts?.scripts ?? 0}</b><span>scripts</span></div><div class="figure"><b>${sw.counts?.sites ?? 0}</b><span>outside sites</span></div>
           <div class="figure"><b>${sw.baseline ? '–' : (sw.added || []).length}</b><span>${sw.baseline ? 'first record' : 'new since last check'}</span></div></div>
         ${PG.map(([k, l]) => { const pg = sw.pages[k]; return `<h3 class="col-h">${l} <span class="muted">· ${pg.scripts.length} script${pg.scripts.length === 1 ? '' : 's'} · ${pg.sites.length} outside site${pg.sites.length === 1 ? '' : 's'}</span></h3>

