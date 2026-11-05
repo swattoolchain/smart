@@ -187,12 +187,12 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         const cost = scripts && on('speed') ? watchCost(mobilePage) : null;
         metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;
         if (cost) scripts.phone = await cost();
+        if (on('security.spam')) await runSpam({ page, rec, origin, info, password, shot });
       }
       // Opt-in only (Store settings), never on publish previews, at most every 6 hours (see traffic.js).
       if (kind === 'full' && storeId && traffic && !preview && on('sale.traffic')) {
         phase('traffic');
         trafficOut = await runTraffic({ rec, origin, info, password, storeId, dataDir: config.dataDir, shoppers: traffic.shoppers });
-        if (on('security.spam')) await runSpam({ page, rec, origin, info, password, shot });
       }
       if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
         phase('regional');
