@@ -213,8 +213,8 @@ describe('Founder console', () => {
     const after1 = r.json.plan;
     assert.equal(after1.tagline, 'Ship changes without breaking the store.');
     for (const k of ['name', 'kind', 'prices', 'features', 'public', 'highlight', 'active', 'sort']) assert.deepEqual(after1[k], before[k], `${k} unchanged`);
-    // Built-in plans have no stored "tests per day"; saving writes the default (20) that already applied.
-    const limits = { manualRunsPerDay: 20, ...before.limits };
+    // Built-in plans have no stored "tests per day" or "price rules"; saving writes the defaults (20, 10) that already applied.
+    const limits = { manualRunsPerDay: 20, priceRules: 10, ...before.limits };
     assert.deepEqual(after1.limits, limits, 'limits unchanged');
     // Changing one limit keeps the other limits.
     const r2 = await boss.patch('/api/admin/plans/growth', { limits: { environments: 5 } });
