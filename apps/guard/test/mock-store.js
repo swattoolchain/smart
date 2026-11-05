@@ -62,10 +62,10 @@ const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127
   + (PATH === '/' && LIVE_EXTRA.has('miner') ? '<script src="/assets/perf.js"></script>' : '')
   + (FORM_EXTRAS.some((k) => LIVE_EXTRA.has(k)) ? '<script src="/assets/newsletter.js"></script>' : '')
   + (LIVE_EXTRA.has('skimmer') ? `<script src="http://127.0.0.1:${PORT}/apps/pixel-helper.js"></script>` : '')
-  + (LIVE_EXTRA.has('formreader') ? `<script src="http://127.0.0.1:${PORT}/apps/chat-widget.js"></script>` : '');
-const frameTags = () => (/^\/(products\/|cart$)/.test(PATH) ? (LIVE_EXTRA.has('hiddenframe') ? `<iframe src="http://stat-counter.localhost:${PORT}/f.html?id=7" width="1" height="1" style="position:absolute;left:-3000px;border:0"></iframe>` : '')
-  + (LIVE_EXTRA.has('badframe') ? `<iframe src="http://evil-cdn.localhost:${PORT}/f.html" style="display:none"></iframe>` : '') : '')
+  + (LIVE_EXTRA.has('formreader') ? `<script src="http://127.0.0.1:${PORT}/apps/chat-widget.js"></script>` : '')
   + (LIVE_EXTRA.has('atcscript') ? `<script src="http://127.0.0.1:${PORT}/apps/upsell-popup.js"></script>` : '');
+const frameTags = () => (/^\/(products\/|cart$)/.test(PATH) ? (LIVE_EXTRA.has('hiddenframe') ? `<iframe src="http://stat-counter.localhost:${PORT}/f.html?id=7" width="1" height="1" style="position:absolute;left:-3000px;border:0"></iframe>` : '')
+  + (LIVE_EXTRA.has('badframe') ? `<iframe src="http://evil-cdn.localhost:${PORT}/f.html" style="display:none"></iframe>` : '') : '');
 const MINER_JS = "window.CoinHive={Anonymous:function(k,o){this.start=function(){try{new WebSocket('ws://pool.minexmr.localhost:" + PORT + "/proxy');}catch(e){}};}};var miner=new CoinHive.Anonymous('SITE_KEY',{throttle:0.3});miner.start();";
 const FORM_JS = {
   // The store's own sign-up script: listens to and reads the box (allowed).
