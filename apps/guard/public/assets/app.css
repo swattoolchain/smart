@@ -982,3 +982,18 @@ ui-nav-menu { display: none !important; }
 #rjoin.inline-form .field { margin: 0; min-width: 120px; }
 #rjoin-token { white-space: pre-wrap; word-break: break-all; padding: 10px 12px; border-radius: 8px; background: var(--bg-soft, rgba(127,127,127,.08)); font-size: 13px; }
 #runners td.actions { white-space: nowrap; text-align: right; }
+
+
+/* Script watch: a known malicious site in the Scripts and apps tab */
+.callout.fail { border: 1px solid var(--fail); background: var(--fail-bg); padding: 12px 14px; border-radius: 10px; margin: 0 0 14px; }
+.scripts-table td .cell-main { word-break: break-all; }
+
+/* Theme code changes: changed lines per file */
+.theme-diff { margin-top: 10px; }
+.theme-diff details { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 8px; background: #fff; }
+.theme-diff summary { cursor: pointer; padding: 8px 10px; font-size: 13px; }
+.theme-diff pre.diff { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 360px; overflow: auto; }
+.theme-diff .d-add { color: var(--pass); }
+.theme-diff pre .d-add { display: block; background: var(--pass-bg); }
+.theme-diff .d-del { color: var(--fail); }
+.theme-diff pre .d-del { display: block; background: var(--fail-bg); }

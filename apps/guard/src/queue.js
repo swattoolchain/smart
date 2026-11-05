@@ -1,4 +1,4 @@
-import { q } from './db.js';
+import { db, q } from './db.js';
 import { runScan } from './engine/index.js';
 import { handleAlerts } from './alerts.js';
 import { storeConfig, saleActive } from './scheduler.js';
@@ -6,6 +6,8 @@ import { live } from './live.js';
 import { settleRelease } from './release.js';
 import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
+import { themeWatch } from './theme-watch.js';
+import { check } from './engine/checks.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
 import { aiEnabled } from './ai.js';
 import { fullCheckInputs } from './runner-files.js';
@@ -168,13 +170,40 @@ async function prepare(job) {
     // A hand-picked selection overrides the store's suite for this run only.
     disabled: planDisabled(store, cfg, disabled),
     testProduct: cfg.testProduct || null, discountCodes: codes, preview: preview || null, captureOnly: !!captureOnly,
+    // Script watch compares with the store's last check (read here, so a worker gets it in the spec).
+    previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
   };
 }
 
+const THEME_SKIPPED = 'We couldn’t read your theme files from Shopify this time. We’ll try again on the next full check.';
+const themeSkipped = () => ({ checks: [check('sec.theme', 'security', 'Theme code unchanged', 'skip', { severity: 'major', detail: THEME_SKIPPED })], commit: () => {} });
+
+/**
+ * Theme file fingerprints (Shopify stores, full checks). Read through the Admin API, so always on the main server:
+ * the Shopify token never goes to a worker. Never rejects: if Shopify can't be reached in time the check is skipped
+ * with a plain note and the record is kept, so the change is reported next time. Returns null when it doesn't apply.
+ */
+function readTheme(job, spec, limitMs = 90000) {
+  const { storeId, kind, release, preview } = job;
+  if (!storeId || kind !== 'full' || release || preview || (spec.disabled || []).includes('security.theme')) return null;
+  const link = shopForStore(storeId);
+  if (!link) return null;
+  let timer;
+  return Promise.race([
+    themeWatch({ storeId, shop: link.shop }),
+    new Promise((_, rej) => (timer = setTimeout(() => rej(new Error('timeout')), limitMs))),
+  ]).catch((e) => {
+    console.error('theme files from Shopify', link.shop, e.message);
+    return themeSkipped();
+  }).finally(() => clearTimeout(timer));
+}
+
 /** Saves a finished check and does what follows it: store status, the confirming re-check, alerts. */
-async function settle(job, result) {
+async function settle(job, result, theme = null) {
   const { runId, origin, kind, password, storeId, confirmed, release } = job;
   q.finishRun.run(result.score, result.verdict, JSON.stringify(result), runId);
+  // The new theme record is saved only once the check is, so an interrupted check reports the change next time.
+  if (theme && (result.checks || []).some((c) => c.id === 'sec.theme' && c.status !== 'skip')) { try { theme.commit(); } catch (e) { console.error('theme record save failed', storeId, e); } }
   // Publish-check runs (live and draft) never change the store's status and never alert.
   if (storeId && !release) {
     q.updateStoreAfterRun.run(result.verdict, result.score, storeId);
@@ -212,13 +241,14 @@ async function execute(job) {
   const hardLimit = new Promise((_, rej) => (timer = setTimeout(() => { timedOut = true; controller.abort(); rej(new Error('The test took longer than 6 minutes, so we stopped it. Your store may be very slow right now.')); }, 6 * 60 * 1000)));
   try {
     const spec = await prepare(job);
+    const theme = await readTheme(job, spec);
     const result = await Promise.race([
-      runScan({ ...spec, kind, signal: controller.signal, progress: live.get(runId) }),
+      runScan({ ...spec, kind, extraChecks: theme?.checks || [], signal: controller.signal, progress: live.get(runId) }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.
     if (controller.signal.aborted) throw new Error(timedOut ? 'timeout' : 'cancelled');
-    await settle(job, result);
+    await settle(job, result, theme);
   } catch (e) {
     if (controller.signal.aborted && !timedOut) q.cancelRun.run(runId);
     else q.failRun.run(String(e.message || e).slice(0, 300), runId);
@@ -347,3 +377,12 @@ function recoverLost(now = Date.now()) {
 // Workers that go quiet are noticed even when nothing else happens.
 const healthTimer = setInterval(() => { try { pump(); } catch (e) { console.error('runner health', e); } }, 5000);
 healthTimer.unref?.();
+
+/** The script inventory of the store's latest finished check before this one (any kind), or null. */
+function previousScripts(storeId, runId) {
+  const rows = db.prepare("SELECT result_json FROM runs WHERE store_id = ? AND id < ? AND status = 'done' AND (trigger IS NULL OR trigger != 'release') AND result_json LIKE '%\"scripts\":{%' ORDER BY id DESC LIMIT 5").all(storeId, runId);
+  for (const row of rows) {
+    try { const s = JSON.parse(row.result_json).scripts; if (s?.pages && Object.keys(s.pages).length) return { pages: s.pages }; } catch {}
+  }
+  return null;
+}
