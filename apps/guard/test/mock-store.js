@@ -2,6 +2,8 @@
  * A small fake Shopify storefront for testing Store Guard offline.
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
+ * Variant extras (MOCK_EXTRA): brokenvariant (Kurta Large shown in stock, cart refuses it), unpublishedvariant
+ * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -26,6 +28,13 @@ const products = [
   { id: 2, title: 'Handwoven Silk Saree', handle: 'silk-saree', product_type: 'Saree', vendor: 'Tharam', tags: 'silk', body_html: EXTRA.includes('placeholder') ? '<p>Lorem ipsum dolor sit amet, TBD description here.</p>' : '<p>Traditional handwoven silk saree with zari border and intricate detailing.</p>', images: [{ src: '/img/s.png' }], variants: [{ id: 201, title: 'Default Title', sku: 'SAR-1', price: '8999.00', available: true }] },
   { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: '0.00', available: true }] },
 ];
+if (EXTRA.includes('manyvariants')) products.push({ id: 4, title: 'Block Print Cushion Cover', handle: 'cushion-cover', product_type: 'Decor', vendor: 'Tharam', tags: 'cotton', body_html: '<p>Hand block printed cotton cushion cover, 16 by 16 inches.</p>', images: [{ src: '/img/c.png' }],
+  variants: Array.from({ length: 40 }, (_, i) => ({ id: 401 + i, title: `Colour ${i + 1}`, sku: `CUS-${i + 1}`, price: '799.00', available: i !== 39 })) });
+// Variants the cart treats differently from the product list (what the every-variant sweep looks for).
+const CART_REFUSES = new Map();
+if (EXTRA.includes('brokenvariant')) CART_REFUSES.set(103, [422, { status: 422, message: 'Cart Error', description: 'This item could not be added to your cart.' }]);
+if (EXTRA.includes('unpublishedvariant')) CART_REFUSES.set(102, [404, { status: 404, message: 'Cart Error', description: 'Cannot find variant' }]);
+let ADD_CALLS = 0; // cart/add.js requests, so tests can see the sweep is capped
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
 
 function cartFor(req, res) {
@@ -94,6 +103,7 @@ const server = http.createServer(async (req, res) => {
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
   }
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
+  if (p === '/__addcount') return send(res, 200, { adds: ADD_CALLS, carts: [...carts.values()].map((c) => c.length) }, 'application/json');
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });
     return res.end();
@@ -152,7 +162,10 @@ const server = http.createServer(async (req, res) => {
   if (p === '/cart/add.js' && req.method === 'POST') {
     const items = cartFor(req, res);
     const body = JSON.parse((await readBody(req)) || '{}');
+    ADD_CALLS++;
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
+      const refused = CART_REFUSES.get(Number(it.id));
+      if (refused) return send(res, refused[0], refused[1], 'application/json');
       const hit = byId.get(Number(it.id));
       if (!hit || !hit.v.available) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
       items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price: hit.v.price, handle: hit.p.handle });
