@@ -3,6 +3,7 @@
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
  * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below).
+ * Hijack extras (env MOCK_EXTRA or live via /__extra): redirect, phoneredirect, hiddenframe, badframe, miner (see HIJACK below).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -22,9 +23,23 @@ const TRACK = EXTRA.includes('track');
 // Script watch: newscript adds an app script from another site to every page; badscript adds one from a
 // site on the known-bad list (tests add evil-cdn.localhost to BAD_DOMAINS). *.localhost always reaches this machine.
 // Both can also be switched on and off while the store runs: GET /__extra?newscript=1&badscript=0.
-const LIVE_EXTRA = new Set(['newscript', 'badscript'].filter((k) => EXTRA.includes(k)));
+// HIJACK (security S2), the signs of a hacked store:
+//   redirect       the home page sends every visitor to a scam site (prize-win.localhost) after a moment
+//   phoneredirect  the same, but only for phone shoppers arriving from Google (what real infections do)
+//   hiddenframe    product and cart pages load an invisible 1×1 page from stat-counter.localhost
+//   badframe       the same from evil-cdn.localhost (on the known-bad list in tests)
+//   miner          the home page loads /assets/perf.js, CoinHive-style mining code that opens a pool connection
+const LIVE_KEYS = ['newscript', 'badscript', 'redirect', 'phoneredirect', 'hiddenframe', 'badframe', 'miner'];
+const LIVE_EXTRA = new Set(LIVE_KEYS.filter((k) => EXTRA.split(',').includes(k) || (['newscript', 'badscript'].includes(k) && EXTRA.includes(k))));
+let PATH = '/'; // the page being served
 const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127.0.0.1:${PORT}/apps/review-widget.js?v=${Date.now()}"></script>` : '')
-  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '');
+  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '')
+  + (PATH === '/' && LIVE_EXTRA.has('redirect') ? `<script>setTimeout(function(){location.href='http://prize-win.localhost:${PORT}/claim?ref=store'},300);</script>` : '')
+  + (PATH === '/' && LIVE_EXTRA.has('phoneredirect') ? `<script>if(/Mobile|Android/.test(navigator.userAgent)&&/google\./.test(document.referrer))setTimeout(function(){location.replace('http://prize-win.localhost:${PORT}/claim')},300);</script>` : '')
+  + (PATH === '/' && LIVE_EXTRA.has('miner') ? '<script src="/assets/perf.js"></script>' : '');
+const frameTags = () => (/^\/(products\/|cart$)/.test(PATH) ? (LIVE_EXTRA.has('hiddenframe') ? `<iframe src="http://stat-counter.localhost:${PORT}/f.html?id=7" width="1" height="1" style="position:absolute;left:-3000px;border:0"></iframe>` : '')
+  + (LIVE_EXTRA.has('badframe') ? `<iframe src="http://evil-cdn.localhost:${PORT}/f.html" style="display:none"></iframe>` : '') : '');
+const MINER_JS = "window.CoinHive={Anonymous:function(k,o){this.start=function(){try{new WebSocket('ws://pool.minexmr.localhost:" + PORT + "/proxy');}catch(e){}};}};var miner=new CoinHive.Anonymous('SITE_KEY',{throttle:0.3});miner.start();";
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -74,7 +89,7 @@ ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}<script src="/assets/theme.js?v=111"></script>${scriptTags()}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
-<main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
+<main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}${frameTags()}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
 }
 function send(res, status, body, type = 'text/html; charset=utf-8') {
   res.writeHead(status, { 'Content-Type': type });
@@ -92,6 +107,12 @@ async function readBody(req) {
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://localhost:${PORT}`);
   const p = u.pathname;
+  PATH = p;
+  // Other websites (the scam page, the hidden-page host) are served by this same process.
+  const host = String(req.headers.host || '');
+  if (host.startsWith('prize-win.')) return send(res, 200, '<!doctype html><html><head><title>Congratulations!</title></head><body style="font:24px sans-serif;background:#ffe14d;padding:40px"><h1>You won an iPhone 16!</h1><p>Enter your card details to claim your prize.</p></body></html>');
+  if (host.startsWith('stat-counter.') || (host.startsWith('evil-cdn.') && p === '/f.html')) return send(res, 200, '<!doctype html><html><body></body></html>');
+  if (p === '/assets/perf.js') return send(res, 200, MINER_JS, 'application/javascript');
   const previewId = u.searchParams.get('preview_theme_id');
   if (previewId) res.setHeader('Set-Cookie', `preview_theme=${previewId}; Path=/`);
   DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
@@ -102,7 +123,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   if (p === '/__extra') {
-    for (const k of ['newscript', 'badscript']) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
+    for (const k of LIVE_KEYS) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
     return send(res, 200, { extra: [...LIVE_EXTRA] }, 'application/json');
   }
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
