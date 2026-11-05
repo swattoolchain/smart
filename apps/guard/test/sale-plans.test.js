@@ -513,8 +513,8 @@ describe('Sale plans in the product', () => {
     await o3.locator('[name=price]').fill('12000');
     await screenshot(t, p, 'Sale plan form with offers', { fullPage: true });
     await p.click('#spf button[type=submit]');
-    await p.waitForFunction(() => /#\/s\/\d+\/sales\/\d+$/.test(location.hash) || document.querySelector('#sp-err')?.textContent).catch(() => {});
-    assert.equal(await p.textContent('#sp-err'), '', 'the form saves');
+    await p.waitForFunction(() => /#\/s\/\d+\/sales\/\d+$/.test(location.hash) || document.querySelector('#sp-err')?.textContent);
+    assert.equal(await p.evaluate(() => document.querySelector('#sp-err')?.textContent || ''), '', 'the form saves');
     await p.waitForFunction(() => /#\/s\/\d+\/sales\/\d+$/.test(location.hash));
     await p.waitForSelector('.pub-verdict', { timeout: 60000 });
     await quiet(p);
