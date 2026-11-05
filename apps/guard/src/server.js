@@ -28,6 +28,7 @@ import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
 import { appHealth } from './app-health.js';
+import { warningsFor } from './early-warning.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -734,7 +735,7 @@ app.get('/api/stores/:id/catalog', requireUser, (req, res) => {
 app.get('/api/stores/:id/apps', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
-  res.json(appHealth(s));
+  res.json({ ...appHealth(s), earlyWarnings: warningsFor(s.id) });
 });
 
 app.post('/api/stores/:id/explain-change', requireUser, async (req, res) => {

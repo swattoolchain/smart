@@ -2,6 +2,7 @@ import { config } from './config.js';
 import { db, q } from './db.js';
 import { runScan } from './engine/index.js';
 import { handleAlerts } from './alerts.js';
+import { earlyWarning } from './early-warning.js';
 import { storeConfig } from './scheduler.js';
 import { live } from './live.js';
 import { settleRelease } from './release.js';
@@ -126,6 +127,8 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
       } else {
         await handleAlerts(storeId, runId, result).catch((e) => console.error('alerts failed', e));
       }
+      // Cross-store early warning: an app whose code changed on many stores at once (needs script watch).
+      if (result.scripts) await earlyWarning(storeId).catch((e) => console.error('early warning failed', e));
     }
   } catch (e) {
     if (controller.signal.aborted && !timedOut) q.cancelRun.run(runId);
