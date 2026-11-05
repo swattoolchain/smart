@@ -1,6 +1,7 @@
 import { check, shortErr, plural } from './checks.js';
 import { gotoStore, settle, settleChallenge } from './browser.js';
 import { searchTermFrom } from './discover.js';
+import { runWooJourney } from './woo.js';
 
 const ATC_SELECTORS = [
   'form[action*="/cart/add"] button[type="submit"][name="add"]',
@@ -129,7 +130,7 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
           severity: 'critical',
           detail: `Homepage returned HTTP ${status}.`,
           evidence: { screenshot: await shot(page, 'home-error') },
-          fix: 'Check your domain settings and Shopify status. If you recently changed themes, confirm one is published.',
+          fix: info?.isWoo ? 'Check your hosting and domain settings. If you recently changed themes or plugins, open the site yourself to confirm it loads.' : 'Check your domain settings and Shopify status. If you recently changed themes, confirm one is published.',
         })
       );
       return { down: true, pageErrors };
@@ -156,6 +157,7 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
   const coll = info.collections[0];
   const collUrl = coll ? `${origin}/collections/${coll.handle}` : `${origin}/collections/all`;
   // Collection, search, product and cart steps rely on Shopify's storefront conventions.
+  if (info.isWoo) return { ...(await runWooJourney({ page, rec, origin, info, shot, on })), pageErrors };
   if (!info.isShopify) return { pageErrors };
 
   if (on('journey.collection')) try {

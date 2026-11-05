@@ -77,11 +77,14 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     }
     info = await discover(ctx.request, origin, { testProduct });
     const lockedEarly = /\/password/.test(page.url());
-    if (!info.isShopify && !lockedEarly && !(await isLocked(ctx, origin))) {
+    if (!info.isShopify && !info.isWoo && !lockedEarly && !(await isLocked(ctx, origin))) {
       rec.add(
         check('fn.platform', 'functional', 'Full shopping journey test', 'skip', {
           severity: 'minor',
-          detail: `Detected platform: ${info.platform.label}. Automated add-to-cart and checkout tests currently run on Shopify stores; WooCommerce support is next. Uptime, speed, SEO, accessibility, links and script errors were fully tested.`,
+          detail: info.platform.key === 'woocommerce'
+            ? 'This WooCommerce store does not answer on the WooCommerce Store API (it may be turned off or blocked by a security plugin), so add-to-cart and checkout could not be tested. Uptime, speed, SEO, accessibility, links and script errors were fully tested.'
+            : `Detected platform: ${info.platform.label}. Automated add-to-cart and checkout tests run on Shopify and WooCommerce stores. Uptime, speed, SEO, accessibility, links and script errors were fully tested.`,
+          fix: info.platform.key === 'woocommerce' ? 'Allow public access to /wp-json/wc/store/ in your security or firewall plugin (it is the same API your cart and checkout blocks use), then run the check again.' : '',
         })
       );
     }
@@ -130,6 +133,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       startedAt: new Date(started).toISOString(),
       durationMs: Date.now() - started,
       isShopify: info.isShopify,
+      isWoo: !!info.isWoo,
       metrics,
       catalog,
       ai,

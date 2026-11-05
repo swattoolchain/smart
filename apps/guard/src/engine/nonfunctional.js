@@ -1,3 +1,4 @@
+import { productUrl } from './discover.js';
 import AxeBuilder from '@axe-core/playwright';
 import { check, shortErr, plural } from './checks.js';
 import { gotoStore, settle } from './browser.js';
@@ -82,7 +83,7 @@ function fmtBytes(b) {
 export async function runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit = 40, on = () => true }) {
   const metrics = {};
   const targets = [{ key: 'home', label: 'Homepage', url: origin + '/' }];
-  if (info.products[0]) targets.push({ key: 'product', label: 'Product page', url: `${origin}/products/${info.products[0].handle}` });
+  if (info.products[0]) targets.push({ key: 'product', label: 'Product page', url: productUrl(origin, info.products[0]) });
 
   // Speed, measured on a phone-sized viewport (most Shopify traffic is mobile).
   for (const t of on('speed') ? targets : []) {

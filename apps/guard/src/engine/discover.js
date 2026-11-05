@@ -71,6 +71,8 @@ export async function discover(request, origin, { testProduct = null } = {}) {
     origin,
     platform: await detectPlatform(request, origin),
     isShopify: false,
+    isWoo: false,
+    woo: null,
     products: [],
     catalog: [],
     sampleSize: 0,
@@ -126,6 +128,8 @@ export async function discover(request, origin, { testProduct = null } = {}) {
     }
   }
   if (out.isShopify) out.platform = { key: 'shopify', label: 'Shopify' };
+  // WooCommerce: everything the journey needs comes from the store's public Store API (no keys, no plugin).
+  if (!out.isShopify && (out.platform.key === 'woocommerce' || out.platform.key === 'custom')) await discoverWoo(request, origin, out, { testProduct });
   // A merchant-chosen test product goes first (fetched directly if it wasn't in the first page of products).
   if (out.isShopify && testProduct) {
     const idx = out.products.findIndex((p) => p.handle === testProduct);
@@ -147,6 +151,88 @@ export async function discover(request, origin, { testProduct = null } = {}) {
     }
   }
   return out;
+}
+
+/**
+ * WooCommerce Store API (public, read-only for products; the same cart session as the storefront).
+ * Pretty links serve it at /wp-json/…; stores on plain links only answer at /?rest_route=/….
+ */
+const WOO_BASES = ['/wp-json/wc/store/v1', '/?rest_route=/wc/store/v1'];
+
+export function wooUrl(origin, base, route, query = {}) {
+  const q = new URLSearchParams(query).toString();
+  const url = origin + base + route;
+  return q ? url + (url.includes('?') ? '&' : '?') + q : url;
+}
+
+/** Store API prices are strings in the currency's minor unit ("149900" with minor unit 2 is 1499.00). */
+export function wooPrice(prices) {
+  if (!prices || prices.price == null || prices.price === '') return null;
+  const unit = Number(prices.currency_minor_unit ?? 2);
+  return (Number(prices.price) / 10 ** unit).toFixed(unit);
+}
+
+function wooPick(products, testProduct) {
+  const ok = products.filter((p) => p.is_in_stock !== false && p.is_purchasable !== false && p.permalink);
+  // Simple products first: their Add to cart works without choosing options, so a failure is the store's, not ours.
+  const simple = ok.filter((p) => p.type === 'simple' || (!p.has_options && !(p.variations || []).length));
+  const rest = ok.filter((p) => !simple.includes(p));
+  let picks = [...simple, ...rest];
+  if (testProduct) {
+    const chosen = picks.find((p) => p.slug === testProduct);
+    if (chosen) picks = [chosen, ...picks.filter((p) => p !== chosen)];
+  }
+  return picks.slice(0, 3).map((p) => ({
+    id: p.id,
+    title: decodeEntities(p.name),
+    handle: p.slug,
+    url: p.permalink,
+    type: p.type || 'simple',
+    variants: (p.variations || []).length
+      ? p.variations.map((v) => ({ id: v.id, title: (v.attributes || []).map((a) => a.value).filter(Boolean).join(' / ') || 'Option', price: wooPrice(p.prices) }))
+      : [{ id: p.id, title: 'Default Title', price: wooPrice(p.prices) }],
+    allVariants: Math.max(1, (p.variations || []).length),
+  }));
+}
+
+function decodeEntities(s) {
+  return String(s || '').replace(/&amp;/g, '&').replace(/&#0?39;|&#8217;/g, '’').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#8211;/g, '–');
+}
+
+async function discoverWoo(request, origin, out, { testProduct } = {}) {
+  for (const base of WOO_BASES) {
+    let json = null;
+    try {
+      const res = await request.get(wooUrl(origin, base, '/products', { per_page: 50 }), { timeout: 20000, headers: { Accept: 'application/json' } });
+      if (!res.ok()) continue;
+      json = await res.json().catch(() => null);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(json) || (json.length && !json[0].prices)) continue;
+    out.isWoo = true;
+    out.platform = { key: 'woocommerce', label: 'WooCommerce' };
+    out.woo = { base };
+    out.sampleSize = json.length;
+    out.products = wooPick(json, testProduct);
+    out.catalog = json.filter((p) => p.is_in_stock !== false).slice(0, 50).map((p) => ({ title: decodeEntities(p.name), handle: p.slug, variants: Math.max(1, (p.variations || []).length) }));
+    if (testProduct && out.products[0]?.handle !== testProduct) out.notes.push(`Chosen test product "${testProduct}" was not found or is sold out; used another product.`);
+    try {
+      const r = await request.get(wooUrl(origin, base, '/products/categories'), { timeout: 15000, headers: { Accept: 'application/json' } });
+      const cats = r.ok() ? await r.json().catch(() => []) : [];
+      if (Array.isArray(cats))
+        out.collections = cats.filter((c) => c.permalink && (c.count === undefined || c.count > 0)).slice(0, 3).map((c) => ({ title: decodeEntities(c.name), handle: c.slug, url: c.permalink }));
+    } catch {
+      /* categories are optional */
+    }
+    return;
+  }
+  if (out.platform.key === 'woocommerce') out.notes.push('The WooCommerce Store API did not answer, so shopping tests could not run.');
+}
+
+/** A product's page: its own address on WooCommerce, /products/<handle> on Shopify. */
+export function productUrl(origin, p) {
+  return p.url || `${origin}/products/${p.handle}`;
 }
 
 /** Picks a realistic search word from a product title. */

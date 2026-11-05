@@ -56,6 +56,15 @@ export async function startMock({ breaks = '', extra = '', draftBreaks } = {}) {
   return { ...p, port, origin };
 }
 
+/** A mock WooCommerce store (WordPress pages + the public Store API). `breaks`: atc, checkout, search, storeapi, soldout. */
+export async function startWooMock({ breaks = '', extra = '' } = {}) {
+  const port = await freePort();
+  const p = launch('test/mock-woo.js', { MOCK_PORT: String(port), MOCK_BREAK: breaks, MOCK_EXTRA: extra });
+  const origin = `http://localhost:${port}`;
+  await waitFor(`${origin}/`);
+  return { ...p, port, origin };
+}
+
 /** Fake Shopify Admin API + Razorpay API, with a /control endpoint to change their answers. */
 export async function startFake() {
   const port = await freePort();
