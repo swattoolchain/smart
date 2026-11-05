@@ -147,6 +147,7 @@
     account: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/>',
     reports: '<path d="M7 3.5h7l4.5 4.5V20a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z"/><path d="M14 3.5V8h4.5"/><path d="M9.5 17v-3M12.5 17v-5M15.5 17v-2"/>',
     catalog: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><path d="M4 15h16M4 19h16"/>',
+    apps: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/><path d="M16.5 4v6M13.5 7h6M4 16.5h7"/>',
     founder: '<path d="M12 3.5 14.4 9l5.6.5-4.3 3.8 1.3 5.7L12 16l-5 3 1.3-5.7L4 9.5 9.6 9z"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     chevron: '<path d="m8 10 4 4 4-4"/>',
@@ -337,6 +338,7 @@
       ${item(`${base}/publish`, 'publish', 'Safe to publish', at('publish'))}
       ${item(`${base}/catalog`, 'catalog', 'Catalog', at('catalog'))}
       ${item(`${base}/visual`, 'visual', 'Visual changes', at('visual'))}
+      ${item(`${base}/apps`, 'apps', 'App health', at('apps'))}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
@@ -1103,6 +1105,59 @@
   };
 
   // Visual changes
+  // ---------- App health ----------
+  const kb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : b ? `${b} bytes` : '–');
+  STORE_PAGES.apps = async (ctx, s) => {
+    const d = await api(`/api/stores/${s.id}/apps`);
+    if (!ctx.alive()) return;
+    const intro = '<p class="lede-sm">Every app and outside service your store loads for shoppers: where it runs, what it costs on a phone, the errors it causes and when its code changes. Tharam is on the list too.</p>';
+    const PG = { home: 'Home', product: 'Product', cart: 'Cart', other: 'Other' };
+    const us = d.tharam;
+    const tharamRow = `<section class="panel app-us"><h2>Tharam's own footprint</h2>
+      <p>${us.scripts || us.sites.length ? `We found ${plural(us.scripts, 'Tharam script')} on your store${us.bytes ? ` (${kb(us.bytes)} on a phone)` : ''}. Tharam does not need any code on your storefront; you can remove it.` : '<b>No code on your store.</b> Tharam adds no scripts, no app blocks and no tracking to your storefront, so it costs your shoppers nothing in speed.'}
+      Our checks visit your store from outside, like a shopper: ${plural(us.visits7d, 'check')} in the last 7 days.</p></section>`;
+    if (!d.runId) {
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'App health')}${intro}<div class="panel empty"><h2>No apps recorded yet</h2><p>${s.config.disabled.includes('security.scripts') ? 'Script watch is switched off in the test suite, and App health is built from it.' : 'The next check records every app on your home, product and cart pages.'}</p>${s.config.disabled.includes('security.scripts') ? `<a class="btn" href="#/s/${s.id}/suite">Open test suite</a>` : runLink(s, 'Run validations')}</div>${tharamRow}</div>`;
+      return;
+    }
+    const STATUS = {
+      errors: ['critical', 'Causing errors'], missing: ['warning', 'Stopped loading'], changed: ['warning', 'Code changed'], new: ['running', 'New'], ok: ['healthy', 'Healthy'],
+    };
+    const KIND = { theme: 'Your store\'s own files', app: 'App', tracking: 'Ads and analytics', service: 'Outside service', shopify: 'Shopify', unknown: 'Outside site' };
+    const shortUrl = (u) => { try { const x = new URL(u); return x.host + (x.pathname.length > 48 ? '…' + x.pathname.slice(-47) : x.pathname); } catch { return u; } };
+    const row = (a) => {
+      const [cls, label] = STATUS[a.status] || STATUS.ok;
+      const what = [];
+      if (a.status === 'missing') what.push(`Loaded on the ${a.pages.map((p) => PG[p] || p).join(', ').toLowerCase()} page${a.pages.length > 1 ? 's' : ''} last check ${time(a.lastSeenAt)}, not this time. If you didn't remove it, its widget may be missing for shoppers.`);
+      for (const e of a.errors) what.push(`Error on the ${(PG[e.page] || e.page).toLowerCase()} page: “${esc(e.message)}”`);
+      if (a.changes.added.length) what.push(`New code: ${a.changes.added.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
+      if (a.changes.removed.length && a.status !== 'missing') what.push(`Code removed: ${a.changes.removed.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
+      if (a.status === 'new') what.push(`First seen ${time(a.firstSeenAt)}.`);
+      return `<tr class="app-row status-${a.status}" data-app="${esc(a.key)}">
+        <td><span class="cell-main">${esc(a.name)}</span><div class="cell-sub">${esc(KIND[a.kind] || '')}</div></td>
+        <td><span class="pill ${cls}">${label}</span></td>
+        <td>${a.pages.map((p) => PG[p] || p).join(', ') || '–'}</td>
+        <td class="num">${a.phone.bytes ? `${kb(a.phone.bytes)}<div class="cell-sub">about ${a.phone.slowS < 0.1 ? '<0.1' : a.phone.slowS} s on slow 4G</div>` : '–'}</td>
+        <td class="num">${a.errors.length || '–'}</td>
+        <td>${a.changes.lastChangedAt ? time(a.changes.lastChangedAt) : '<span class="muted">No change seen</span>'}</td>
+        <td class="cell-sub">${a.sites.length ? a.sites.map(esc).join(', ') : '–'}</td>
+      </tr>${what.length ? `<tr class="app-detail status-${a.status}"><td colspan="7">${what.map((w) => `<div>${w}</div>`).join('')}</td></tr>` : ''}`;
+    };
+    const trouble = d.apps.filter((a) => a.status === 'errors' || a.status === 'missing');
+    const t = d.totals;
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'App health')}${intro}
+      <p class="muted" style="margin:-6px 0 14px">From the check ${time(d.checkedAt)}${d.compared ? `, compared with the one before (${time(d.comparedAt)})` : ''}.${d.phone ? ` Phone cost measured ${time(d.phone.at)}.` : ' Phone cost appears after the next full check.'}</p>
+      ${trouble.length ? `<div class="notice"><p>${trouble.map((a) => `<b>${esc(a.name)}</b> ${a.status === 'errors' ? 'is causing script errors' : 'stopped loading'}`).join('; ')}. Details below.</p></div>` : '<div class="notice ok"><p>No app is causing errors, and every app from the last check still loads.</p></div>'}
+      <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+        <div class="figure"><b>${t.apps}</b><span>apps and outside services</span></div>
+        <div class="figure"><b>${kb(t.phoneBytes)}</b><span>they add to a page on a phone</span></div>
+        <div class="figure"><b style="color:${t.errors ? 'var(--fail)' : 'inherit'}">${t.errors}</b><span>script errors</span></div></div>
+      <section class="panel"><div class="table-wrap flat"><table class="data apps-table"><thead><tr><th>App or service</th><th>Status</th><th>Loads on</th><th class="num">Phone cost per page</th><th class="num">Errors</th><th>Last code change</th><th>Talks to</th></tr></thead>
+        <tbody>${d.apps.map(row).join('')}</tbody></table></div>
+        ${d.unattributedErrors ? `<p class="muted" style="margin:10px 4px 0">${plural(d.unattributedErrors, 'script error')} could not be traced to one app. See the latest report's checks.</p>` : ''}</section>
+      ${tharamRow}</div>`;
+  };
+
   STORE_PAGES.visual = async (ctx, s) => {
     const d = await api(`/api/stores/${s.id}/visual`);
     if (!ctx.alive()) return;
@@ -2485,7 +2540,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false;
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', apps: '/apps', alerts: '/alerts', suite: '/suite', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {

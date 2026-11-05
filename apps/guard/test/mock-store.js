@@ -2,7 +2,8 @@
  * A small fake Shopify storefront for testing Store Guard offline.
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
- * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below).
+ * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below);
+ * apps, appsbug, appsupdate (App Health: two outside apps, see APP_SCRIPTS below).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -22,9 +23,23 @@ const TRACK = EXTRA.includes('track');
 // Script watch: newscript adds an app script from another site to every page; badscript adds one from a
 // site on the known-bad list (tests add evil-cdn.localhost to BAD_DOMAINS). *.localhost always reaches this machine.
 // Both can also be switched on and off while the store runs: GET /__extra?newscript=1&badscript=0.
-const LIVE_EXTRA = new Set(['newscript', 'badscript'].filter((k) => EXTRA.includes(k)));
+// App Health (APP_SCRIPTS): apps adds a reviews app (reviews-app.localhost, every page, ~60 KB, draws a widget) and a
+// chat app (chat-app.localhost, home page only, pings chat-api.localhost); appsbug makes the reviews script throw;
+// appsupdate gives the reviews app a second script. Tests name them with APP_NAMES.
+const LIVE_KEYS = ['newscript', 'badscript', 'apps', 'appsbug', 'appsupdate'];
+const LIVE_EXTRA = new Set(LIVE_KEYS.filter((k) => EXTRA.split(',').includes(k)));
+let REQ_PATH = '/';
 const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127.0.0.1:${PORT}/apps/review-widget.js?v=${Date.now()}"></script>` : '')
-  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '');
+  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '')
+  + (LIVE_EXTRA.has('apps') ? `<script src="http://reviews-app.localhost:${PORT}/apps/reviews.js?shop=mock"></script>` : '')
+  + (LIVE_EXTRA.has('apps') && LIVE_EXTRA.has('appsupdate') ? `<script src="http://reviews-app.localhost:${PORT}/apps/reviews-photos.js"></script>` : '')
+  + (LIVE_EXTRA.has('apps') && REQ_PATH === '/' ? `<script src="http://chat-app.localhost:${PORT}/apps/chat.js" async></script>` : '');
+const APP_SCRIPTS = {
+  '/apps/reviews.js': () => `/* reviews app */${'/*' + 'x'.repeat(60000) + '*/'}document.addEventListener('DOMContentLoaded',function(){var d=document.createElement('div');d.className='reviews-widget';d.textContent='★★★★★ 128 reviews';(document.querySelector('main')||document.body).appendChild(d);});`
+    + (LIVE_EXTRA.has('appsbug') ? 'setTimeout(function reviewsInit(){ window.reviewsConfig.load(); }, 10);' : ''),
+  '/apps/reviews-photos.js': () => 'window.__reviewPhotos=true;',
+  '/apps/chat.js': () => `new Image().src='http://chat-api.localhost:${PORT}/ping.gif';window.__chat=true;`,
+};
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -96,13 +111,14 @@ const server = http.createServer(async (req, res) => {
   if (previewId) res.setHeader('Set-Cookie', `preview_theme=${previewId}; Path=/`);
   DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
   B = DRAFT ? DRAFT_BREAK : BREAK;
+  REQ_PATH = u.pathname;
   if (B.has('cloudflare')) {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
   }
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   if (p === '/__extra') {
-    for (const k of ['newscript', 'badscript']) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
+    for (const k of LIVE_KEYS) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
     return send(res, 200, { extra: [...LIVE_EXTRA] }, 'application/json');
   }
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
@@ -205,6 +221,8 @@ const server = http.createServer(async (req, res) => {
     if (DE && p.endsWith('refund-policy')) return send(res, 200, layout('Widerrufsbelehrung', '<h1>Widerrufsbelehrung</h1><p>Sie haben das Recht, binnen 14 Tagen ohne Angabe von Gründen diesen Vertrag zu widerrufen.</p>'));
     return send(res, 200, layout('Policy', '<h1>Policy</h1>'));
   }
+  if (APP_SCRIPTS[p] && /^(reviews|chat)-app\.localhost/.test(req.headers.host || '')) return send(res, 200, APP_SCRIPTS[p](), 'application/javascript');
+  if (p === '/ping.gif') { res.writeHead(204); return res.end(); }
   if (p === '/assets/theme.js' || p.startsWith('/apps/') || p.startsWith('/lib/')) return send(res, 200, 'window.__loaded=(window.__loaded||0)+1;', 'application/javascript');
   if (p.startsWith('/img/')) {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');

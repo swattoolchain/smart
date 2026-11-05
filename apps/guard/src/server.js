@@ -27,6 +27,7 @@ import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
+import { appHealth } from './app-health.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -727,6 +728,13 @@ app.get('/api/stores/:id/catalog', requireUser, (req, res) => {
   const data = catalogReport(s.id, req.query.run ? Number(req.query.run) : null, String(req.query.base || 'prev'));
   if (!data) return res.status(404).json({ error: 'No catalog snapshot yet. Run a full check first.' });
   res.json(data);
+});
+
+// App Health: every app and service seen on the storefront, from the latest checks.
+app.get('/api/stores/:id/apps', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(appHealth(s));
 });
 
 app.post('/api/stores/:id/explain-change', requireUser, async (req, res) => {
