@@ -122,7 +122,7 @@ export function validateCatalog(snap, prev = null) {
     }
     if (p.text.length < 25) add(p, 'content', 'minor', p.text.length ? 'Description is very short.' : 'Description is empty.');
     if (p.text.length > 40 && textCount.get(p.textHash) > 1) add(p, 'content', 'minor', `Same description as ${plural(textCount.get(p.textHash) - 1, 'other product')}. Duplicate text hurts SEO.`);
-    const rep = hay.match(/\b(\w{2,})\s+\1\b/i);
+    const rep = hay.match(/\b(\w{2,})[ \t]+\1\b/i); // same line only: a title ending in “Set” followed by a description starting “Set of…” is fine
     if (rep && !/^(\d+|ha|bye|no|so|very|knock)$/i.test(rep[1])) add(p, 'content', 'minor', `Repeated word: “${rep[0]}”.`, { snippet: rep[0] });
     if (/[a-z][.,;:!?][A-Za-z]{3,}/.test(p.text.replace(/https?:\S+|\b\d+\.\d+\b|\w+\.(com|in|co|net|org)\b/g, ''))) add(p, 'content', 'minor', 'Missing space after punctuation somewhere in the description.');
     if (p.title.length > 12 && p.title === p.title.toUpperCase() && /[A-Z]/.test(p.title)) add(p, 'content', 'minor', 'Title is in ALL CAPS, which reads as shouting in search results.');
