@@ -454,6 +454,7 @@
       ${item(`${base}/apps`, 'apps', 'App health', at('apps'))}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
       ${item(`${base}/security`, 'shield', 'Security checklist', at('security'))}
+      ${item(`${base}/incident`, 'lock', 'Incident mode', at('incident'), cur.incident ? '<span class="badge" aria-label="Incident mode is on">On</span>' : '')}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
       ${item(`${base}/monitoring`, 'monitoring', 'Monitoring', at('monitoring'))}
@@ -601,7 +602,7 @@
   function storeHead(s, title, { actions = '', crumb = '', meta = '' } = {}) {
     const name = esc(s.name || host(s.url));
     return `<div class="page-head"><div><div class="crumbs">${crumb || `<a href="#/s/${s.id}">${name}</a>`}</div><h1>${esc(title)}</h1>${meta ? `<div class="meta">${meta}</div>` : ''}</div>
-      ${actions ? `<div class="actions">${actions}</div>` : ''}</div>${s.blocked ? `<div class="notice warn-n"><p>${icon('lock', 16)} ${esc(s.blocked)} <a href="#/account/billing">See your plan</a></p></div>` : s.config?.saleUntil ? `<div class="notice sale-n"><p><b>Sale mode</b> is on until ${esc(dateOnly(s.config.saleUntil + ' 23:59:59'))}: shopping checks every 30 minutes and a full check every 6 hours${s.config.discountCodes?.length ? `, including your ${s.config.discountCodes.length === 1 ? 'discount code' : 'discount codes'}` : ''}.</p></div>` : ''}`;
+      ${actions ? `<div class="actions">${actions}</div>` : ''}</div>${s.incident && !location.hash.endsWith('/incident') ? `<div class="notice incident-n"><p><b>Incident mode is on</b> until ${esc(new Date(s.incident.endsAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}: checks every 10 minutes and alerts to your team. <a href="#/s/${s.id}/incident">Open incident mode</a></p></div>` : ''}${s.blocked ? `<div class="notice warn-n"><p>${icon('lock', 16)} ${esc(s.blocked)} <a href="#/account/billing">See your plan</a></p></div>` : s.config?.saleUntil ? `<div class="notice sale-n"><p><b>Sale mode</b> is on until ${esc(dateOnly(s.config.saleUntil + ' 23:59:59'))}: shopping checks every 30 minutes and a full check every 6 hours${s.config.discountCodes?.length ? `, including your ${s.config.discountCodes.length === 1 ? 'discount code' : 'discount codes'}` : ''}.</p></div>` : ''}`;
   }
   const openStore = (s) => `<a class="icon-btn bordered" href="${esc(s.url)}" target="_blank" rel="noopener" data-tip="Open store" aria-label="Open store in a new tab">${icon('external', 17)}</a>`;
   // Every way of starting a test goes through the Run validations page, so nothing starts without a preview.
@@ -1381,6 +1382,87 @@
       $('#sc-remind').addEventListener('change', async (e) => {
         try { d = await api(`/api/stores/${s.id}/security-checklist`, { method: 'PATCH', body: { reminders: e.target.checked } }); toast(d.reminders ? 'Reminders on' : 'Reminders off'); }
         catch (ex) { e.target.checked = !e.target.checked; toast(ex.message, 'error'); }
+      });
+    };
+    draw();
+  };
+
+  // ---------- Incident mode (S12) ----------
+  STORE_PAGES.incident = async (ctx, s) => {
+    let d = await api(`/api/stores/${s.id}/incident`);
+    if (!ctx.alive()) return;
+    const when = (ts) => new Date(/Z$|[+-]\d\d:\d\d$/.test(ts) ? ts : ts.replace(' ', 'T') + 'Z').toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const VLABEL = { healthy: 'Healthy', warning: 'Needs attention', critical: 'Broken', locked: 'Password', blocked: 'Blocked' };
+    const refreshStore = async () => { try { const r = await api(`/api/stores/${s.id}`); Object.assign(s, r.store || r); const i = S.stores.findIndex((x) => x.id === s.id); if (i >= 0) S.stores[i] = { ...S.stores[i], incident: s.incident }; sidebar({ store: s.id, module: 'incident' }); } catch {} };
+    const changesHtml = (c) => {
+      if (!c) return '';
+      if (!c.healthy) return `<p class="muted">${esc(c.note)}</p>`;
+      const rows = [
+        ...(c.broken || []).map((b) => `<li><span class="sev ${b.status === 'fail' ? 'fail' : 'warn'}">${b.status === 'fail' ? 'Broken' : 'Check'}</span><span><b>${esc(b.title)}</b><span class="d">${esc(b.detail)}</span>${b.fix ? `<span class="fix-inline">Fix: ${esc(b.fix)}</span>` : ''}</span></li>`),
+        ...(c.theme ? [`<li><span class="sev warn">Theme</span><span><b>Published theme changed</b><span class="d">${esc(c.theme.before)} → ${esc(c.theme.after)}</span></span></li>`] : []),
+        ...(c.products ? [`<li><span class="sev warn">Products</span><span><b>${c.products.totals.changed} edited, ${c.products.totals.added} added, ${c.products.totals.removed} removed${c.products.totals.price ? ` · ${c.products.totals.price} with new prices` : ''}</b>${c.products.examples.map((x) => `<span class="d">${esc(x.title)}: ${esc(x.detail)}</span>`).join('')}</span></li>`] : []),
+        ...(c.looks || []).map((l) => `<li><span class="sev warn">Looks</span><span><b>${esc(l.key.replace('-', ' on '))} looks different</b><span class="d">${l.ratio}% of the page changed</span></span></li>`),
+        ...(c.alerts || []).map((a) => `<li><span class="sev fail">Alert</span><span><b>${esc(a.title)}</b><span class="d">${esc(when(a.at))} · ${esc(a.message || '')}</span></span></li>`),
+      ];
+      return `<p class="sub">Compared with the last healthy check, ${esc(when(c.healthy.created_at))}${c.latest ? ` and the latest check, ${esc(when(c.latest.created_at))}` : ''}. <a href="#/s/${s.id}/reports/${c.latest?.id || ''}">Open the latest report</a></p>
+        ${rows.length ? `<ul class="sale-items inc-changes">${rows.join('')}</ul>` : `<p class="muted">${esc(c.note || 'Nothing we check has changed since then.')}</p>`}`;
+    };
+    const draw = () => {
+      const a = d.active;
+      if (!a) {
+        ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Incident mode')}
+          <p class="lede-sm">Think your store was hacked, or something just broke badly? Switch on incident mode. For ${d.hours} hours we check your store every ${d.everyMinutes} minutes, show what changed since the last healthy check, give you a recovery checklist, and send every alert to the people you add below.</p>
+          <section class="panel inc-start"><h2>Start incident mode</h2>
+            <form id="inc-form" class="stack">
+              <div class="field"><label for="inc-reason">What happened? <span class="muted">(optional, goes in the emails)</span></label><input id="inc-reason" maxlength="500" placeholder="For example: prices changed by themselves, strange app installed"></div>
+              <div class="field"><label for="inc-team">Who else should get alerts? <span class="muted">(up to 5 emails, optional)</span></label><input id="inc-team" placeholder="developer@example.com, partner@example.com"></div>
+              <div><button class="btn danger" id="inc-go" type="submit">${icon('lock', 16)}Start incident mode</button></div>
+            </form></section>
+          <section class="panel"><h2>What you'll be asked to do</h2><ol class="inc-steps-preview">${d.steps.map((x) => `<li><b>${esc(x.title)}.</b> <span class="muted">${esc(x.how)}</span></li>`).join('')}</ol></section>
+          ${d.history.length ? `<section class="panel"><h2>Earlier incidents</h2><ul class="list">${d.history.map((h) => `<li><span>${esc(when(h.startedAt))} → ${esc(when(h.endedAt))}${h.reason ? ` · ${esc(h.reason)}` : ''}</span><span class="muted">${h.stepsDone} of ${h.steps} steps · ${h.endedBy === 'time' ? 'ended after 48 hours' : 'ended by you'}</span></li>`).join('')}</ul></section>` : ''}</div>`;
+        $('#inc-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const done = busy($('#inc-go'), 'Starting');
+          try {
+            d = await api(`/api/stores/${s.id}/incident`, { method: 'POST', body: { reason: $('#inc-reason').value, contacts: $('#inc-team').value } });
+            toast('Incident mode is on. A full check has started.');
+            await refreshStore();
+            if (ctx.alive()) draw();
+          } catch (ex) { toast(ex.message, 'error'); done(); }
+        });
+        return;
+      }
+      const stepsDone = a.steps.filter((x) => x.doneAt).length;
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Incident mode', { actions: '<button class="btn secondary" id="inc-end">End incident mode</button>' })}
+        <section class="panel inc-on"><div class="inc-head"><span class="pill critical">On</span><h2>Incident mode is on${a.reason ? `: ${esc(a.reason)}` : ''}</h2></div>
+          <p class="muted">Started ${esc(when(a.startedAt))} · ends by itself ${esc(when(a.endsAt))}. Shopping checks every ${d.everyMinutes} minutes; every alert also goes to ${a.contacts.length ? esc(a.contacts.join(', ')) : 'nobody else yet'}.</p>
+          <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+            <div class="figure"><b>${a.runs.length}</b><span>checks since it started</span></div>
+            <div class="figure"><b>${a.runs[0] ? esc(VLABEL[a.runs[0].verdict] || (a.runs[0].status === 'done' ? '–' : 'Running')) : '–'}</b><span>latest check</span></div>
+            <div class="figure"><b>${stepsDone} of ${a.steps.length}</b><span>recovery steps done</span></div></div></section>
+        <section class="panel"><h2>What changed since the last healthy check</h2>${changesHtml(d.changes)}</section>
+        <section class="panel"><h2>Recovery checklist</h2><ul class="sc-list">${a.steps.map((x) => `<li class="sc-item ${x.doneAt ? 'sc-done' : ''}" data-step="${esc(x.key)}">
+            <label class="sc-tick"><input type="checkbox" ${x.doneAt ? 'checked' : ''} aria-label="${esc(x.title)}"><span class="sc-box">${icon('check', 15)}</span></label>
+            <div class="sc-body"><b>${esc(x.title)}</b><p class="sc-how">${esc(x.how)}</p>${x.doneAt ? `<p class="sc-meta muted">Done ${esc(when(x.doneAt))}</p>` : ''}</div></li>`).join('')}</ul></section>
+        <section class="panel"><h2>Team alerts</h2><p class="sub">These people get every alert until incident mode ends, plus the summary at the end.</p>
+          <form id="inc-team-form" class="inline-row"><input id="inc-team" value="${esc(a.contacts.join(', '))}" placeholder="developer@example.com" style="flex:1;min-width:0"><button class="btn secondary" type="submit">Save</button></form></section>
+        <section class="panel"><h2>Checks since it started</h2>${a.runs.length ? `<ul class="list">${a.runs.map((r) => `<li><a href="#/s/${s.id}/reports/${r.id}">${esc(when(r.created_at))} · ${r.kind === 'full' ? 'Full check' : 'Shopping check'}</a><span class="pill ${esc(r.verdict || '')}">${esc(r.status === 'done' ? VLABEL[r.verdict] || r.verdict : r.status)}</span></li>`).join('')}</ul>` : '<p class="muted">The first check starts in a moment.</p>'}</section></div>`;
+      $$('[data-step] input', ctx.main).forEach((box) => box.addEventListener('change', async () => {
+        const key = box.closest('[data-step]').dataset.step;
+        box.disabled = true;
+        try { d = await api(`/api/stores/${s.id}/incident`, { method: 'PATCH', body: { steps: { [key]: box.checked } } }); if (ctx.alive()) draw(); }
+        catch (ex) { box.checked = !box.checked; box.disabled = false; toast(ex.message, 'error'); }
+      }));
+      $('#inc-team-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { d = await api(`/api/stores/${s.id}/incident`, { method: 'PATCH', body: { contacts: $('#inc-team').value } }); toast('Saved'); if (ctx.alive()) draw(); }
+        catch (ex) { toast(ex.message, 'error'); }
+      });
+      $('#inc-end').addEventListener('click', async (e) => {
+        if (!confirm('End incident mode? Checks go back to the usual schedule and your team stops getting alerts.')) return;
+        const done = busy(e.currentTarget, 'Ending');
+        try { d = await api(`/api/stores/${s.id}/incident/end`, { method: 'POST' }); toast('Incident mode ended. A summary is on its way.'); await refreshStore(); if (ctx.alive()) draw(); }
+        catch (ex) { toast(ex.message, 'error'); done(); }
       });
     };
     draw();
@@ -2958,7 +3040,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false;
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', security: '/security', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', security: '/security', incident: '/incident', suite: '/suite', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {

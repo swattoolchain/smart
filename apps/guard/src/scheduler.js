@@ -9,6 +9,8 @@ import { dueEnvironmentChecks } from './release.js';
 import { entitlements, blockReason } from './license.js';
 import { sendLicenseNotices } from './billing-mail.js';
 import { syncAllBilling, shopForStore } from './shopify.js';
+import { activeIncident, expiredIncidents, endEmail as incidentEndEmail, INCIDENT_JOURNEY_MIN } from './incident.js';
+import { sendMail } from './alerts.js';
 import { sendChecklistReminders } from './security-checklist.js';
 import { checkCapacityAlerts, sqlTime } from './capacity.js';
 import { queueDepth } from './queue.js';
@@ -38,6 +40,8 @@ export function intervals(store) {
     journeyIntervalMin: Math.max(cfg.journeyIntervalMin || config.journeyIntervalMin, lim.journeyMinInterval),
     fullIntervalMin: Math.max(cfg.fullIntervalMin || config.fullScanIntervalMin, lim.fullMinInterval),
   };
+  // Incident mode (switched on by the owner): shopping checks every 10 minutes for up to 48 hours.
+  if (activeIncident(store.id)) return { ...iv, journeyIntervalMin: Math.min(iv.journeyIntervalMin, INCIDENT_JOURNEY_MIN), fullIntervalMin: saleActive(cfg) ? Math.min(iv.fullIntervalMin, 360) : iv.fullIntervalMin, incident: true };
   // Sale mode (switched on by Tharam for a sale period): shopping checks every 30 minutes and a full check
   // every 6 hours, whatever the plan, until the end of the chosen day.
   if (saleActive(cfg)) return { journeyIntervalMin: Math.min(iv.journeyIntervalMin, 30), fullIntervalMin: Math.min(iv.fullIntervalMin, 360), sale: true };
@@ -90,6 +94,8 @@ export function startScheduler() {
       if (dueFull) startRun({ storeId: s.id, origin: s.url, kind: 'full', password: storePassword(s), trigger: 'schedule', dueAt: dueTime(s.last_full_at, fullIntervalMin) });
       else if (dueJourney) startRun({ storeId: s.id, origin: s.url, kind: 'journeys', password: storePassword(s), trigger: 'schedule', dueAt: dueTime(s.last_run_at, interval) });
     }
+    // Incident mode ends by itself after 48 hours; owner and team get the summary.
+    try { for (const row of expiredIncidents()) { const st = q.storeById.get(row.store_id); if (st) sendMail(incidentEndEmail(st, row)).catch(() => {}); } } catch (e) { console.error('incident expiry failed', e); }
     try { dueEnvironmentChecks(); } catch (e) { console.error('environment checks failed', e); }
     sendLicenseNotices().catch((e) => console.error('licence notices failed', e));
     // Security checklist reminders: at most one a month per store, only while something is open.

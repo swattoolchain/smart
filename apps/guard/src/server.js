@@ -36,6 +36,7 @@ import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportN
 import { teamRoutes, membership, memberMay, teamAllowed } from './team.js';
 import * as themeClean from './theme-clean.js';
 import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
+import { incidentView, startIncident, updateIncident, endIncident, incidentBrief, startEmail as incidentStartEmail, endEmail as incidentEndEmail } from './incident.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -110,7 +111,7 @@ function ownStore(req, res) {
 }
 function publicStore(s) {
   const { storefront_password, config_json, webhook_json, ...rest } = s;
-  return { ...rest, has_password: !!storefront_password };
+  return { ...rest, has_password: !!storefront_password, incident: incidentBrief(s.id) };
 }
 // ADMIN_EMAIL may list several founders, separated by commas.
 const ADMINS = new Set(String(config.adminEmail || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean));
@@ -565,6 +566,43 @@ app.patch('/api/stores/:id/security-checklist', requireUser, (req, res) => {
   if (typeof req.body?.reminders !== 'boolean') return res.status(400).json({ error: 'Say whether reminders are on (true or false).' });
   setSecurityReminders(s.id, req.body.reminders);
   res.json(securityView(s));
+});
+
+// ---------- Incident mode (S12): one button when the store may be hacked or badly broken ----------
+const onShopify = (s) => !!shopify.shopForStore(s.id) || /shopify/i.test(s.platform || '');
+app.get('/api/stores/:id/incident', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(incidentView(s, { shopify: onShopify(s) }));
+});
+app.post('/api/stores/:id/incident', requireUser, async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const why = blockReason(entitlements(s.user_id), s.id);
+  if (why) return refuse(res, why);
+  if (!s.monitoring) return res.status(400).json({ error: 'Monitoring is paused for this store. Switch it on under Monitoring first, so we can check the store every few minutes.' });
+  let row;
+  try { row = startIncident(s, { reason: req.body?.reason, contacts: req.body?.contacts }); }
+  catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  // A full check right away, unless one is already running.
+  const runId = q.activeRunForStore.get(s.id) ? null : startRun({ storeId: s.id, origin: s.url, kind: 'full', password: s.storefront_password, trigger: 'incident' });
+  sendMail(incidentStartEmail(s, row, { shopify: onShopify(s) })).catch((e) => console.error('incident email failed', e));
+  res.json({ ...incidentView(s, { shopify: onShopify(s) }), runId });
+});
+app.patch('/api/stores/:id/incident', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  try { updateIncident(s.id, { contacts: req.body?.contacts, steps: req.body?.steps }); }
+  catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  res.json(incidentView(s, { shopify: onShopify(s) }));
+});
+app.post('/api/stores/:id/incident/end', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const row = endIncident(s.id, 'owner');
+  if (!row) return res.status(404).json({ error: 'Incident mode is not on for this store.' });
+  sendMail(incidentEndEmail(s, row)).catch((e) => console.error('incident email failed', e));
+  res.json(incidentView(s, { shopify: onShopify(s) }));
 });
 
 app.get('/api/stores/:id/scorecard', requireUser, (req, res) => {

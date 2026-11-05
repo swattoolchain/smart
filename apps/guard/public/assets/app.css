@@ -1080,3 +1080,30 @@ ui-nav-menu { display: none !important; }
 .sc-how { color: var(--muted); }
 .sc-meta { font-size: 12.5px !important; }
 @media (max-width: 640px) { .sc-summary { flex-direction: column; align-items: flex-start; } }
+
+/* Incident mode */
+.notice.incident-n { background: var(--fail-bg, #fdecec); color: #7f1d1d; border-color: #f5c2c2; }
+.inc-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.inc-head h2 { margin: 0; }
+.inc-on { border-color: #f5c2c2; }
+.inc-on .figures { margin: 14px 0 0; }
+.inc-steps-preview { margin: 0; padding-left: 20px; font-size: 13.5px; }
+.inc-steps-preview li { margin: 6px 0; }
+.inc-start .stack { display: grid; gap: 12px; max-width: 640px; }
+.inc-changes { list-style: none; padding: 0; margin: 0; }
+.inc-changes li { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.inc-changes li:first-child { border-top: 0; }
+.inc-changes .sev { flex: none; min-width: 64px; text-align: center; }
+.inc-changes .d, .inc-changes .fix-inline { display: block; color: var(--muted); }
+/* Checklist rows (shared look with the security checklist) */
+.sc-list { list-style: none; margin: 0; padding: 0; }
+.sc-item { display: flex; gap: 14px; padding: 14px 0; border-top: 1px solid var(--line); }
+.sc-item:first-child { border-top: 0; padding-top: 4px; }
+.sc-tick { position: relative; flex: none; margin: 2px 0 0; cursor: pointer; }
+.sc-tick input { position: absolute; opacity: 0; width: 24px; height: 24px; margin: 0; cursor: pointer; }
+.sc-box { width: 24px; height: 24px; border-radius: 7px; border: 1.5px solid #c7ccd6; display: grid; place-items: center; color: transparent; background: var(--white); }
+.sc-tick input:checked + .sc-box { background: var(--pass); border-color: var(--pass); color: #fff; }
+.sc-tick input:focus-visible + .sc-box { outline: 2px solid #2563eb; outline-offset: 2px; }
+.sc-body p { margin: 4px 0 0; font-size: 13.5px; }
+.sc-how { color: var(--muted); }
+.sc-meta { font-size: 12.5px !important; }
