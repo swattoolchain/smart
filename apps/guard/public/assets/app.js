@@ -1354,6 +1354,23 @@
     })() : '';
     const aiPanel = c.ai && c.ai.findings && c.ai.findings.length ? `<section class="panel" id="ai"><h2>AI visual review</h2><p class="sub">What an AI reviewer noticed looking at your pages like a shopper.</p>
       <ul class="ai-findings" style="margin-left:0">${c.ai.findings.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul></section>` : '';
+    const sw = res && res.scripts && res.scripts.pages && Object.keys(res.scripts.pages).length ? res.scripts : null;
+    const scriptsPanel = sw ? (() => {
+      const added = new Set((sw.added || []).map((x) => x.url));
+      const PG = [['home', 'Home page'], ['product', 'Product page'], ['cart', 'Cart page']].filter(([k]) => sw.pages[k]);
+      const short = (u) => { try { const x = new URL(u); const p = x.pathname.length > 56 ? '…' + x.pathname.slice(-55) : x.pathname; return { host: x.host, path: p }; } catch { return { host: '', path: u }; } };
+      return `<section class="panel" id="scripts"><h2>Scripts and apps</h2>
+        <p class="sub">Every script and outside site your home, product and cart pages used during this check. New scripts since the last check are marked; we alert you about each one once.</p>
+        ${(sw.bad || []).length ? `<div class="callout fail" role="alert"><b>Known malicious site:</b> ${sw.bad.map(esc).join(', ')}. Remove whatever loads it now.</div>` : ''}
+        <div class="figures" style="margin:0 0 14px"><div class="figure"><b>${sw.counts?.scripts ?? 0}</b><span>scripts</span></div><div class="figure"><b>${sw.counts?.sites ?? 0}</b><span>outside sites</span></div>
+          <div class="figure"><b>${sw.baseline ? '–' : (sw.added || []).length}</b><span>${sw.baseline ? 'first record' : 'new since last check'}</span></div></div>
+        ${PG.map(([k, l]) => { const pg = sw.pages[k]; return `<h3 class="col-h">${l} <span class="muted">· ${pg.scripts.length} script${pg.scripts.length === 1 ? '' : 's'} · ${pg.sites.length} outside site${pg.sites.length === 1 ? '' : 's'}</span></h3>
+          <div class="table-wrap flat"><table class="data scripts-table"><thead><tr><th>Script</th><th>From</th></tr></thead><tbody>
+          ${pg.scripts.map((x) => { const s2 = short(x.url); return `<tr class="${added.has(x.url) ? 'row-new' : ''}"><td><span class="cell-main">${esc(s2.path)}</span>${added.has(x.url) ? ' <span class="tag-new">New</span>' : ''}<div class="cell-sub">${esc(s2.host)}</div></td><td class="cell-sub">${x.outside ? 'Outside site' : 'Your store'}</td></tr>`; }).join('')}
+          </tbody></table></div>
+          ${pg.sites.length ? `<p class="muted" style="margin:8px 0 18px">Talks to: ${pg.sites.map(esc).join(', ')}</p>` : ''}`; }).join('')}
+      </section>`;
+    })() : '';
     const ta = c.timings.a.filter((x) => x.ms != null), tb = c.timings.b;
     const timings = ta.length ? `<section class="panel" id="timings"><h2>Journey step timings</h2><p class="sub">How long each step of the shopping journey took, including the page settling.</p>
       <div class="table-wrap flat"><table class="data"><thead><tr><th>Step</th><th class="num">This report</th>${b ? '<th class="num">Before</th>' : ''}</tr></thead><tbody>
@@ -1366,7 +1383,7 @@
       <div class="shots" id="dev-shots"></div></section>` : '';
     // One section at a time, as tabs: no long scrolling page. The chosen tab is remembered between reports.
     const issueCount = c.areas.reduce((n, a) => n + a.counts.fail + a.counts.warn, 0);
-    const tabsList = [['changes', 'What changed', changes], ['areas', 'All checks', areas, issueCount], ['catalog', 'Products', catPanel], ['ai', 'AI review', aiPanel], ['speed', 'Speed', metrics], ['devices', 'Screenshots', visual], ['timings', 'Step timings', timings]].filter((x) => x[2]);
+    const tabsList = [['changes', 'What changed', changes], ['areas', 'All checks', areas, issueCount], ['catalog', 'Products', catPanel], ['scripts', 'Scripts and apps', scriptsPanel, sw && !sw.baseline ? (sw.added || []).length : 0], ['ai', 'AI review', aiPanel], ['speed', 'Speed', metrics], ['devices', 'Screenshots', visual], ['timings', 'Step timings', timings]].filter((x) => x[2]);
     if (S.focus) S.reportTab = 'areas';
     const cur = tabsList.some((x) => x[0] === S.reportTab) ? S.reportTab : tabsList[0]?.[0];
     const tabBar = `<nav class="rtabs no-print" role="tablist" aria-label="Report sections">${tabsList.map(([id, l, , n]) => `<button type="button" role="tab" data-rtab="${id}" aria-selected="${id === cur}">${esc(l)}${n ? `<span class="tab-count">${n}</span>` : ''}</button>`).join('')}</nav>`;

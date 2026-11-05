@@ -996,3 +996,6 @@ ui-nav-menu { display: none !important; }
 .sale-items .d { display: block; color: var(--ink-soft); }
 .sale-items .fix-inline { display: block; }
 @media (max-width: 900px) { .sale-grid { grid-template-columns: 1fr; } .sale-verdict .figures { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
+/* Script watch: a known malicious site in the Scripts and apps tab */
+.callout.fail { border: 1px solid var(--fail); background: var(--fail-bg); padding: 12px 14px; border-radius: 10px; margin: 0 0 14px; }
+.scripts-table td .cell-main { word-break: break-all; }

@@ -13,6 +13,7 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { reviewScreens } from './visual-ai.js';
+import { watchScripts, scriptChecks } from './scripts.js';
 import { aiEnabled } from '../ai.js';
 
 async function isLocked(ctx, origin) {
@@ -30,7 +31,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -96,8 +97,12 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let metrics = {};
     let catalog = null;
     let ai = null;
+    let scripts = null;
     phase('journey');
+    const inventory = on('security.scripts') ? watchScripts(page, origin) : null;
     const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
+    // Script watch compares with the store's previous check; publish-check runs only record.
+    if (inventory && !fn.locked && !fn.blocked && !fn.down) scripts = scriptChecks({ rec, inventory: inventory(), previous: previousScripts, monitored: !!storeId && !preview && !captureOnly });
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
@@ -141,6 +146,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       metrics,
       catalog,
       ai,
+      scripts,
       testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,
       notes: info.notes,
       platform: info.platform,

@@ -14,6 +14,7 @@ const PROBLEM = {
   'nf.seo.noindex.home': 'your homepage is hidden from Google',
   'nf.seo.noindex.product': 'product pages are hidden from Google',
   'cat.pricing': 'some products have pricing mistakes (a zero price or a fake discount)',
+  'sec.scripts.bad': 'a script from a known malicious website is running on your store',
 };
 
 export function scoreChecks(checks) {
@@ -37,7 +38,7 @@ export function scoreChecks(checks) {
   }
   let score = weight ? Math.round(total / weight) : 0;
   // Legal rule checks are reported as "rules met" and never change the health score or verdict.
-  const scored = checks.filter((c) => !CATEGORIES[c.category]?.rules);
+  const scored = checks.filter((c) => !CATEGORIES[c.category]?.rules && !c.notice);
   const criticalFails = scored.filter((c) => c.status === 'fail' && c.severity === 'critical');
   const majorFails = scored.filter((c) => c.status === 'fail' && c.severity === 'major');
   const locked = checks.some((c) => c.id === 'fn.home' && c.status === 'warn');

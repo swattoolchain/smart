@@ -1,0 +1,15 @@
+{
+  "about": "Sites known for card skimming (Magecart) or in-browser crypto-mining. A script or request from any of these (or their subdomains) on a store is a critical alert. Keep entries well documented; add new ones with their kind and a public source.",
+  "domains": [
+    { "domain": "coinhive.com", "kind": "crypto-mining" },
+    { "domain": "coin-hive.com", "kind": "crypto-mining" },
+    { "domain": "authedmine.com", "kind": "crypto-mining" },
+    { "domain": "crypto-loot.com", "kind": "crypto-mining" },
+    { "domain": "cryptoloot.pro", "kind": "crypto-mining" },
+    { "domain": "jsecoin.com", "kind": "crypto-mining" },
+    { "domain": "coinimp.com", "kind": "crypto-mining" },
+    { "domain": "webmine.cz", "kind": "crypto-mining" },
+    { "domain": "baways.com", "kind": "card skimming (British Airways, 2018)" },
+    { "domain": "neweggstats.com", "kind": "card skimming (Newegg, 2018)" }
+  ]
+}

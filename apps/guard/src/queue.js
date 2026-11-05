@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { q } from './db.js';
+import { db, q } from './db.js';
 import { storePassword } from './secret.js';
 import { runScan } from './engine/index.js';
 import { handleAlerts } from './alerts.js';
@@ -102,7 +102,7 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     }
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
-      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
+      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly, previousScripts: storeId && !release ? previousScripts(storeId, runId) : null }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.
@@ -135,4 +135,13 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     clearTimeout(timer);
     if (release) { try { settleRelease(release); } catch (e) { console.error('release settle failed', release, e); } }
   }
+}
+
+/** The script inventory of the store's latest finished check before this one (any kind), or null. */
+function previousScripts(storeId, runId) {
+  const rows = db.prepare("SELECT result_json FROM runs WHERE store_id = ? AND id < ? AND status = 'done' AND (trigger IS NULL OR trigger != 'release') AND result_json LIKE '%\"scripts\":{%' ORDER BY id DESC LIMIT 5").all(storeId, runId);
+  for (const row of rows) {
+    try { const s = JSON.parse(row.result_json).scripts; if (s?.pages && Object.keys(s.pages).length) return { pages: s.pages }; } catch {}
+  }
+  return null;
 }

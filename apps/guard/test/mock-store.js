@@ -10,6 +10,7 @@
  * theme (a sale banner and warmer colours), restyle (a theme update that turns every page dark)
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
  * robots.txt (env MOCK_EXTRA): robots-shopify, robots-block, robots-slow. GET /__requests lists the requests received.
+ * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -32,6 +33,12 @@ const DE = EXTRA.includes('de');
 const TRACK = EXTRA.includes('track');
 const CLEAN = EXTRA.split(',').includes('clean');
 const US = EXTRA.split(',').includes('us'); // US privacy: the "Your privacy choices" link
+// Script watch: newscript adds an app script from another site to every page; badscript adds one from a
+// site on the known-bad list (tests add evil-cdn.localhost to BAD_DOMAINS). *.localhost always reaches this machine.
+// Both can also be switched on and off while the store runs: GET /__extra?newscript=1&badscript=0.
+const LIVE_EXTRA = new Set(['newscript', 'badscript'].filter((k) => EXTRA.includes(k)));
+const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127.0.0.1:${PORT}/apps/review-widget.js?v=${Date.now()}"></script>` : '')
+  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '');
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -81,7 +88,7 @@ ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta name="description" content="Handmade Indian clothing and decor from small artisans.">
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
 <script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
-${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}
+${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}<script src="/assets/theme.js?v=111"></script>${scriptTags()}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}${B.has('restyle') ? '<style>body{background:#111;color:#eee} a{color:#9cf}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
 <main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${US ? ' <a href="/pages/data-sharing-opt-out">Your privacy choices</a>' : ''}${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
 }
@@ -120,6 +127,10 @@ const server = http.createServer(async (req, res) => {
     if (EXTRA.includes('robots-block')) return send(res, 200, 'User-agent: *\nAllow: /\n\nUser-agent: TharamBot\nDisallow: /\n', 'text/plain');
     if (EXTRA.includes('robots-slow')) return send(res, 200, 'User-agent: *\nCrawl-delay: 2\n', 'text/plain');
     return send(res, 404, 'Not found', 'text/plain');
+  }
+  if (p === '/__extra') {
+    for (const k of ['newscript', 'badscript']) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
+    return send(res, 200, { extra: [...LIVE_EXTRA] }, 'application/json');
   }
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });
@@ -221,6 +232,7 @@ const server = http.createServer(async (req, res) => {
     if (DE && p.endsWith('refund-policy')) return send(res, 200, layout('Widerrufsbelehrung', '<h1>Widerrufsbelehrung</h1><p>Sie haben das Recht, binnen 14 Tagen ohne Angabe von Gründen diesen Vertrag zu widerrufen.</p>'));
     return send(res, 200, layout('Policy', '<h1>Policy</h1>'));
   }
+  if (p === '/assets/theme.js' || p.startsWith('/apps/') || p.startsWith('/lib/')) return send(res, 200, 'window.__loaded=(window.__loaded||0)+1;', 'application/javascript');
   if (p.startsWith('/img/')) {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
     return send(res, 200, png, 'image/png');
