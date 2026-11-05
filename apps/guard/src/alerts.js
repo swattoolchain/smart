@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { q } from './db.js';
 import { groupOf, effectiveDisabled } from './engine/catalog.js';
 import { entitlements, has } from './license.js';
+import { incidentContacts } from './incident.js';
 
 let transport = null;
 function mailer() {
@@ -92,7 +93,9 @@ export async function handleAlerts(storeId, runId, result) {
 <p><a href="${link}" style="background:#14532d;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Open report with screenshots</a></p>
 <p style="color:#78716c;font-size:13px">Tharam Store Guard · You get alerts only when something changes.</p></div>`;
 
-  const to = store.alert_email || q.userById.get(store.user_id)?.email;
+  // While incident mode is on, the team the owner named gets every alert too.
+  const owner = store.alert_email || q.userById.get(store.user_id)?.email;
+  const to = [...new Set([owner, ...incidentContacts(storeId)].filter(Boolean))].join(', ');
   const slack = has(entitlements(store.user_id), 'slack') ? store.slack_webhook : null;
   await Promise.allSettled([sendMail({ to, subject, text, html }), sendSlack(slack, `*${subject}*\n${text}`)]);
 }
