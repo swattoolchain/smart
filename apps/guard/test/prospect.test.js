@@ -16,7 +16,7 @@ const allRequests = async (m) => (await (await fetch(`${m.origin}/__requests`)).
 // Requests made since `mark` (the harness itself probes /products.json when a mock starts).
 const requests = async (m, mark = 0) => (await allRequests(m)).slice(mark);
 const markOf = async (m) => (await allRequests(m)).length;
-const pageish = (r) => !/^\/(img\/|favicon)/.test(r.path);
+const pageish = (r) => !/^\/(img\/|favicon|assets\/|apps\/|lib\/)/.test(r.path); // pages and form posts, not files a page loads
 
 describe('Prospect checker', () => {
   let browser;
