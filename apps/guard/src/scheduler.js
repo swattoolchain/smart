@@ -7,7 +7,8 @@ import { enqueue } from './queue.js';
 import { dueEnvironmentChecks } from './release.js';
 import { entitlements, blockReason } from './license.js';
 import { sendLicenseNotices } from './billing-mail.js';
-import { syncAllBilling } from './shopify.js';
+import { syncAllBilling, shopForStore } from './shopify.js';
+import { sendChecklistReminders } from './security-checklist.js';
 
 export function minutesSince(ts) {
   if (!ts) return Infinity;
@@ -76,6 +77,8 @@ export function startScheduler() {
     }
     try { dueEnvironmentChecks(); } catch (e) { console.error('environment checks failed', e); }
     sendLicenseNotices().catch((e) => console.error('licence notices failed', e));
+    // Security checklist reminders: at most one a month per store, only while something is open.
+    sendChecklistReminders({ isShopify: (st) => !!shopForStore(st.id) || /shopify/i.test(st.platform || '') }).catch((e) => console.error('checklist reminders failed', e));
     pruneOldRuns();
   });
   // Once a day: keep Shopify-billed plans in step with Shopify (managed pricing sends no webhooks).
