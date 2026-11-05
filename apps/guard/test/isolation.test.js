@@ -13,7 +13,7 @@ const STORE_ROUTES = [
   ['post', '/api/stores/:id/approve-visual'], ['post', '/api/stores/:id/discover'], ['post', '/api/stores/:id/environments'],
   ['post', '/api/stores/:id/explain-change'], ['post', '/api/stores/:id/releases'], ['post', '/api/stores/:id/run'],
   ['post', '/api/stores/:id/test-alert'],
-  ['get', '/api/stores/:id/theme/clean'], ['get', '/api/stores/:id/theme/clean/file?name=layout%2Ftheme.liquid'], ['get', '/api/stores/:id/theme/clean.zip'],
+  ['get', '/api/stores/:id/theme/clean'], ['post', '/api/stores/:id/theme/clean/confirm'], ['get', '/api/stores/:id/theme/clean/file?name=layout%2Ftheme.liquid'], ['get', '/api/stores/:id/theme/clean.zip'],
 ];
 
 describe('Data isolation', () => {

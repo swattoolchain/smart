@@ -1,5 +1,7 @@
-// Clean theme copies and guided restore (S4). After a full check where the theme code is unchanged and no security
-// check failed, Tharam keeps that theme as the clean copy. When a theme file changes, the report shows the clean
+// Clean theme copies and guided restore (S4). The first full check where the theme was read and no security check
+// failed keeps that theme as the clean copy. After that the clean copy never moves forward on its own: a changed or
+// newly published theme becomes the clean copy only when the owner confirms it (T90 review fix: T91); the three
+// copies before it are kept. When a theme file changes, the report shows the clean
 // version of each changed file to copy or download, the whole clean copy as a .zip, and the steps to paste it back
 // in Shopify's code editor. Read-only: nothing is written to the store.
 import { describe, it, before, after } from 'node:test';
@@ -118,6 +120,19 @@ describe('Clean theme copy and guided restore', () => {
     note(t, 'layout/theme.liquid shows as changed since the clean copy; snippets/x.liquid as a new file.');
   });
 
+  it('the next check does not take the changed theme as clean, even though it reports no new change', async (t) => {
+    const again = await full();
+    assert.equal(again.result.checks.find((c) => c.id === 'sec.theme').status, 'pass', 'same as at the last check');
+    const c = await clean();
+    assert.equal(c.runId, firstRun.id, 'the clean copy from before the change is kept');
+    assert.equal(c.confirmedBy, 'first check');
+    assert.equal(c.pending, true, 'the theme still differs from the clean copy');
+    assert.equal(c.files.find((f) => f.filename === 'layout/theme.liquid').state, 'changed');
+    const f = await owner.get(`/api/stores/${storeId}/theme/clean/file?name=${encodeURIComponent('layout/theme.liquid')}`);
+    assert.equal(f.json.content, LAYOUT, 'no skimmer in the clean copy');
+    note(t, `Check #${again.id} passed theme watch ("same as last check"), and the clean copy is still the one from check #${firstRun.id}.`);
+  });
+
   it('the clean version of a file is there to copy, and only for text files in the clean copy', async () => {
     const f = await owner.get(`/api/stores/${storeId}/theme/clean/file?name=${encodeURIComponent('layout/theme.liquid')}`);
     assert.equal(f.status, 200);
@@ -182,6 +197,85 @@ describe('Clean theme copy and guided restore', () => {
     assert.ok(c.files.every((f) => f.state === 'same'));
   });
 
+  it('a newly published theme never becomes the clean copy on its own', async (t) => {
+    await P.fake.control({ mainTheme: { id: 'gid://shopify/OnlineStoreTheme/333', name: 'Dawn copy' } });
+    const before = await clean();
+    const r1 = await full();
+    const r2 = await full();
+    assert.equal(r2.result.checks.find((c) => c.id === 'sec.theme').status, 'pass');
+    const c = await clean();
+    assert.equal(c.themeName, 'Dawn', 'still the clean copy of the old theme');
+    assert.equal(c.runId, before.runId);
+    assert.equal(c.sameTheme, false);
+    assert.equal(c.pending, true);
+    note(t, `After publishing “Dawn copy” (checks #${r1.id} and #${r2.id}), the clean copy is still “${c.themeName}” from check #${c.runId}.`);
+  });
+
+  it('the owner confirms a change they made: it becomes the clean copy, the old one is kept', async (t) => {
+    const before = await clean();
+    const r = await owner.post(`/api/stores/${storeId}/theme/clean/confirm`, {});
+    assert.equal(r.status, 200, r.text);
+    const c = r.json.clean;
+    assert.equal(c.themeName, 'Dawn copy');
+    assert.equal(c.confirmedBy, 'owner');
+    assert.equal(c.pending, false);
+    assert.ok(c.files.every((f) => f.state === 'same'));
+    assert.equal(c.older.length, 1);
+    assert.equal(c.older[0].themeName, before.themeName);
+    assert.equal(c.older[0].confirmedBy, 'first check');
+    const again = await owner.post(`/api/stores/${storeId}/theme/clean/confirm`, {});
+    assert.equal(again.status, 409);
+    assert.equal(again.json.error, 'Your theme already matches the clean copy. There is nothing to confirm.');
+    note(t, `Confirmed: clean copy is now “${c.themeName}” (by the owner); the previous copy “${c.older[0].themeName}” is kept.`);
+  });
+
+  it('keeps the three copies before the current one', async () => {
+    for (let i = 1; i <= 4; i++) {
+      await files({ ...BASE, 'sections/header.liquid': `<header>{{ shop.name }} v${i}</header>` });
+      await full();
+      const r = await owner.post(`/api/stores/${storeId}/theme/clean/confirm`, {});
+      assert.equal(r.status, 200, r.text);
+    }
+    const c = await clean();
+    assert.equal(c.older.length, 3);
+    const f = await owner.get(`/api/stores/${storeId}/theme/clean/file?name=${encodeURIComponent('sections/header.liquid')}`);
+    assert.equal(f.json.content, '<header>{{ shop.name }} v4</header>');
+  });
+
+  it('the report offers "I made this change" while the theme differs from the clean copy', async (t) => {
+    await files({ ...BASE, 'sections/header.liquid': '<header>{{ shop.name }} new menu</header>' });
+    await full();
+    const passRun = await full();
+    assert.equal(passRun.result.checks.find((c) => c.id === 'sec.theme').status, 'pass');
+    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, args: ['--no-sandbox'] });
+    try {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 1100 } });
+      const p = await ctx.newPage();
+      const errors = [];
+      p.on('pageerror', (e) => errors.push(e.message));
+      await p.route('https://cdn.shopify.com/**', (r) => r.fulfill({ contentType: 'text/javascript', body: `window.shopify={idToken:async()=>${JSON.stringify(shopifyToken(shop, { expIn: 600 }))}};` }));
+      await p.goto(`${P.base}/shopify?shop=${shop}#/s/${storeId}/reports/${passRun.id}`);
+      await p.waitForSelector('[data-rtab=areas]', { timeout: 20000 });
+      await p.evaluate(() => document.querySelectorAll('.tour,.tour-mask,.toast').forEach((x) => x.remove()));
+      await p.click('[data-rtab=areas]');
+      const box = p.locator('tr[data-check="sec.theme"] .theme-restore');
+      await box.locator('[data-clean-confirm]').waitFor({ state: 'attached', timeout: 10000 });
+      await p.evaluate(() => document.querySelectorAll('details').forEach((d) => (d.open = true))); // passed checks are folded away
+      const btn = box.locator('[data-clean-confirm]');
+      await btn.waitFor({ timeout: 10000 });
+      assert.match(await box.textContent(), /We never replace the clean copy on our own/);
+      await btn.click();
+      assert.match(await btn.textContent(), /Press again to confirm/);
+      assert.equal((await clean()).pending, true, 'one press does nothing yet');
+      await box.scrollIntoViewIfNeeded();
+      await screenshot(t, p, 'Theme differs from the clean copy: the owner can confirm the change');
+      await btn.click();
+      await box.locator('text=The theme as it is now is your clean copy').waitFor({ timeout: 10000 });
+      assert.equal((await clean()).pending, false);
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
+
   it('other accounts, and stores without a Shopify connection, get nothing', async () => {
     const other = await signup(P, 'clean-other@shop.test');
     const otherStore = await addStore(P, other, { runNow: false });
@@ -190,5 +284,8 @@ describe('Clean theme copy and guided restore', () => {
       assert.equal((await other.get(u)).status, 404, u);
       assert.equal((await P.session().get(u)).status, 401, u);
     }
+    const u = `/api/stores/${storeId}/theme/clean/confirm`;
+    assert.equal((await other.post(u, {})).status, 404);
+    assert.equal((await P.session().post(u, {})).status, 401);
   });
 });
