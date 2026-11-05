@@ -8,6 +8,8 @@
  * and a description, so the whole catalog is healthy). Without `clean` the diya is priced at zero, has no image
  * and reuses the kurta's SKU.
  * theme (a sale banner and warmer colours), restyle (a theme update that turns every page dark)
+ * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
+ * robots.txt (env MOCK_EXTRA): robots-shopify, robots-block, robots-slow. GET /__requests lists the requests received.
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -23,6 +25,7 @@ let B = BREAK; // the breakages for the request being handled
 let DRAFT = false;
 const carts = new Map();
 let PW_POSTS = 0; // how many times the password form was submitted
+const REQUESTS = [];
 
 const EXTRA = (process.env.MOCK_EXTRA || '');
 const DE = EXTRA.includes('de');
@@ -107,6 +110,17 @@ const server = http.createServer(async (req, res) => {
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
   }
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
+  // Every request the store received (method, path, user agent), for tests that limit how a visitor behaves.
+  if (p === '/__requests') return send(res, 200, { requests: REQUESTS }, 'application/json');
+  if (!p.startsWith('/__')) REQUESTS.push({ method: req.method, path: p + u.search, ua: req.headers['user-agent'] || '' });
+  // robots.txt: none by default. MOCK_EXTRA=robots-shopify serves Shopify's default rules (no cart or checkout
+  // for bots); robots-block asks Tharam's checker to stay away entirely; robots-slow sets a crawl delay.
+  if (p === '/robots.txt') {
+    if (EXTRA.includes('robots-shopify')) return send(res, 200, 'User-agent: *\nDisallow: /admin\nDisallow: /cart\nDisallow: /orders\nDisallow: /checkouts/\nDisallow: /checkout\nDisallow: /account\nDisallow: /search\nAllow: /products/*.js\n\nSitemap: http://localhost:' + PORT + '/sitemap.xml\n', 'text/plain');
+    if (EXTRA.includes('robots-block')) return send(res, 200, 'User-agent: *\nAllow: /\n\nUser-agent: TharamBot\nDisallow: /\n', 'text/plain');
+    if (EXTRA.includes('robots-slow')) return send(res, 200, 'User-agent: *\nCrawl-delay: 2\n', 'text/plain');
+    return send(res, 404, 'Not found', 'text/plain');
+  }
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });
     return res.end();
