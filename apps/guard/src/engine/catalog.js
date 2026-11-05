@@ -58,6 +58,12 @@ export const GROUPS = [
     checks: ['ai.copy'] },
   { key: 'visual', label: 'Visual changes', run: 'full', area: 'Regression',
     description: 'Screenshots of key pages on desktop and mobile compared with the look you approved.', checks: ['nf.visual'] },
+  { key: 'security.spam', label: 'Spam links', run: 'full', area: 'Security',
+    description: 'Hacked stores are used to sell links: casino, pill and replica-goods links slipped into the theme, often hidden from shoppers so only Google sees them. We read your homepage and a product page for spam words and hidden links to other websites.',
+    checks: ['sec.spam'] },
+  { key: 'security.deface', label: 'Defacement', run: 'full', area: 'Security',
+    description: 'Whether your homepage and product page still show your own store, not a hacker\'s message or a replaced page. Compared with the look you approved.',
+    checks: ['sec.deface'] },
   // Regional packs run only for stores that sell in those markets (Store settings → Where you sell).
   { key: 'law.de', label: 'Germany and Austria legal pack', run: 'full', area: 'Laws where you sell', markets: ['DE', 'AT'],
     description: 'Impressum, right of withdrawal, the new “Vertrag widerrufen” button, privacy policy and terms, VAT and shipping next to prices, unit prices (Grundpreis), and outdated EU dispute (ODR) links.',

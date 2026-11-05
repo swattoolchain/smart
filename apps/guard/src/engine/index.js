@@ -20,6 +20,7 @@ import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js'
 import { watchHijack, hijackChecks } from './hijack.js';
 import { watchForms, formChecks } from './forms.js';
 import { runShopper } from './agent.js';
+import { runSpam } from './spam.js';
 import { aiEnabled } from '../ai.js';
 import { VIDEO_FILE, VIDEO_DAYS } from '../video.js';
 
@@ -183,14 +184,16 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind === 'full' && storeId && traffic && !preview && on('sale.traffic')) {
         phase('traffic');
         trafficOut = await runTraffic({ rec, origin, info, password, storeId, dataDir: config.dataDir, shoppers: traffic.shoppers });
+        if (on('security.spam')) await runSpam({ page, rec, origin, info, password, shot });
       }
       if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
         phase('regional');
         await runRegional({ page, rec, origin, info, password, on, preview });
       }
-      if (kind === 'full' && storeId && on('visual')) {
+      if (kind === 'full' && storeId && (on('visual') || on('security.deface'))) {
         phase('visual');
-        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
+        // Defacement is judged against the approved look, so it rides on the visual screenshots.
+        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null, deface: on('security.deface') && !preview });
       }
       if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
         phase('catalog');
