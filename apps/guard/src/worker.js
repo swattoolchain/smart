@@ -7,6 +7,8 @@
  *
  * Every POLL_MS it checks in (that is also its heartbeat): it gets new checks and the ones to stop.
  * Settings: MAIN_URL, JOIN_TOKEN (first start), DATA_DIR, WORKER_POLL_MS (default 2000), CHROME_PATH.
+ * DATA_DIR/worker-health.json says when the main server last answered (the container health check reads it).
+ * A whole VM is set up with deploy/worker.sh.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,6 +19,7 @@ const MAIN = String(process.env.MAIN_URL || '').replace(/\/$/, '');
 const POLL_MS = Number(process.env.WORKER_POLL_MS || 2000);
 const TYPE = 'application/vnd.tharam.runner+json';
 const CREDS = path.join(config.dataDir, 'runner.json');
+const HEALTH = path.join(config.dataDir, 'worker-health.json');
 const LIMIT_MS = 6 * 60 * 1000;
 
 if (!/^https?:\/\//.test(MAIN)) { console.error('Set MAIN_URL to the main server, e.g. https://tharam.store'); process.exit(1); }
@@ -88,6 +91,8 @@ async function main() {
       const r = await call('POST', '/api/runner/check-in', { running: [...running.keys()], progress }, { auth });
       if (r.status === 401) { console.error('The main server no longer knows this runner. Delete runner.json and join again with a new token.'); process.exit(1); }
       if (r.status === 200) {
+        // For the container health check (deploy/docker-compose.worker.yml): the last time the main server answered.
+        try { fs.writeFileSync(HEALTH, JSON.stringify({ at: new Date().toISOString(), name: r.json.name, status: r.json.status, running: running.size })); } catch {}
         for (const id of r.json.cancel || []) running.get(id)?.controller.abort();
         for (const spec of stopping ? [] : r.json.jobs || []) runOne(auth, spec);
       }
