@@ -1075,15 +1075,43 @@
           <div class="controls"><div class="field"><label for="ae">Alert email</label><input id="ae" name="alertEmail" type="email" value="${esc(s.alert_email || '')}" autocomplete="email"></div></div></div>
         <div class="form-section"><div><h3>Slack</h3><p class="explain">Post alerts to a Slack channel. In Slack, open Apps, add <b>Incoming Webhooks</b>, choose a channel, and paste the webhook URL here.</p></div>
           <div class="controls"><div class="field"><label for="sl">Slack webhook URL <span class="muted" style="font-weight:400">(optional)</span></label><input id="sl" name="slack" placeholder="https://hooks.slack.com/services/…" value="${esc(s.slack_webhook || '')}" ${can('slack') ? '' : 'disabled'}>${can('slack') ? '' : `<p class="hint">${icon('lock', 12)} Slack alerts are in the ${esc(plansFor('slack'))} plans. <a href="#/account/billing">See plans</a></p>`}</div></div></div>
-        <div class="form-section"><div><h3>Test your setup</h3><p class="explain">Sends a sample alert to the saved email and Slack channel.</p></div>
+        <div class="form-section"><div><h3>Webhook</h3><p class="explain">Send alerts to Zapier, Make, Microsoft Teams, Discord or your own system. We post once when something breaks and once when it's fixed, and try again for 30 minutes if your side is down. Every request is signed with the secret below.</p></div>
+          <div class="controls">
+            <div class="field"><label for="wh">Webhook address <span class="muted" style="font-weight:400">(optional)</span></label><input id="wh" name="webhookUrl" placeholder="https://hooks.zapier.com/hooks/catch/…" value="${esc(s.webhook?.url || '')}" ${can('slack') ? '' : 'disabled'}>${can('slack') ? '' : `<p class="hint">${icon('lock', 12)} Webhook alerts come with Slack alerts in the ${esc(plansFor('slack'))} plans. <a href="#/account/billing">See plans</a></p>`}</div>
+            <div class="field"><label for="whf">Send as</label><select id="whf" name="webhookFormat" ${can('slack') ? '' : 'disabled'}>${[['auto', 'Pick from the address'], ['json', 'JSON (Zapier, Make, your own system)'], ['teams', 'Microsoft Teams'], ['discord', 'Discord']].map(([v, l]) => `<option value="${v}" ${(s.webhook?.format || 'auto') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>${s.webhook ? `<p class="hint">Sending as ${esc({ json: 'JSON', teams: 'a Microsoft Teams card', discord: 'a Discord message' }[s.webhook.sendsAs] || s.webhook.sendsAs)}.</p>` : ''}</div>
+            ${s.webhook ? `<div class="field"><label>Signing secret</label><div class="inline-row copy-row"><code id="wh-secret" style="user-select:all">${esc(s.webhook.secret)}</code><button type="button" class="btn small secondary" id="wh-new">New secret</button></div>
+              <p class="hint">Header <code>X-Tharam-Signature: t=…,v1=…</code> is the HMAC-SHA256 of <code>t.body</code> with this secret.</p></div>
+            <div id="wh-log"></div>` : ''}</div></div>
+        <div class="form-section"><div><h3>Test your setup</h3><p class="explain">Sends a sample alert to the saved email, Slack channel and webhook.</p></div>
           <div class="controls"><div class="inline-row"><button type="button" class="btn secondary" id="test-alert">Send test alert</button><span id="test-result" class="muted" role="status"></span></div></div></div>
       </form></div>`;
       const form = $('#ch');
       const mark = savebar($('.main-inner', ctx.main), {
-        onSave: async () => { const fd = new FormData(form); await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { alertEmail: fd.get('alertEmail'), slack: fd.get('slack') } }); await loadStores(); },
+        onSave: async () => {
+          const fd = new FormData(form);
+          const body = { alertEmail: fd.get('alertEmail'), slack: fd.get('slack') };
+          const url = String(fd.get('webhookUrl') ?? s.webhook?.url ?? '').trim(), format = fd.get('webhookFormat') || 'auto';
+          if (url !== (s.webhook?.url || '') || (url && format !== (s.webhook?.format || 'auto'))) body.webhook = url ? { url, format } : null;
+          await api(`/api/stores/${s.id}`, { method: 'PATCH', body });
+          await loadStores();
+        },
         onDiscard: () => render(),
       });
       form.addEventListener('input', mark);
+      const loadHookLog = async () => {
+        const box = $('#wh-log');
+        if (!box) return;
+        const d = await api(`/api/stores/${s.id}/webhook-deliveries`).catch(() => null);
+        if (!d || !ctx.alive()) return;
+        const ST = { delivered: ['healthy', 'Delivered'], pending: ['warning', 'Trying again'], failed: ['critical', 'Not delivered'] };
+        const EV = { 'alert.failing': 'Something broke', 'alert.recovered': 'Fixed', test: 'Test' };
+        box.innerHTML = d.deliveries.length ? `<label>Latest deliveries</label><ul class="list" id="wh-deliveries">${d.deliveries.slice(0, 5).map((x) => { const [k, l] = ST[x.status] || ['', x.status]; return `<li><div class="row"><span class="pill ${k}">${l}</span><span><span class="t">${esc(EV[x.event] || x.event)}</span><span class="d">${x.attempts} attempt${x.attempts === 1 ? '' : 's'}${x.last_code ? ` · answered ${x.last_code}` : ''}${x.last_error && x.status !== 'delivered' ? ` · ${esc(x.last_error)}` : ''}</span></span><span class="r">${time(x.updated_at)}</span></div></li>`; }).join('')}</ul>` : '<p class="hint">Nothing sent yet. Send a test alert to try it.</p>';
+      };
+      if (s.webhook) loadHookLog();
+      if ($('#wh-new')) $('#wh-new').onclick = async () => {
+        if (!(await confirmDialog({ title: 'Make a new signing secret?', body: 'Requests are signed with the new secret from now on. Update it wherever you check signatures.', confirm: 'Make new secret' }))) return;
+        try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { webhookSecret: 'new' } }); await loadStores(); render(); toast('New secret made'); } catch (ex) { toast(ex.message, 'error'); }
+      };
       $('#test-alert').onclick = async (e) => {
         if (S.dirty) { toast('Save your changes first', 'error'); return; }
         const done = busy(e.target, 'Sending');
@@ -1092,6 +1120,8 @@
           const parts = [];
           parts.push(r.email ? `Email sent to ${s.alert_email}.` : r.emailConfigured ? 'Email could not be sent.' : 'Email sending is not set up on this server yet.');
           if (r.slack !== null) parts.push(r.slack ? 'Slack message sent.' : 'Slack rejected the message. Check the webhook URL.');
+          if (r.webhook) parts.push(r.webhook.ok ? 'Webhook delivered.' : `Webhook not delivered: ${r.webhook.error}.`);
+          if (s.webhook) loadHookLog();
           $('#test-result').textContent = parts.join(' ');
         } catch (ex) { toast(ex.message, 'error'); } finally { done(); }
       };
