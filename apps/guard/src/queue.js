@@ -10,6 +10,7 @@ import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
 import { themeWatch } from './theme-watch.js';
 import { check } from './engine/checks.js';
+import { scoreChecks, summarize } from './engine/score.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
 import { attributeFailures } from './attribution.js';
 import { aiEnabled } from './ai.js';
@@ -25,7 +26,7 @@ function planDisabled(store, cfg, picked) {
 
 const waiting = [];
 const running = new Map(); // runId -> { controller, job }  (checks on this server)
-const remote = new Map(); // runId -> { job, runnerId }      (checks handed to a worker, or being prepared for one)
+const remote = new Map(); // runId -> { job, runnerId, theme } (checks handed to a worker, or being prepared for one)
 let active = 0;
 let seq = 0;
 
@@ -177,26 +178,49 @@ async function prepare(job) {
       codes = [...codes, ...fromShopify.filter((c) => !seen.has(c.code.toUpperCase()))].slice(0, 5);
     } catch (e) { console.error('discount codes from Shopify', link.shop, e.message); }
   }
-  // Theme file fingerprints (Shopify stores, full checks): read through the Admin API on the main server (it holds the
-  // Shopify token), saved only once the run is. The record stays on the job; only its checks travel with the spec.
   const runDisabled = planDisabled(store, cfg, disabled);
-  job.theme = null;
-  if (link && kind === 'full' && !release && !preview && !runDisabled.includes('security.theme')) {
-    try {
-      job.theme = await Promise.race([themeWatch({ storeId, shop: link.shop }), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 90000))]);
-    } catch (e) {
-      console.error('theme files from Shopify', link.shop, e.message);
-      job.theme = { checks: [check('sec.theme', 'security', 'Theme code unchanged', 'skip', { severity: 'major', detail: 'We couldn’t read your theme files from Shopify this time. We’ll try again on the next full check.' }) ] };
-    }
-  }
   return {
     runId, origin: job.origin, kind, password, storeId,
     // A hand-picked selection overrides the store's suite for this run only.
     disabled: runDisabled,
-    extraChecks: job.theme?.checks || [],
     previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
     testProduct: cfg.testProduct || null, discountCodes: codes, preview: preview || null, captureOnly: !!captureOnly,
   };
+}
+
+const THEME_SKIPPED = 'We couldn’t read your theme files from Shopify this time. We’ll try again on the next full check.';
+const themeSkipped = () => ({ checks: [check('sec.theme', 'security', 'Theme code unchanged', 'skip', { severity: 'major', detail: THEME_SKIPPED })], commit: () => {} });
+
+/**
+ * Theme file fingerprints (Shopify stores, full checks). Read through the Admin API, so always on the main server:
+ * the Shopify token and the theme results never go to a worker. The record is saved only once the run is (settle).
+ * Never rejects: if Shopify can't be reached in time the check is skipped with a plain note and the record is kept,
+ * so the change is reported next time. Returns null when it doesn't apply.
+ */
+function readTheme(job, spec, limitMs = 90000) {
+  const { storeId, kind, release, preview } = job;
+  if (!storeId || kind !== 'full' || release || preview || (spec.disabled || []).includes('security.theme')) return null;
+  const link = shopForStore(storeId);
+  if (!link) return null;
+  let timer;
+  return Promise.race([
+    themeWatch({ storeId, shop: link.shop }),
+    new Promise((_, rej) => (timer = setTimeout(() => rej(new Error('timeout')), limitMs))),
+  ]).catch((e) => {
+    console.error('theme files from Shopify', link.shop, e.message);
+    return themeSkipped();
+  }).finally(() => clearTimeout(timer));
+}
+
+/**
+ * A check that ran on a worker: the theme checks (made here on the main server) join its result, and the score
+ * is worked out again the same way the engine does. A check that could not finish gets none, like on the main server.
+ */
+export function withExtraChecks(result, checks) {
+  if (!checks?.length || !result || result.error || !Array.isArray(result.checks)) return result;
+  const all = [...result.checks.filter((c) => !checks.some((x) => x.id === c.id)), ...checks];
+  const { score, verdict, categories } = scoreChecks(all);
+  return { ...result, checks: all, score, verdict, categories, summary: summarize(all, verdict) };
 }
 
 /** Saves a finished check and does what follows it: store status, the confirming re-check, alerts. */
@@ -244,8 +268,9 @@ async function execute(job) {
   const hardLimit = new Promise((_, rej) => (timer = setTimeout(() => { timedOut = true; controller.abort(); rej(new Error('The test took longer than 6 minutes, so we stopped it. Your store may be very slow right now.')); }, 6 * 60 * 1000)));
   try {
     const spec = await prepare(job);
+    job.theme = await readTheme(job, spec);
     const result = await Promise.race([
-      runScan({ ...spec, kind, signal: controller.signal, progress: live.get(runId) }),
+      runScan({ ...spec, extraChecks: job.theme?.checks || [], kind, signal: controller.signal, progress: live.get(runId) }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.
@@ -273,7 +298,7 @@ function previousScripts(storeId, runId) {
 
 // The lease keeps the job (without the password, which only the spec carries) so a finished check can still be
 // saved after a main server restart.
-const jobJson = (job) => JSON.stringify({ ...job, password: undefined });
+const jobJson = (job) => JSON.stringify({ ...job, password: undefined, theme: undefined });
 
 /** Reserves a slot on the worker, prepares the check and leaves it for the worker's next check-in. */
 function assignRemote(job, runner) {
@@ -282,6 +307,9 @@ function assignRemote(job, runner) {
     if (!remote.has(job.runId)) return; // cancelled meanwhile
     // A full check: which baselines and catalog snapshot the worker should fetch before it starts.
     if (spec.kind === 'full' && spec.storeId) spec.inputs = fullCheckInputs(spec.storeId, spec.runId);
+    // Theme files are read here, on the main server, while the worker runs; they join the result when it comes back.
+    const theme = readTheme(job, spec);
+    if (theme) remote.get(job.runId).theme = theme;
     const attempt = L.attempts.get(job.runId).n + 1;
     L.insert.run(job.runId, runner.id, attempt, JSON.stringify(spec), jobJson(job));
   }).catch((e) => {
@@ -327,6 +355,7 @@ export async function workerComplete(runner, runId, { result, error }) {
   const l = L.forRunner.get(Number(runId), runner.id);
   if (!l || l.state !== 'leased' || L.finish.run('done', l.id).changes !== 1) return false;
   const job = jobOf(l);
+  const reading = remote.get(l.run_id)?.theme;
   remote.delete(l.run_id);
   live.delete(l.run_id);
   try {
@@ -334,7 +363,10 @@ export async function workerComplete(runner, runId, { result, error }) {
       if (error === 'cancelled') q.cancelRun.run(l.run_id);
       else q.failRun.run(String(error).slice(0, 300), l.run_id);
     } else {
-      await settle(job, result);
+      // Theme fingerprints need the Shopify token, so they are made here. Usually already read while the worker
+      // ran; after a main server restart they are read now, with a shorter limit (the worker is waiting for the reply).
+      job.theme = await (reading || readTheme(job, JSON.parse(l.spec_json), 40000));
+      await settle(job, withExtraChecks(result, job.theme?.checks));
     }
   } finally {
     settleReleaseOf(job);
