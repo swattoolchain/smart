@@ -327,14 +327,16 @@
             <div class="menu">
               <button class="avatar" id="user-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">${esc(initials(S.me))}</button>
               <div class="pop right" id="user-pop" role="menu" hidden>
-                <div class="pop-head"><b>${esc(S.me.name || 'Your account')}</b><span>${esc(S.me.email)}</span></div>
-                <a href="#/account" role="menuitem">${icon('user', 16)}Account settings</a>
-                <a href="#/account/billing" role="menuitem">${icon('reports', 16)}Plan and billing</a>
+                <div class="pop-head"><b>${esc(S.member ? S.member.name || S.member.email : S.me.name || 'Your account')}</b><span>${esc(S.member ? S.member.email : S.me.email)}</span></div>
+                <div id="ws-list" class="ws-list" hidden></div>
+                ${S.member ? '' : `<a href="#/account" role="menuitem">${icon('user', 16)}Account settings</a>
+                <a href="#/account/billing" role="menuitem">${icon('reports', 16)}Plan and billing</a>${S.team ? `<a href="#/account/team" role="menuitem">${icon('user', 16)}Team</a>` : ''}`}
                 ${S.admin ? `<a href="#/admin" role="menuitem">${icon('founder', 16)}Founder console</a>` : ''}
                 <hr><button type="button" id="logout" role="menuitem">${icon('logout', 16)}Log out</button>
               </div>
             </div>
           </header>
+          ${S.member ? `<div class="member-banner" id="member-banner"><span>You're working in <b>${esc(S.me.name || S.me.email)}</b>'s workspace as ${S.member.role === 'admin' ? 'an admin' : 'a viewer'}${S.member.role === 'viewer' ? ': you can see everything but not change it' : ''}.</span><button type="button" class="btn small secondary" data-ws="">Back to my account</button></div>` : ''}
           <div id="plan-banner"></div>
           <main class="main" id="main" tabindex="-1"></main>
         </div>
@@ -342,6 +344,23 @@
     if (navMenu) document.body.prepend(navMenu);
     const userBtn = $('#user-btn'), userPop = $('#user-pop');
     userBtn.onclick = (e) => { e.stopPropagation(); const open = userPop.hidden; closePops(); userPop.hidden = !open; userBtn.setAttribute('aria-expanded', String(open)); };
+    document.body.classList.toggle('role-viewer', S.member?.role === 'viewer');
+    // Workspaces this person belongs to, in the account menu.
+    if (!EMB) api('/api/team/workspaces').then((w) => {
+      if (!w.workspaces.length) return;
+      const el = $('#ws-list');
+      if (!el) return;
+      const row = (id, label, sub, on) => `<button type="button" role="menuitem" class="ws-item ${on ? 'on' : ''}" data-ws="${id ?? ''}">${icon(on ? 'check' : 'user', 15)}<span><b>${esc(label)}</b><small>${esc(sub)}</small></span></button>`;
+      el.innerHTML = `<div class="ws-head">Workspaces</div>${row(null, 'My account', S.member ? S.member.email : S.me.email, !w.current)}${w.workspaces.map((x) => row(x.accountId, x.name || x.email, x.role === 'admin' ? 'Admin' : 'Viewer', w.current === x.accountId)).join('')}<hr>`;
+      el.hidden = false;
+    }).catch(() => {});
+    if (!S.wsBound) document.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-ws]');
+      if (!b) return;
+      try { await api('/api/team/switch', { method: 'POST', body: { accountId: b.dataset.ws ? Number(b.dataset.ws) : null } }); location.hash = '#/stores'; location.reload(); }
+      catch (ex) { toast(ex.message, 'error'); }
+    });
+    S.wsBound = true;
     $('#logout').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); S.me = null; location.hash = ''; authView('login'); };
     $('#menu-btn').onclick = () => { const open = !document.body.classList.contains('nav-open'); document.body.classList.toggle('nav-open', open); $('#menu-btn').setAttribute('aria-expanded', String(open)); };
     $('#scrim').onclick = () => document.body.classList.remove('nav-open');
@@ -427,7 +446,7 @@
     const h = hash.replace(/^#/, '').split('?')[0] || '/';
     let m;
     if ((m = /^\/s\/(\d+)(?:\/([a-z]+))?(?:\/([\w-]+))?(?:\/([\w-]+))?$/.exec(h))) return { store: Number(m[1]), module: m[2] || 'overview', a: m[3] || null, b: m[4] || null };
-    if ((m = /^\/account(?:\/(password|billing))?$/.exec(h))) return { page: 'account', a: m[1] || null };
+    if ((m = /^\/account(?:\/(password|billing|team))?$/.exec(h))) return { page: 'account', a: m[1] || null };
     if (h === '/stores') return { page: 'stores' };
     if (h === '/add') return { page: 'add' };
     if (h === '/guide') return { page: 'guide' };
@@ -2136,9 +2155,11 @@
   }
 
   PAGES.account = async (ctx) => {
-    const tab = ['password', 'billing'].includes(ctx.r.a) ? ctx.r.a : null;
-    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing']] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password']], tab);
+    const tab = ['password', 'billing', 'team'].includes(ctx.r.a) ? ctx.r.a : null;
+    if (S.member) { ctx.main.innerHTML = `<div class="main-inner"><div class="panel empty"><h2>Account settings belong to the account owner</h2><p>You're working in ${esc(S.me.name || S.me.email)}'s workspace. Switch back to your own account in the account menu to see your settings.</p></div></div>`; return; }
+    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing']] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password'], ...(S.team ? [['team', 'Team']] : [])], tab);
     if (tab === 'billing') return billingPage(ctx, head);
+    if (tab === 'team') return teamPage(ctx, head);
     if (tab === 'password') {
       ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="pwf"><div class="form-section"><div><h3>Change password</h3><p class="explain">Use at least 8 characters. You'll stay logged in on this device.</p></div>
         <div class="controls"><div class="field"><label for="cur">Current password</label><input id="cur" name="current" type="password" autocomplete="current-password" required></div>
@@ -2168,6 +2189,32 @@
     });
     form.addEventListener('input', mark);
   };
+
+  // Team: invite people to work on this account's stores (website accounts only).
+  async function teamPage(ctx, head) {
+    const d = await api('/api/team');
+    if (!ctx.alive()) return;
+    const ROLE = { admin: 'Admin', viewer: 'Viewer' };
+    const roleSel = (id, cur) => `<select data-role="${id}" aria-label="Role">${d.roles.map((r) => `<option value="${r}" ${r === cur ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select>`;
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <form class="settings-card" id="inv"><div class="form-section"><div><h3>Invite someone</h3><p class="explain"><b>Admins</b> add and change stores and run checks. <b>Viewers</b> see stores and reports and download exports. Only you see billing and the team. Up to ${d.limit} people.</p></div>
+        <div class="controls"><div class="inline-row"><div class="field" style="flex:1;margin:0"><label for="ie">Email</label><input id="ie" name="email" type="email" required placeholder="name@agency.com"></div>
+        <div class="field" style="width:140px;margin:0"><label for="ir">Role</label><select id="ir" name="role"><option value="viewer">Viewer</option><option value="admin">Admin</option></select></div></div>
+        <div><button class="btn" type="submit">Send invite</button></div><p class="error-msg" id="inv-err" role="alert"></p></div></div></form>
+      <section class="settings-card"><div class="form-section"><div><h3>Team</h3><p class="explain">People who can work on your stores. Removing someone ends their access straight away.</p></div>
+        <div class="controls">${d.members.length ? `<table class="data team-table"><thead><tr><th>Person</th><th>Role</th><th></th></tr></thead><tbody>${d.members.map((m) => `<tr><td><span class="cell-main">${esc(m.name || m.email)}</span><div class="cell-sub">${esc(m.email)}</div></td><td>${roleSel(m.id, m.role)}</td><td class="num"><button type="button" class="btn small ghost" data-remove="${m.id}">Remove</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No one yet. Invite your team above.</p>'}
+        ${d.invites.length ? `<h4 style="margin:18px 0 6px">Waiting to accept</h4><table class="data team-table"><tbody>${d.invites.map((i) => `<tr><td><span class="cell-main">${esc(i.email)}</span><div class="cell-sub">${ROLE[i.role]} · link expires ${esc(dateOnly(i.expires_at))}</div></td><td class="num"><button type="button" class="btn small ghost" data-revoke="${i.id}">Cancel invite</button></td></tr>`).join('')}</tbody></table>` : ''}</div></div></section></div>`;
+    $('#inv').onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target));
+      const done = busy(e.target.querySelector('button[type=submit]'), 'Sending');
+      try { await api('/api/team/invites', { method: 'POST', body: fd }); toast(`Invite sent to ${fd.email}`); render({ silent: true }); }
+      catch (ex) { $('#inv-err').textContent = ex.message; done(); }
+    };
+    $$('[data-role]', ctx.main).forEach((sel) => (sel.onchange = async () => { try { await api(`/api/team/members/${sel.dataset.role}`, { method: 'PATCH', body: { role: sel.value } }); toast('Role changed'); } catch (ex) { toast(ex.message, 'error'); } }));
+    $$('[data-remove]', ctx.main).forEach((b) => (b.onclick = async () => { if (!confirm('Remove this person from your team? They lose access straight away.')) return; await api(`/api/team/members/${b.dataset.remove}`, { method: 'DELETE' }).catch((ex) => toast(ex.message, 'error')); render({ silent: true }); }));
+    $$('[data-revoke]', ctx.main).forEach((b) => (b.onclick = async () => { await api(`/api/team/invites/${b.dataset.revoke}`, { method: 'DELETE' }).catch((ex) => toast(ex.message, 'error')); render({ silent: true }); }));
+  }
 
   const STATE = { trial: ['Free trial', 'running'], active: ['Active', 'healthy'], grace: ['Payment due', 'warning'], expired: ['Expired', 'critical'], suspended: ['Paused', 'critical'], cancelled: ['Ended', 'critical'] };
   async function billingPage(ctx, head) {
@@ -2838,8 +2885,20 @@
         if (r.confirmed) S.flash = 'Your email is confirmed. You can now sign in to Tharam in any browser.';
       } catch (ex) { return authView('link', ex.message); }
     }
-    try { const r = await api('/api/me'); S.me = r.user; S.admin = r.admin; }
-    catch { return authView(location.hash === '#signup' ? 'signup' : 'login'); }
+    // Team invite links (#/join/<token>): sign in or sign up with the invited email, then join.
+    const join = /^#\/join\/([\w-]{20,80})$/.exec(location.hash);
+    let r;
+    try { r = await api('/api/me'); }
+    catch { return authView(location.hash === '#signup' ? 'signup' : 'login', join ? 'You were invited to a Tharam workspace. Log in, or create an account, with the email the invite was sent to.' : ''); }
+    if (join) {
+      try {
+        const j = await api('/api/team/join', { method: 'POST', body: { token: join[1] } });
+        S.flash = `You joined ${j.workspace.name || j.workspace.email}'s workspace as ${j.workspace.role === 'admin' ? 'an admin' : 'a viewer'}.`;
+        r = await api('/api/me');
+      } catch (ex) { S.flash = ex.message; }
+      history.replaceState(null, '', '/app#/stores');
+    }
+    S.me = r.user; S.admin = r.admin; S.member = r.member || null; S.team = !!r.team;
     shell();
     if (location.hash === '#signup') location.replace('#/');
     render();

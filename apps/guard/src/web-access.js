@@ -149,6 +149,7 @@ export function webAccessRoutes(app, { requireUser, isEmail, admins }) {
     if (S.useLink.run(Date.now(), row.token_hash).changes !== 1) return res.status(400).json({ error: 'This sign-in link was already used.' });
     if (row.purpose === 'confirm') S.setLogin.run(row.email, u.id);
     req.session.uid = u.id;
+    delete req.session.acct;
     req.session.ep = u.session_epoch || 0;
     res.json({ ok: true, confirmed: row.purpose === 'confirm' });
   });
