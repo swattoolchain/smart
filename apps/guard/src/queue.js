@@ -8,6 +8,7 @@ import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
 import { themeWatch } from './theme-watch.js';
 import { check } from './engine/checks.js';
+import { scoreChecks, summarize } from './engine/score.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
 import { aiEnabled } from './ai.js';
 import { fullCheckInputs } from './runner-files.js';
@@ -22,7 +23,7 @@ function planDisabled(store, cfg, picked) {
 
 const waiting = [];
 const running = new Map(); // runId -> { controller, job }  (checks on this server)
-const remote = new Map(); // runId -> { job, runnerId }      (checks handed to a worker, or being prepared for one)
+const remote = new Map(); // runId -> { job, runnerId, theme } (checks handed to a worker, or being prepared for one)
 let active = 0;
 let seq = 0;
 
@@ -198,6 +199,17 @@ function readTheme(job, spec, limitMs = 90000) {
   }).finally(() => clearTimeout(timer));
 }
 
+/**
+ * A check that ran on a worker: the theme checks (made here on the main server) join its result, and the score
+ * is worked out again the same way the engine does. A check that could not finish gets none, like on the main server.
+ */
+export function withExtraChecks(result, checks) {
+  if (!checks?.length || !result || result.error || !Array.isArray(result.checks)) return result;
+  const all = [...result.checks.filter((c) => !checks.some((x) => x.id === c.id)), ...checks];
+  const { score, verdict, categories } = scoreChecks(all);
+  return { ...result, checks: all, score, verdict, categories, summary: summarize(all, verdict) };
+}
+
 /** Saves a finished check and does what follows it: store status, the confirming re-check, alerts. */
 async function settle(job, result, theme = null) {
   const { runId, origin, kind, password, storeId, confirmed, release } = job;
@@ -271,6 +283,9 @@ function assignRemote(job, runner) {
     if (!remote.has(job.runId)) return; // cancelled meanwhile
     // A full check: which baselines and catalog snapshot the worker should fetch before it starts.
     if (spec.kind === 'full' && spec.storeId) spec.inputs = fullCheckInputs(spec.storeId, spec.runId);
+    // Theme files are read here, on the main server, while the worker runs; they join the result when it comes back.
+    const theme = readTheme(job, spec);
+    if (theme) remote.get(job.runId).theme = theme;
     const attempt = L.attempts.get(job.runId).n + 1;
     L.insert.run(job.runId, runner.id, attempt, JSON.stringify(spec), jobJson(job));
   }).catch((e) => {
@@ -315,6 +330,7 @@ export async function workerComplete(runner, runId, { result, error }) {
   const l = L.forRunner.get(Number(runId), runner.id);
   if (!l || l.state !== 'leased' || L.finish.run('done', l.id).changes !== 1) return false;
   const job = jobOf(l);
+  const reading = remote.get(l.run_id)?.theme;
   remote.delete(l.run_id);
   live.delete(l.run_id);
   try {
@@ -322,7 +338,10 @@ export async function workerComplete(runner, runId, { result, error }) {
       if (error === 'cancelled') q.cancelRun.run(l.run_id);
       else q.failRun.run(String(error).slice(0, 300), l.run_id);
     } else {
-      await settle(job, result);
+      // Theme fingerprints need the Shopify token, so they are made here. Usually already read while the worker
+      // ran; after a main server restart they are read now, with a shorter limit (the worker is waiting for the reply).
+      const theme = await (reading || readTheme(job, JSON.parse(l.spec_json), 40000));
+      await settle(job, withExtraChecks(result, theme?.checks), theme);
     }
   } finally {
     settleReleaseOf(job);
