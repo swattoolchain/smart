@@ -19,6 +19,7 @@ import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js'
 import { watchHijack, hijackChecks } from './hijack.js';
 import { watchForms, formChecks } from './forms.js';
 import { aiEnabled } from '../ai.js';
+import { VIDEO_FILE, VIDEO_DAYS } from '../video.js';
 
 async function isLocked(ctx, origin) {
   try {
@@ -35,7 +36,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [] }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -68,15 +69,36 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
   if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort); }
   const page = await unlessStopped(ctx.newPage());
   const mobilePage = await unlessStopped(mctx.newPage());
+  // Video replay: the shopping journey runs in its own recorded browser window; the video is kept only if it failed.
+  let vctx = null;
+  let vpage = null;
+  let videoTmp = null;
+  if (video && storeId && !preview) {
+    try {
+      videoTmp = fs.mkdtempSync(path.join(config.dataDir, 'video-tmp-'));
+      vctx = await newContext({ recordVideo: { dir: videoTmp, size: { width: 1024, height: 674 } } });
+      vctx.setDefaultTimeout(20000);
+      vpage = await unlessStopped(vctx.newPage());
+    } catch (e) {
+      // Recording is a bonus: if it can't start (no video encoder), the checks run as usual.
+      console.error('video recording unavailable:', shortErr(e));
+      await vctx?.close().catch(() => {});
+      vctx = null; vpage = null;
+    }
+  }
+  const onAbortVideo = () => { vctx?.close().catch(() => {}); };
+  if (signal && vctx) signal.addEventListener('abort', onAbortVideo);
   let info;
   let theme = null;
+  let videoOut = null;
   try {
     // Hijack watch records from the first page visit (redirects can happen on any of them).
-    const hijack = on('security.hijack') ? await watchHijack({ contexts: [{ ctx, device: 'desktop' }, { ctx: mctx, device: 'phone' }], origin, shot }) : null;
+    const hijack = on('security.hijack') ? await watchHijack({ contexts: [{ ctx, device: 'desktop' }, { ctx: mctx, device: 'phone' }, ...(vctx ? [{ ctx: vctx, device: 'desktop' }] : [])], origin, shot }) : null;
     // Unlock password-protected storefronts first so discovery shares the unlocked session.
     if (password) {
       await gotoStore(page, origin + '/', { password }).catch(() => {});
       await gotoStore(mobilePage, origin + '/', { password }).catch(() => {});
+      if (vpage) await gotoStore(vpage, origin + '/', { password }).catch(() => {});
     }
     // Publish checks: open the draft theme in every context before anything else.
     if (preview) {
@@ -107,10 +129,14 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let ai = null;
     let scripts = null;
     phase('journey');
-    const inventory = on('security.scripts') ? watchScripts(page, origin) : null;
-    const forms = on('security.scripts') ? await watchForms(page, origin).catch((e) => { console.error('form watch failed', e.message); return null; }) : null;
-    const widgets = inventory ? await watchWidgets(page).catch(() => null) : null;
-    const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
+    // With video replay on, the journey runs in the recorded window; the script, form and widget watchers follow it.
+    const jpage = vpage || page;
+    const journeyStart = rec.checks.length;
+    let journeyCover = null;
+    const inventory = on('security.scripts') ? watchScripts(jpage, origin) : null;
+    const forms = on('security.scripts') ? await watchForms(jpage, origin).catch((e) => { console.error('form watch failed', e.message); return null; }) : null;
+    const widgets = inventory ? await watchWidgets(jpage).catch(() => null) : null;
+    const fn = await runFunctional({ page: jpage, rec, origin, info, password, shot, on });
     // Script watch compares with the store's previous check; publish-check runs only record.
     if (inventory && !fn.locked && !fn.blocked && !fn.down) {
       await inventory.settle();
@@ -131,6 +157,14 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     }
     // Scripts reading what shoppers type, on the product and cart pages (also on drafts: a skimmer in a draft theme matters).
     if (scripts && forms) scripts.forms = formChecks({ rec, found: forms() });
+    // The recording ends after the watchers have read the journey page; kept only if a journey check failed.
+    if (vpage) {
+      theme = theme || (await themeOf(vpage));
+      // Quick checks use no other browser window, so the report's cover comes from the journey window.
+      if (kind === 'journeys') journeyCover = await shot(vpage, 'cover');
+      videoOut = await keepVideo({ vctx, vpage, runDir, runId, failed: rec.checks.slice(journeyStart).filter((c) => c.status === 'fail' && c.category === 'functional') });
+      vctx = null;
+    }
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
@@ -177,7 +211,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     // A home screenshot gives every report a visual anchor.
     // Drop anything from a switched-off group (some sections share page visits).
     rec.checks = rec.checks.filter((c) => { const g = groupOf(c.id); return !g || on(g); });
-    const cover = await shot(mobilePage.url() === 'about:blank' ? page : mobilePage, 'cover');
+    const cover = journeyCover && mobilePage.url() === 'about:blank' && page.url() === 'about:blank' ? journeyCover : await shot(mobilePage.url() === 'about:blank' ? page : mobilePage, 'cover');
     const { score, verdict, categories } = scoreChecks(rec.checks);
     theme = theme || (await themeOf(page));
     return {
@@ -191,6 +225,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       metrics,
       catalog,
       variants,
+      video: videoOut,
       ai,
       scripts,
       testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,
@@ -211,8 +246,34 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     const { score, verdict, categories } = scoreChecks(rec.checks);
     return { origin, kind, theme, error: shortErr(e), checks: rec.checks, steps: rec.steps, score, verdict, categories, summary: 'The scan could not finish.' };
   } finally {
-    if (signal) signal.removeEventListener('abort', onAbort);
+    if (signal) { signal.removeEventListener('abort', onAbort); signal.removeEventListener('abort', onAbortVideo); }
+    await vctx?.close().catch(() => {});
+    if (videoTmp) fs.rmSync(videoTmp, { recursive: true, force: true });
     await ctx.close().catch(() => {});
     await mctx.close().catch(() => {});
+  }
+}
+
+/**
+ * Ends the recording and keeps the video only when a journey check failed: it goes next to the run's screenshots
+ * (owner-only, like them) and is linked from each failed journey check.
+ */
+async function keepVideo({ vctx, vpage, runDir, runId, failed }) {
+  const v = vpage.video();
+  try {
+    await vpage.close();
+    if (!failed.length || !v) return null;
+    const dest = path.join(runDir, VIDEO_FILE);
+    await v.saveAs(dest); // waits until the recording is written
+    if (!fs.existsSync(dest) || !fs.statSync(dest).size) { fs.rmSync(dest, { force: true }); return null; }
+    const url = `/shots/run-${runId}/${VIDEO_FILE}`;
+    const until = new Date(Date.now() + VIDEO_DAYS * 86400e3).toISOString();
+    for (const c of failed) c.evidence = { ...(c.evidence || {}), video: url, videoUntil: until };
+    return { url, until, checks: failed.map((c) => c.id) };
+  } catch (e) {
+    console.error('video replay not saved:', shortErr(e));
+    return null;
+  } finally {
+    await vctx.close().catch(() => {});
   }
 }

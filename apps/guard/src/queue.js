@@ -185,6 +185,8 @@ async function prepare(job) {
     disabled: runDisabled,
     previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
     testProduct: cfg.testProduct || null, discountCodes: codes, preview: preview || null, captureOnly: !!captureOnly,
+    // Video replay of a failed journey, when the store has it switched on (never for publish checks).
+    video: !!cfg.failureVideo && !release,
   };
 }
 
@@ -307,6 +309,8 @@ function assignRemote(job, runner) {
     if (!remote.has(job.runId)) return; // cancelled meanwhile
     // A full check: which baselines and catalog snapshot the worker should fetch before it starts.
     if (spec.kind === 'full' && spec.storeId) spec.inputs = fullCheckInputs(spec.storeId, spec.runId);
+    // Workers send back screenshots only, so a video replay is recorded on the main server only.
+    delete spec.video;
     // Theme files are read here, on the main server, while the worker runs; they join the result when it comes back.
     const theme = readTheme(job, spec);
     if (theme) remote.get(job.runId).theme = theme;

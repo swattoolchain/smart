@@ -1026,3 +1026,7 @@ ui-nav-menu { display: none !important; }
 #rjoin.inline-form .field { margin: 0; min-width: 120px; }
 #rjoin-token { white-space: pre-wrap; word-break: break-all; padding: 10px 12px; border-radius: 8px; background: var(--bg-soft, rgba(127,127,127,.08)); font-size: 13px; }
 #runners td.actions { white-space: nowrap; text-align: right; }
+/* Video replay of a failed shopping journey */
+.video-replay { margin-top: 8px; }
+.video-replay summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--ink, inherit); }
+.video-replay video { display: block; width: 100%; max-width: 640px; margin: 8px 0 4px; border-radius: 8px; background: #000; }
