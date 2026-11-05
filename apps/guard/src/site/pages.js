@@ -118,7 +118,7 @@ export function home() {
   ${faq(FAQ)}
   ${cta()}
   </main>`;
-  return layout({ scripts: demoScript, title: '', description: 'Tharam checks your online store every few hours like a real customer and tells you the moment customers can’t buy. Product and price checks, tests for design changes, and AI that looks at your pages like a shopper. Free during the beta.', path: '/', body, alternates: { en: '/', de: '/de', 'x-default': '/' } });
+  return layout({ scripts: demoScript, title: '', description: 'Tharam checks your online store every few hours like a real customer and tells you the moment customers can’t buy. Product and price checks, tests for design changes, and AI that looks at your pages like a shopper. Free during the beta.', path: '/', body, alternates: { en: '/', de: '/de', fr: '/fr', es: '/es', 'x-default': '/' } });
 }
 
 /* ---------- Why Tharam (the category page) ---------- */
@@ -307,7 +307,7 @@ export function legacy(publicDir, file, { title, path: p, noindex = false } = {}
 /* ---------- Deutsch ---------- */
 // A German landing page for shops selling in Germany and Austria. The rest of the site follows.
 export function deHome() {
-  const form = `<form class="check-form" id="check-form" novalidate><label for="de-url" class="sr-only">Adresse Ihres Shops</label>
+  const form = `<form class="check-form" id="check-form" novalidate data-empty="Geben Sie die Adresse Ihres Shops ein, z. B. ihrshop.de" data-starting="Wird gestartet…" data-failed="Die Prüfung konnte nicht starten. Bitte erneut versuchen."><label for="de-url" class="sr-only">Adresse Ihres Shops</label>
   <input id="de-url" name="url" type="text" inputmode="url" autocomplete="url" placeholder="ihrshop.de" required><button class="btn" type="submit">Shop kostenlos prüfen</button></form>
   <p class="error-msg" id="check-err" role="alert"></p>`;
   const feats = [
@@ -333,7 +333,7 @@ export function deHome() {
       <h1>Damit Kunden immer bei Ihnen kaufen können.</h1>
       <p class="lede">Ein kaputter Warenkorb-Button, ein falscher Preis, ein fehlendes Impressum: kleine Fehler, die still Umsatz kosten oder eine Abmahnung bringen. Tharam prüft Ihren Shop alle paar Stunden wie ein echter Kunde und meldet sich, sobald etwas nicht stimmt.</p>
       <div id="check">${form}</div>
-      <p class="fine">Kostenlos. Dauert etwa zwei Minuten. Keine Installation, kein Konto, keine Bestellungen. <a href="/" hreflang="en" lang="en">English</a></p></div>
+      <p class="fine">Kostenlos. Dauert etwa zwei Minuten. Keine Installation, kein Konto, keine Bestellungen. <span class="lang-links"><a href="/" hreflang="en" lang="en">English</a> · <a href="/fr" hreflang="fr" lang="fr">Français</a> · <a href="/es" hreflang="es" lang="es">Español</a></span></p></div>
     ${heroVisual}
   </div></section>
 
@@ -351,7 +351,7 @@ export function deHome() {
   <section class="cta-band"><div class="wrap"><div><h2>Wie steht Ihr Shop da? Kostenlos prüfen.</h2><p>Etwa zwei Minuten. Nichts installieren, kein Konto, keine Bestellungen.</p></div>
     <div class="cta-actions"><a class="btn light" href="#check">Shop kostenlos prüfen</a><a class="btn ghost-light" href="mailto:hello@tharam.store?subject=Tharam%20Deutschland">Kontakt aufnehmen</a></div></div></section>
   </main>`;
-  return layout({ lang: 'de', title: 'Shop-Prüfung für Deutschland und Österreich', description: 'Tharam prüft Ihren Online-Shop alle paar Stunden wie ein echter Kunde: Kaufprozess, Preise, Impressum, Widerrufsbutton, Cookie-Einwilligung und Barrierefreiheit.', path: '/de', body, alternates: { en: '/', de: '/de', 'x-default': '/' } });
+  return layout({ lang: 'de', title: 'Shop-Prüfung für Deutschland und Österreich', description: 'Tharam prüft Ihren Online-Shop alle paar Stunden wie ein echter Kunde: Kaufprozess, Preise, Impressum, Widerrufsbutton, Cookie-Einwilligung und Barrierefreiheit.', path: '/de', body, alternates: { en: '/', de: '/de', fr: '/fr', es: '/es', 'x-default': '/' } });
 }
 
 /* ---------- Sale readiness (Black Friday and festive sales) ---------- */
@@ -400,3 +400,114 @@ export function saleReady() {
   ${cta('Find out if your store is ready', 'Free check in about two minutes. Nothing to install, no orders placed.')}</main>`;
   return layout({ title: 'Black Friday sale readiness', description: 'Check your store is ready for Black Friday, Cyber Monday and festive sales: prices, sale designs, checkout, apps, speed and discount rules, before and during the sale.', path: '/sale-ready', body });
 }
+
+/* ---------- Français and Español ---------- */
+// Landing pages for shops selling in French- and Spanish-speaking markets, built like the German one.
+// They only describe checks Tharam runs today (no country legal pack yet for France or Spain).
+const LANG_ALTERNATES = { en: '/', de: '/de', fr: '/fr', es: '/es', 'x-default': '/' };
+const LOCAL = {
+  fr: {
+    path: '/fr',
+    title: 'Vérification de boutique en ligne',
+    description: 'Tharam vérifie votre boutique en ligne toutes les quelques heures comme un vrai client : panier, paiement, prix, consentement aux cookies, accessibilité et vitesse sur mobile.',
+    empty: 'Saisissez l’adresse de votre boutique, par exemple votreboutique.fr', starting: 'Démarrage…', failed: 'La vérification n’a pas pu démarrer. Réessayez.',
+    placeholder: 'votreboutique.fr', label: 'Adresse de votre boutique', button: 'Vérifier ma boutique gratuitement',
+    eyebrow: 'Vérification de boutique par IA pour les e-commerçants',
+    h1: 'Pour que vos clients puissent toujours acheter chez vous.',
+    lede: 'Un bouton « Ajouter au panier » qui ne répond plus, un prix à 0 €, un bandeau cookies absent : de petites erreurs qui coûtent des ventes sans bruit. Tharam vérifie votre boutique toutes les quelques heures comme un vrai client et vous prévient dès que quelque chose ne va pas.',
+    fine: 'Gratuit. Environ deux minutes. Rien à installer, pas de compte, aucune commande.',
+    checksEyebrow: 'Pour les boutiques qui vendent en France et en Europe',
+    checksH2: 'Ce que Tharam contrôle à chaque vérification complète',
+    checksIntro: 'Des contrôles automatiques avec des indications claires pour corriger dans Shopify. Ce n’est pas un conseil juridique : vous voyez exactement ce que nous avons trouvé et vous décidez.',
+    checks: [
+      ['Parcours d’achat', 'Page d’accueil, fiche produit, ajout au panier et ouverture du paiement, sur téléphone et sur ordinateur. Nous nous arrêtons avant de payer.'],
+      ['Consentement aux cookies', 'Le bandeau s’affiche à la première visite, et aucun suivi Meta, TikTok ou Google ne part avant l’accord du client.'],
+      ['Accessibilité', 'Achat au clavier, zoom autorisé, langue de la page, panier conforme WCAG 2.1 AA et déclaration d’accessibilité, comme le demande l’Acte européen sur l’accessibilité.'],
+      ['Prix et produits', 'Prix à 0 €, fausses remises, textes provisoires, photos manquantes et références en double.'],
+      ['Codes promo', 'Vos codes appliqués à un vrai panier : le prix baisse vraiment, du montant prévu.'],
+      ['Conditions de la boutique', 'Politique de confidentialité, de remboursement, conditions générales et livraison publiées.'],
+    ],
+    whatEyebrow: 'Ce que fait Tharam',
+    whatH2: 'Tout ce qu’une équipe attentive vérifierait, toutes les quelques heures',
+    feats: [
+      ['pulse', 'Peut-on acheter chez vous ?', 'Vérification jour et nuit', 'Toutes les quelques heures, Tharam fait ses achats chez vous comme un vrai client : chercher, choisir une taille, ajouter au panier, aller au paiement. Si quelque chose casse, vous le savez tout de suite.'],
+      ['publish', 'Ce changement est-il sûr ?', 'Publier en toute sécurité', 'Nouveau thème ou bannière de soldes ? Tharam teste la nouvelle version à côté de votre boutique en ligne et vous dit clairement : publier, vérifier d’abord, ou pas encore.'],
+      ['catalog', 'Vos produits sont-ils justes ?', 'Contrôle des produits et des prix', 'Chaque produit est vérifié : prix à 0 €, fausses remises, textes provisoires, photos manquantes et références en double.'],
+      ['speed', 'Rapide et visible ?', 'Vitesse, Google et mobile', 'Pages lentes sur téléphone, pages que Google ne voit pas et liens cassés : les petites choses qui coûtent des ventes.'],
+      ['sparkle', 'Que remarquerait un client ?', 'Une IA qui regarde comme un client', 'L’IA regarde vos pages et lit vos fiches produit comme le ferait un client.'],
+    ],
+    ctaH2: 'Où en est votre boutique ? Vérifiez gratuitement.',
+    ctaP: 'Environ deux minutes. Rien à installer, pas de compte, aucune commande.',
+    contact: 'Nous contacter', subject: 'Tharam%20France',
+  },
+  es: {
+    path: '/es',
+    title: 'Revisión de tiendas online',
+    description: 'Tharam revisa su tienda online cada pocas horas como un cliente real: carrito, pago, precios, consentimiento de cookies, accesibilidad y velocidad en el móvil.',
+    empty: 'Escriba la dirección de su tienda, por ejemplo sutienda.es', starting: 'Iniciando…', failed: 'No se pudo iniciar la revisión. Inténtelo de nuevo.',
+    placeholder: 'sutienda.es', label: 'Dirección de su tienda', button: 'Revisar mi tienda gratis',
+    eyebrow: 'Revisión de tiendas con IA para comercios online',
+    h1: 'Para que sus clientes siempre puedan comprarle.',
+    lede: 'Un botón «Añadir al carrito» que no funciona, un precio de 0 €, un aviso de cookies que no aparece: pequeños fallos que cuestan ventas sin que nadie lo note. Tharam revisa su tienda cada pocas horas como un cliente real y le avisa en cuanto algo falla.',
+    fine: 'Gratis. Unos dos minutos. Sin instalar nada, sin cuenta, sin pedidos.',
+    checksEyebrow: 'Para tiendas que venden en España y en Europa',
+    checksH2: 'Lo que Tharam comprueba en cada revisión completa',
+    checksIntro: 'Comprobaciones automáticas con indicaciones claras para corregirlo en Shopify. No es asesoramiento legal: usted ve exactamente lo que encontramos y decide.',
+    checks: [
+      ['Proceso de compra', 'Página de inicio, ficha de producto, añadir al carrito y abrir el pago, en el móvil y en el ordenador. Paramos antes de pagar.'],
+      ['Consentimiento de cookies', 'El aviso aparece en la primera visita, y no se activa ningún seguimiento de Meta, TikTok o Google antes de que el cliente acepte.'],
+      ['Accesibilidad', 'Comprar con el teclado, zoom permitido, idioma de la página, carrito conforme a WCAG 2.1 AA y declaración de accesibilidad, como pide la Ley Europea de Accesibilidad.'],
+      ['Precios y productos', 'Precios de 0 €, descuentos falsos, textos de relleno, fotos que faltan y referencias repetidas.'],
+      ['Códigos de descuento', 'Sus códigos aplicados a un carrito real: el precio baja de verdad, en la cantidad prevista.'],
+      ['Políticas de la tienda', 'Privacidad, devoluciones, condiciones y envíos publicados.'],
+    ],
+    whatEyebrow: 'Lo que hace Tharam',
+    whatH2: 'Todo lo que revisaría un equipo cuidadoso, cada pocas horas',
+    feats: [
+      ['pulse', '¿Se puede comprar en su tienda?', 'Revisión día y noche', 'Cada pocas horas, Tharam compra en su tienda como un cliente real: buscar, elegir una talla, añadir al carrito, ir al pago. Si algo falla, lo sabrá enseguida.'],
+      ['publish', '¿Es seguro este cambio?', 'Publicar con seguridad', '¿Tema nuevo o banner de rebajas? Tharam prueba la nueva versión junto a su tienda en vivo y le dice claramente: publicar, revisar antes o todavía no.'],
+      ['catalog', '¿Sus productos están bien?', 'Revisión de productos y precios', 'Se revisa cada producto: precios de 0 €, descuentos falsos, textos de relleno, fotos que faltan y referencias repetidas.'],
+      ['speed', '¿Rápida y visible?', 'Velocidad, Google y móvil', 'Páginas lentas en el móvil, páginas que Google no ve y enlaces rotos: las pequeñas cosas que cuestan ventas.'],
+      ['sparkle', '¿Qué notaría un cliente?', 'IA que mira como un cliente', 'La IA mira sus páginas y lee sus textos de producto como lo haría un cliente.'],
+    ],
+    ctaH2: '¿Cómo está su tienda? Revísela gratis.',
+    ctaP: 'Unos dos minutos. Sin instalar nada, sin cuenta, sin pedidos.',
+    contact: 'Contactar', subject: 'Tharam%20Espa%C3%B1a',
+  },
+};
+const OTHER_LANGS = [['/', 'en', 'English'], ['/de', 'de', 'Deutsch'], ['/fr', 'fr', 'Français'], ['/es', 'es', 'Español']];
+
+function localHome(lang) {
+  const L = LOCAL[lang];
+  const form = `<form class="check-form" id="check-form" novalidate data-empty="${esc(L.empty)}" data-starting="${esc(L.starting)}" data-failed="${esc(L.failed)}"><label for="${lang}-url" class="sr-only">${esc(L.label)}</label>
+  <input id="${lang}-url" name="url" type="text" inputmode="url" autocomplete="url" placeholder="${esc(L.placeholder)}" required><button class="btn" type="submit">${esc(L.button)}</button></form>
+  <p class="error-msg" id="check-err" role="alert"></p>`;
+  const others = OTHER_LANGS.filter(([, l]) => l !== lang).map(([href, l, name]) => `<a href="${href}" hreflang="${l}" lang="${l}">${name}</a>`).join(' · ');
+  const body = `<main lang="${lang}">
+  <section class="hero2"><div class="wrap">
+    <div class="h2-copy"><p class="eyebrow">${esc(L.eyebrow)}</p>
+      <h1>${esc(L.h1)}</h1>
+      <p class="lede">${esc(L.lede)}</p>
+      <div id="check">${form}</div>
+      <p class="fine">${esc(L.fine)} <span class="lang-links">${others}</span></p></div>
+    ${heroVisual}
+  </div></section>
+
+  <section class="band white"><div class="wrap">
+    <div class="sec-head"><p class="eyebrow">${esc(L.checksEyebrow)}</p><h2 class="h2">${esc(L.checksH2)}</h2>
+      <p class="body-l">${esc(L.checksIntro)}</p></div>
+    <div class="features">${L.checks.map(([t, d]) => `<div class="feature"><span class="ft-ic">${icon('check', 16)}</span><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div>
+  </div></section>
+
+  <section class="band"><div class="wrap">
+    <div class="sec-head"><p class="eyebrow">${esc(L.whatEyebrow)}</p><h2 class="h2">${esc(L.whatH2)}</h2></div>
+    <div class="pillars">${L.feats.map(([ic, k, t, d]) => `<div class="pillar"><span class="pl-ic">${icon(ic, 20)}</span><span class="pl-k">${esc(k)}</span><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div>
+  </div></section>
+
+  <section class="cta-band"><div class="wrap"><div><h2>${esc(L.ctaH2)}</h2><p>${esc(L.ctaP)}</p></div>
+    <div class="cta-actions"><a class="btn light" href="#check">${esc(L.button)}</a><a class="btn ghost-light" href="mailto:hello@tharam.store?subject=${L.subject}">${esc(L.contact)}</a></div></div></section>
+  </main>`;
+  return layout({ lang, title: L.title, description: L.description, path: L.path, body, alternates: LANG_ALTERNATES });
+}
+export const frHome = () => localHome('fr');
+export const esHome = () => localHome('es');
