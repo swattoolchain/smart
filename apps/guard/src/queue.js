@@ -171,10 +171,12 @@ async function prepare(job) {
   if (store && !job.ownPassword) password = storePassword(store) || password;
   // Shopify stores: the store's active discount codes are picked up automatically, alongside any typed in.
   let codes = cfg.discountCodes || [];
+  let shopifyCodes = null; // every active Shopify code, for the tampering check (null when they couldn't be read)
   const link = store ? shopForStore(store.id) : null;
   if (link && kind === 'full') {
     try {
       const fromShopify = await Promise.race([activeCodes(link.shop), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
+      shopifyCodes = fromShopify;
       const seen = new Set(codes.map((c) => c.code.toUpperCase()));
       codes = [...codes, ...fromShopify.filter((c) => !seen.has(c.code.toUpperCase()))].slice(0, 5);
     } catch (e) { console.error('discount codes from Shopify', link.shop, e.message); }
@@ -185,7 +187,7 @@ async function prepare(job) {
     // A hand-picked selection overrides the store's suite for this run only.
     disabled: runDisabled,
     previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
-    testProduct: cfg.testProduct || null, discountCodes: codes, preview: preview || null, captureOnly: !!captureOnly,
+    testProduct: cfg.testProduct || null, discountCodes: codes, shopifyCodes, preview: preview || null, captureOnly: !!captureOnly,
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).
     video: !!cfg.failureVideo && !release,
     // Sale traffic readiness: a few shoppers at once, when the store has it switched on (never for publish checks).

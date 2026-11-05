@@ -21,6 +21,7 @@
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
  * spam (hidden casino/pill links and text in the footer), cloaked (a link to another site moved off the page),
  * deface (homepage replaced with a hacker's message), replaced (homepage replaced with unrelated content)
+ * Catalog tampering (env MOCK_EXTRA): zero (a variant made free), cut (every price cut by 90%), swap (a product replaced by another)
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -122,6 +123,10 @@ let ADD_CALLS = 0; // cart/add.js requests, so tests can see the sweep is capped
 let INFLIGHT = 0;
 let LAST_ADD = 0;
 const CROWD_PAGE = (p) => (p.startsWith('/products/') && !p.endsWith('.js')) || p === '/cart' || p.startsWith('/checkouts/') || p === '/checkout';
+// Tampering: what an intruder with admin access might do to the catalog.
+if (EXTRA.includes('zero')) products[0].variants[1].price = '0.00';
+if (EXTRA.includes('cut')) for (const p of products) for (const v of p.variants) v.price = (Number(v.price) / 10).toFixed(2);
+if (EXTRA.includes('swap')) Object.assign(products[1], { title: 'Prepaid Gift Card Bundle', body_html: '<p>Instant delivery gift cards. Pay by crypto only.</p>', images: [{ src: '/img/g.png' }, { src: '/img/g2.png' }] });
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
 
 function cartFor(req, res) {

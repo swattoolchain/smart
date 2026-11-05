@@ -39,7 +39,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -195,11 +195,13 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         // Defacement is judged against the approved look, so it rides on the visual screenshots.
         await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null, deface: on('security.deface') && !preview });
       }
-      if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
+      if (kind === 'full' && storeId && info.isShopify && (on('catalog') || on('security.tamper'))) {
         phase('catalog');
-        catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on, keep: catalogKeep });
+        const cat = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on, keep: catalogKeep, shopifyCodes });
         // The full catalog checks supersede the quick sample check; reporting both double-counts one mistake.
-        if (catalog?.count) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
+        if (cat?.count && on('catalog')) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
+        // Tampering alone (catalog checks off or not in the plan) reads the catalog but doesn't show it.
+        catalog = on('catalog') ? cat : null;
       }
       if (kind === 'full' && storeId && info.isShopify && on('catalog.variants') && !preview) {
         phase('variants');
