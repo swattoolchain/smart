@@ -48,7 +48,10 @@ const testAllowed = (h) => (process.env.EGRESS_TEST_ALLOW || '').split(',').filt
 /** Resolves a host to one address that is safe to connect to, or throws with a plain reason. */
 export async function resolvePublic(host) {
   const h = String(host).replace(/^\[|\]$/g, '');
-  const addrs = net.isIP(h) ? [{ address: h }] : await dns.lookup(h, { all: true, verbatim: true });
+  // localhost and *.localhost always mean this machine (browsers resolve them so themselves; Node's resolver may not):
+  // they become 127.0.0.1 and are refused below like any other internal address.
+  const loopbackName = /^(?:.+\.)?localhost\.?$/i.test(h);
+  const addrs = net.isIP(h) ? [{ address: h }] : loopbackName ? [{ address: '127.0.0.1' }] : await dns.lookup(h, { all: true, verbatim: true });
   if (!addrs.length) throw new Error(`${host} has no address`);
   if (allowLocal() || testAllowed(h)) return addrs[0].address;
   if (addrs.some((x) => isPrivateIp(x.address))) {
