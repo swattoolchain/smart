@@ -59,6 +59,9 @@ export function summarize(checks, verdict) {
   const fails = checks.filter((c) => c.status === 'fail');
   const warns = checks.filter((c) => c.status === 'warn');
   if (verdict === 'critical') {
+    // A hijacked checkout comes first: it means shoppers' card details may be going to someone else.
+    const hijack = fails.find((f) => f.id === 'fn.checkout' && f.evidence?.offsite);
+    if (hijack) return `Urgent: checkout is sending shoppers to another website (${hijack.evidence.offsite}). Their card details may be stolen.`;
     const c = fails.find((f) => f.severity === 'critical');
     return `Customers may not be able to buy: ${PROBLEM[c.id] || c.title.toLowerCase()}.`;
   }

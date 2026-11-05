@@ -626,7 +626,8 @@
     if (res) {
       // 1. The answer to "can customers buy right now?"
       const tone = { healthy: 'ok', warning: 'warn', critical: 'bad', locked: 'warn', blocked: 'warn' }[res.verdict] || 'warn';
-      const headline = { healthy: 'Customers can buy', warning: 'Customers can buy', critical: 'Customers may not be able to buy', locked: 'We couldn’t get into your store', blocked: 'We were stopped at the door' }[res.verdict] || VERDICT[res.verdict];
+      const hijacked = res.checks.some((c) => c.id === 'fn.checkout' && c.status === 'fail' && c.evidence?.offsite);
+      const headline = hijacked ? 'Checkout is going to another website' : { healthy: 'Customers can buy', warning: 'Customers can buy', critical: 'Customers may not be able to buy', locked: 'We couldn’t get into your store', blocked: 'We were stopped at the door' }[res.verdict] || VERDICT[res.verdict];
       body += `<section class="panel status ${tone}" data-tour="hero">
         <span class="st-ic">${icon(tone === 'ok' ? 'check' : tone === 'bad' ? 'stop' : 'alerts', 24)}</span>
         <div class="st-main"><h2>${esc(headline)}</h2><p>${esc(res.summary)}</p>
