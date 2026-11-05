@@ -8,6 +8,7 @@ import { settleRelease } from './release.js';
 import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
 import { themeWatch } from './theme-watch.js';
+import { afterCheck } from './theme-clean.js';
 import { check } from './engine/checks.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
 
@@ -120,7 +121,13 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.
     if (controller.signal.aborted) throw new Error(timedOut ? 'timeout' : 'cancelled');
     q.finishRun.run(result.score, result.verdict, JSON.stringify(result), runId);
-    if (theme && (result.checks || []).some((c) => c.id === 'sec.theme' && c.status !== 'skip')) { try { theme.commit(); } catch (e) { console.error('theme record save failed', storeId, e); } }
+    if (theme && (result.checks || []).some((c) => c.id === 'sec.theme' && c.status !== 'skip')) {
+      try {
+        theme.commit();
+        // A check where the theme is unchanged and no security check failed: this theme becomes the clean copy.
+        afterCheck(storeId, runId, result);
+      } catch (e) { console.error('theme record save failed', storeId, e); }
+    }
     // Publish-check runs (live and draft) never change the store's status and never alert.
     if (storeId && !release) {
       q.updateStoreAfterRun.run(result.verdict, result.score, storeId);

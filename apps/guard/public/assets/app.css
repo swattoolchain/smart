@@ -991,3 +991,12 @@ ui-nav-menu { display: none !important; }
 .theme-diff pre .d-add { display: block; background: var(--pass-bg); }
 .theme-diff .d-del { color: var(--fail); }
 .theme-diff pre .d-del { display: block; background: var(--fail-bg); }
+
+/* Clean theme copy: guided restore under a theme change */
+.theme-restore { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-soft, rgba(127,127,127,.06)); }
+.theme-restore h4 { margin: 0 0 6px; font-size: 14px; }
+.theme-restore ol.steps { margin: 8px 0 10px 18px; padding: 0; font-size: 13px; }
+.theme-restore ol.steps li { margin: 3px 0; }
+.theme-restore ul.tr-files { list-style: none; margin: 0 0 8px; padding: 0; }
+.theme-restore ul.tr-files li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+.theme-restore .tr-act { display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; }
