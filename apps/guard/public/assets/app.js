@@ -612,10 +612,16 @@
     const runs = data.runs;
     const active = runs.find((r) => r.status === 'queued' || r.status === 'running');
     const lastDone = runs.find((r) => r.status === 'done');
-    const [latest, activeRun, sc] = await Promise.all([lastDone ? api('/api/runs/' + lastDone.id) : null, active ? api('/api/runs/' + active.id) : null, api(`/api/stores/${s.id}/scorecard`).catch(() => null), S.catalog ? null : api('/api/catalog').then((c) => (S.catalog = c))]);
+    // A quick journey check doesn't look at products, speed or SEO: keep showing what the last full check found there.
+    const lastFull = runs.find((r) => r.status === 'done' && r.kind === 'full' && r.trigger !== 'release');
+    const [latest, activeRun, sc, fullRun] = await Promise.all([lastDone ? api('/api/runs/' + lastDone.id) : null, active ? api('/api/runs/' + active.id) : null, api(`/api/stores/${s.id}/scorecard`).catch(() => null), lastFull && lastFull.id !== lastDone?.id ? api('/api/runs/' + lastFull.id).catch(() => null) : null, S.catalog ? null : api('/api/catalog').then((c) => (S.catalog = c))]);
     if (!ctx.alive()) return;
     const res = latest?.result;
-    const problems = problemsFrom(res);
+    const tested = new Set((res?.checks || []).map((c) => c.id));
+    const problems = problemsFrom({ checks: [
+      ...problemsFrom(res).map((c) => ({ ...c, runId: lastDone.id })),
+      ...problemsFrom(fullRun?.result).filter((c) => !tested.has(c.id)).map((c) => ({ ...c, runId: fullRun.id })),
+    ] });
     const fails = problems.filter((c) => c.status === 'fail'), warns = problems.filter((c) => c.status === 'warn');
     const base = `#/s/${s.id}`;
     let body = '';
@@ -644,13 +650,13 @@
       const b = sc?.buyability, t = sc?.timeToFix, rr = sc?.revenueAtRisk, cat = sc?.catalog, pb = sc?.publishing, rules = sc?.rules;
       const bars = b ? b.daily.slice(-14).map((d) => `<i class="${d.pct == null ? 'none' : toneOf(d.pct)}" style="--h:${d.pct ?? 8}" title="${esc(d.day)}: ${d.pct == null ? 'no checks' : d.pct + '%'}"></i>`).join('') : '';
       const speed = sc?.speed?.ms ?? null;
-      const sp = speed ? Math.round(speed / 100) / 10 : null;
+      const sp = speed ? Math.max(0.1, Math.round(speed / 100) / 10) : null;
       const tile = (href, label, value, sub, cls = '', extra = '') => `<a class="kpi ${cls}" href="${href}"><span class="k-l">${label}</span><b class="k-v">${value}</b><span class="k-s">${sub}</span>${extra}</a>`;
       const tiles = [
         tile(`${base}/reports`, 'Customers could buy · 7 days', `<span class="${toneOf(b?.week.pct)}">${pct(b?.week.pct)}</span>`, b ? `Today ${pct(b.day.pct)} · 30 days ${pct(b.month.pct)}` : 'After a few checks', 'lead', `<div class="sc-bars">${bars}</div>`),
         tile(`${base}/reports/${lastDone.id}`, 'Needs fixing', `<span class="${fails.length ? 'bad' : 'good'}">${fails.length}</span>`, warns.length ? `${plural(warns.length, 'more thing')} worth a look` : fails.length ? 'Nothing else to look at' : 'Nothing to fix'),
         tile(`${base}/settings`, 'Money at risk · 30 days', rr?.amount != null ? moneyTxt(rr.amount, rr.currency) : `${rr?.hours ?? 0} h`, rr?.amount != null ? `${rr.hours} h when customers couldn’t buy` : rr?.hours ? 'when customers couldn’t buy · add daily sales' : 'No lost buying time'),
-        tile(`${base}/reports/${sc?.speed?.run || lastDone.id}`, 'Homepage on phones', sp != null ? `<span class="${sp <= 2.5 ? 'good' : sp <= 4 ? 'mid' : 'bad'}">${sp} s</span>` : '–', sp == null ? 'After a full check' : sp <= 2.5 ? 'Fast' : sp <= 4 ? 'A little slow' : 'Slow: shoppers may leave'),
+        tile(`${base}/reports/${sc?.speed?.run || lastDone.id}`, 'Homepage on phones', sp != null ? `<span class="${sp <= 2.5 ? 'good' : sp <= 4 ? 'mid' : 'bad'}">${speed < 100 ? '&lt;0.1' : sp} s</span>` : '–', sp == null ? 'After a full check' : sp <= 2.5 ? 'Fast' : sp <= 4 ? 'A little slow' : 'Slow: shoppers may leave'),
         tile(`${base}/catalog`, 'Products', cat ? `<span class="${cat.withIssues ? 'mid' : 'good'}">${cat.withIssues}</span>` : '–', cat ? (cat.withIssues ? `of ${cat.products} need fixing` : `All ${cat.products} look right`) : 'After a full check'),
         tile(`${base}/alerts`, 'Time to fix', durTxt(t?.medianMinutes), t?.open ? `<span class="t-fail">${plural(t.open, 'problem')} still open</span>` : t?.incidents ? `typical, ${plural(t.incidents, 'incident')}` : 'No buying problems'),
         rules?.markets?.length ? tile(`${base}/reports/${rules.run?.id || lastDone.id}`, 'Laws where you sell', (() => { const ms = rules.markets.filter((m) => !m.pending); const met = ms.reduce((a, m) => a + m.met, 0), tot = ms.reduce((a, m) => a + m.total, 0); return tot ? `<span class="${met === tot ? 'good' : 'mid'}">${met}/${tot}</span>` : '–'; })(), rules.markets.map((m) => `${esc(m.label)}${m.pending ? '' : ` ${m.met}/${m.total}`}`).join(' · ') + ' rules met') : '',
@@ -660,7 +666,7 @@
     }
     if (res || runs.length) {
       // 3. What to do today, and the things owners do most.
-      const attention = problems.slice(0, 5).map((c) => `<li><a class="row" href="${base}/reports/${lastDone.id}" data-focus="${esc(c.id)}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fix' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.fix || c.detail)}</span></span>${icon('right', 15)}</a></li>`).join('');
+      const attention = problems.slice(0, 5).map((c) => `<li><a class="row" href="${base}/reports/${c.runId}" data-focus="${esc(c.id)}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fix' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.fix || c.detail)}</span></span>${icon('right', 15)}</a></li>`).join('');
       const action = (href, ic, t, d, attrs = '') => `<a class="qa" href="${href}" ${attrs}><span class="qa-ic">${icon(ic, 18)}</span><span><b>${t}</b><small>${d}</small></span>${icon('right', 15)}</a>`;
       const actions = [
         action(`${base}/run`, 'play', 'Run a check now', 'Shopping journey, full suite or pick checks'),
