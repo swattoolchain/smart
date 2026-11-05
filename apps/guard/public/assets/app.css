@@ -1010,3 +1010,5 @@ ui-nav-menu { display: none !important; }
 .theme-diff pre .d-add { display: block; background: var(--pass-bg); }
 .theme-diff .d-del { color: var(--fail); }
 .theme-diff pre .d-del { display: block; background: var(--fail-bg); }
+/* Change attribution: the script a failure started after, under a newly broken check */
+.started-after { display: block; margin-top: 6px; font-size: 13px; color: var(--fail); }

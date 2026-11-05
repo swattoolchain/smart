@@ -59,7 +59,7 @@ function checkDiff(a, b) {
     else if (BAD.has(sa)) change = 'still';
     else change = 'ok';
     const ref = x || y;
-    rows.push({ id, category: ref.category, title: ref.title, severity: ref.severity, a: sa, b: sb, change, detail: x?.detail || '', prevDetail: y?.detail || '', fix: x?.fix || '', evidence: x?.evidence || null });
+    rows.push({ id, category: ref.category, title: ref.title, severity: ref.severity, a: sa, b: sb, change, detail: x?.detail || '', prevDetail: y?.detail || '', fix: x?.fix || '', evidence: x?.evidence || null, changes: x?.changes || null });
   }
   return rows;
 }

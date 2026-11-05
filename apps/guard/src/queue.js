@@ -11,6 +11,7 @@ import { shopForStore, activeCodes } from './shopify.js';
 import { themeWatch } from './theme-watch.js';
 import { check } from './engine/checks.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
+import { attributeFailures } from './attribution.js';
 
 /** Groups switched off for this run: the store's choices, markets, and anything the owner's plan doesn't include. */
 function planDisabled(store, cfg, picked) {
@@ -120,6 +121,8 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.
     if (controller.signal.aborted) throw new Error(timedOut ? 'timeout' : 'cancelled');
+    // A check that just broke: name the scripts that appeared since it last worked (report, email, Slack).
+    if (storeId && !release) { try { attributeFailures(storeId, runId, result); } catch (e) { console.error('change attribution failed', runId, e.message); } }
     q.finishRun.run(result.score, result.verdict, JSON.stringify(result), runId);
     if (theme && (result.checks || []).some((c) => c.id === 'sec.theme' && c.status !== 'skip')) { try { theme.commit(); } catch (e) { console.error('theme record save failed', storeId, e); } }
     // Publish-check runs (live and draft) never change the store's status and never alert.
