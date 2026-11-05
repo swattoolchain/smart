@@ -133,6 +133,23 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_login_email ON users(login_emai
 // Storefront and staging passwords are kept encrypted; encrypt any still stored in plain text (in place).
 migratePasswords(db);
 
+// Ids are never reused. SQLite hands out max(id)+1, so deleting the newest store or run would give its id
+// (and its screenshot folder name) to the next one. The highest deleted id is remembered and new ids start above it.
+db.exec(`CREATE TABLE IF NOT EXISTS id_floor (tbl TEXT PRIMARY KEY, n INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS runs_id_floor AFTER DELETE ON runs BEGIN
+  INSERT INTO id_floor (tbl, n) VALUES ('runs', OLD.id) ON CONFLICT(tbl) DO UPDATE SET n = MAX(n, excluded.n);
+END;
+CREATE TRIGGER IF NOT EXISTS stores_id_floor AFTER DELETE ON stores BEGIN
+  INSERT INTO id_floor (tbl, n) VALUES ('stores', OLD.id) ON CONFLICT(tbl) DO UPDATE SET n = MAX(n, excluded.n);
+END;`);
+const nextId = (tbl) => `MAX((SELECT COALESCE(MAX(id), 0) FROM ${tbl}), (SELECT COALESCE(MAX(n), 0) FROM id_floor WHERE tbl = '${tbl}')) + 1`;
+
+/** A new run always starts with an empty screenshot folder, whatever was on disk before. */
+function freshRunDir(info) {
+  fs.rmSync(path.join(config.dataDir, 'shots', `run-${Number(info.lastInsertRowid)}`), { recursive: true, force: true });
+  return info;
+}
+
 export const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
   userById: db.prepare('SELECT id, email, name, plan, created_at, login_email FROM users WHERE id = ?'),
@@ -140,7 +157,7 @@ export const q = {
   storesByUser: db.prepare('SELECT * FROM stores WHERE user_id = ? ORDER BY id'),
   storeById: db.prepare('SELECT * FROM stores WHERE id = ?'),
   insertStore: db.prepare(
-    'INSERT INTO stores (user_id, url, name, storefront_password, alert_email, slack_webhook, config_json, platform, monitoring) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    `INSERT INTO stores (id, user_id, url, name, storefront_password, alert_email, slack_webhook, config_json, platform, monitoring) VALUES (${nextId('stores')}, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ),
   updateStoreConfig: db.prepare('UPDATE stores SET config_json = ? WHERE id = ?'),
   updateStorePlatform: db.prepare('UPDATE stores SET platform = ? WHERE id = ?'),
@@ -153,7 +170,7 @@ export const q = {
   ),
   deleteStore: db.prepare('DELETE FROM stores WHERE id = ? AND user_id = ?'),
   monitoredStores: db.prepare('SELECT * FROM stores WHERE monitoring = 1'),
-  insertRun: { run: (storeId, url, kind, ip, trigger) => db.prepare(`INSERT INTO runs (store_id, url, kind, requester_ip, trigger, seq) VALUES (?, ?, ?, ?, ?, CASE WHEN ? IS NULL OR ? = 'release' THEN NULL ELSE (SELECT COALESCE(MAX(seq), 0) + 1 FROM runs WHERE store_id = ? AND (trigger IS NULL OR trigger != 'release')) END)`).run(storeId, url, kind, ip, trigger, storeId, trigger, storeId) },
+  insertRun: { run: (storeId, url, kind, ip, trigger) => freshRunDir(db.prepare(`INSERT INTO runs (id, store_id, url, kind, requester_ip, trigger, seq) VALUES (${nextId('runs')}, ?, ?, ?, ?, ?, CASE WHEN ? IS NULL OR ? = 'release' THEN NULL ELSE (SELECT COALESCE(MAX(seq), 0) + 1 FROM runs WHERE store_id = ? AND (trigger IS NULL OR trigger != 'release')) END)`).run(storeId, url, kind, ip, trigger, storeId, trigger, storeId)) },
   runById: db.prepare('SELECT * FROM runs WHERE id = ?'),
   runsByStore: db.prepare(
     "SELECT id, seq, kind, status, score, verdict, trigger, error, created_at, finished_at, json_array_length(result_json, '$.checks') AS checks FROM runs WHERE store_id = ? AND (trigger IS NULL OR trigger != 'release') ORDER BY id DESC LIMIT ?"
