@@ -2,7 +2,7 @@
  * A small fake Shopify storefront for testing Store Guard offline.
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
- * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below).
+ * Script extras (env MOCK_EXTRA): newscript, badscript, atcscript (see LIVE_EXTRA below).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -22,9 +22,11 @@ const TRACK = EXTRA.includes('track');
 // Script watch: newscript adds an app script from another site to every page; badscript adds one from a
 // site on the known-bad list (tests add evil-cdn.localhost to BAD_DOMAINS). *.localhost always reaches this machine.
 // Both can also be switched on and off while the store runs: GET /__extra?newscript=1&badscript=0.
-const LIVE_EXTRA = new Set(['newscript', 'badscript'].filter((k) => EXTRA.includes(k)));
+// atcscript: an outside "upsell pop-up" script (127.0.0.1) that stops Add to cart from working.
+const LIVE_EXTRA = new Set(['newscript', 'badscript', 'atcscript'].filter((k) => EXTRA.includes(k)));
 const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127.0.0.1:${PORT}/apps/review-widget.js?v=${Date.now()}"></script>` : '')
-  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '');
+  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '')
+  + (LIVE_EXTRA.has('atcscript') ? `<script src="http://127.0.0.1:${PORT}/apps/upsell-popup.js"></script>` : '');
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -102,7 +104,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   if (p === '/__extra') {
-    for (const k of ['newscript', 'badscript']) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
+    for (const k of ['newscript', 'badscript', 'atcscript']) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
     return send(res, 200, { extra: [...LIVE_EXTRA] }, 'application/json');
   }
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
@@ -205,6 +207,8 @@ const server = http.createServer(async (req, res) => {
     if (DE && p.endsWith('refund-policy')) return send(res, 200, layout('Widerrufsbelehrung', '<h1>Widerrufsbelehrung</h1><p>Sie haben das Recht, binnen 14 Tagen ohne Angabe von Gründen diesen Vertrag zu widerrufen.</p>'));
     return send(res, 200, layout('Policy', '<h1>Policy</h1>'));
   }
+  // Swallows every form submit before the theme sees it, so Add to cart does nothing.
+  if (p === '/apps/upsell-popup.js') return send(res, 200, "document.addEventListener('submit',function(e){e.preventDefault();e.stopImmediatePropagation();},true);", 'application/javascript');
   if (p === '/assets/theme.js' || p.startsWith('/apps/') || p.startsWith('/lib/')) return send(res, 200, 'window.__loaded=(window.__loaded||0)+1;', 'application/javascript');
   if (p.startsWith('/img/')) {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
