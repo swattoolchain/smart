@@ -30,7 +30,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, signal, progress, preview = null, captureOnly = false }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -105,11 +105,13 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         phase('visual');
         await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
       }
-      if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
+      if (kind === 'full' && storeId && info.isShopify && (on('catalog') || on('security.tamper'))) {
         phase('catalog');
-        catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on });
+        const cat = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on, shopifyCodes });
         // The full catalog checks supersede the quick sample check; reporting both double-counts one mistake.
-        if (catalog?.count) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
+        if (cat?.count && on('catalog')) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
+        // Tampering alone (catalog checks off or not in the plan) reads the catalog but doesn't show it.
+        catalog = on('catalog') ? cat : null;
       }
       if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
         phase('ai');

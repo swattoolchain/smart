@@ -2,6 +2,7 @@
  * A small fake Shopify storefront for testing Store Guard offline.
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
+ * Catalog tampering (env MOCK_EXTRA): zero (a variant made free), cut (every price cut by 90%), swap (a product replaced by another)
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -26,6 +27,10 @@ const products = [
   { id: 2, title: 'Handwoven Silk Saree', handle: 'silk-saree', product_type: 'Saree', vendor: 'Tharam', tags: 'silk', body_html: EXTRA.includes('placeholder') ? '<p>Lorem ipsum dolor sit amet, TBD description here.</p>' : '<p>Traditional handwoven silk saree with zari border and intricate detailing.</p>', images: [{ src: '/img/s.png' }], variants: [{ id: 201, title: 'Default Title', sku: 'SAR-1', price: '8999.00', available: true }] },
   { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: '0.00', available: true }] },
 ];
+// Tampering: what an intruder with admin access might do to the catalog.
+if (EXTRA.includes('zero')) products[0].variants[1].price = '0.00';
+if (EXTRA.includes('cut')) for (const p of products) for (const v of p.variants) v.price = (Number(v.price) / 10).toFixed(2);
+if (EXTRA.includes('swap')) Object.assign(products[1], { title: 'Prepaid Gift Card Bundle', body_html: '<p>Instant delivery gift cards. Pay by crypto only.</p>', images: [{ src: '/img/g.png' }, { src: '/img/g2.png' }] });
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
 
 function cartFor(req, res) {

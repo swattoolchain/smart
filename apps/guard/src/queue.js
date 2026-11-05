@@ -91,17 +91,19 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     if (store && !ownPassword) password = store.storefront_password || password;
     // Shopify stores: the store's active discount codes are picked up automatically, alongside any typed in.
     let codes = cfg.discountCodes || [];
+    let shopifyCodes = null; // every active Shopify code, for the tampering check (null when they couldn't be read)
     const link = store ? shopForStore(store.id) : null;
     if (link && kind === 'full') {
       try {
         const live = await Promise.race([activeCodes(link.shop), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
+        shopifyCodes = live;
         const seen = new Set(codes.map((c) => c.code.toUpperCase()));
         codes = [...codes, ...live.filter((c) => !seen.has(c.code.toUpperCase()))].slice(0, 5);
       } catch (e) { console.error('discount codes from Shopify', link.shop, e.message); }
     }
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
-      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
+      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, shopifyCodes, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.

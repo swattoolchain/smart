@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { check, shortErr, plural } from './checks.js';
 import { fetchCatalog, validateCatalog, diffCatalog } from './products.js';
 import { aiEnabled, reviewCopy } from '../ai.js';
+import { findTampering, tamperCheck } from './tamper.js';
 
 const dirFor = (storeId) => path.join(config.dataDir, 'catalog', `store-${storeId}`);
 
@@ -50,11 +51,13 @@ async function emptyCollections(request, origin, collections) {
 }
 
 /** Full-catalog checks for monitored stores: snapshot, change log, validations, counts and AI copy review. */
-export async function runCatalog({ request, origin, storeId, runId, rec, info, on }) {
+export async function runCatalog({ request, origin, storeId, runId, rec, info, on, shopifyCodes = null }) {
   const out = { count: 0 };
   try {
     const snap = await fetchCatalog(request, origin);
     if (!snap.count) return out;
+    // The store's active Shopify discount codes (null when unknown), kept with the snapshot for tampering checks.
+    snap.codes = Array.isArray(shopifyCodes) ? shopifyCodes.map((c) => ({ code: c.code, percent: c.percent ?? null })) : null;
     const prev = previousSnapshot(storeId, runId);
     fs.mkdirSync(dirFor(storeId), { recursive: true });
     fs.writeFileSync(path.join(dirFor(storeId), `run-${runId}.json`), JSON.stringify(snap));
@@ -113,6 +116,12 @@ export async function runCatalog({ request, origin, storeId, runId, rec, info, o
         severity: 'minor',
         detail: parts.length ? `${plural(diff.changes.length, 'product')} changed: ${parts.join(', ')}.` : 'Nothing in the catalog changed.',
       }));
+    }
+
+    if (on('security.tamper')) {
+      const t = findTampering(snap, prev?.snap);
+      tamperCheck({ rec, result: t });
+      out.tamper = t ? t.found.slice(0, 50) : null;
     }
 
     // AI copy review: only products that are new or whose text changed (checksum mode).
