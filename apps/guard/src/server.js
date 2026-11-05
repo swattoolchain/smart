@@ -29,7 +29,7 @@ import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
 import { salePlanRoutes } from './sale-plans.js';
 import { saleLiveRoutes } from './sale-live.js';
-import { saleCalendarRoutes } from './sale-calendar.js';
+import { saleCalendarRoutes } from './sale-calendar-routes.js';
 
 const app = express();
 app.set('trust proxy', 1);
