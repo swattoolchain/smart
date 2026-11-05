@@ -31,6 +31,9 @@ CREATE INDEX IF NOT EXISTS incidents_store ON incidents(store_id, id DESC);
 export const INCIDENT_HOURS = 48;
 export const INCIDENT_JOURNEY_MIN = 10;
 export const MAX_CONTACTS = 5;
+// One start per store per 7 days: incident mode goes past the plan's check interval and emails people the owner
+// typed in, so it must not become a way around plan limits or a way to send mail in a loop.
+export const COOLDOWN_DAYS = 7;
 const HOUR = 3600 * 1000;
 
 /** Recovery steps. `shopify` / `other`: where to do it. */
@@ -73,6 +76,7 @@ const Q = {
   update: db.prepare('UPDATE incidents SET contacts_json = ?, steps_json = ? WHERE id = ?'),
   end: db.prepare('UPDATE incidents SET ended_at = ?, ended_reason = ? WHERE id = ? AND ended_at IS NULL'),
   open: db.prepare('SELECT * FROM incidents WHERE ended_at IS NULL'),
+  lastStart: db.prepare('SELECT started_at FROM incidents WHERE store_id = ? ORDER BY id DESC LIMIT 1'),
   lastHealthy: db.prepare("SELECT id, kind, created_at FROM runs WHERE store_id = ? AND status = 'done' AND verdict = 'healthy' AND (trigger IS NULL OR trigger != 'release') ORDER BY id DESC LIMIT 1"),
   lastHealthyFull: db.prepare("SELECT id, created_at FROM runs WHERE store_id = ? AND status = 'done' AND verdict = 'healthy' AND kind = 'full' AND (trigger IS NULL OR trigger != 'release') ORDER BY id DESC LIMIT 1"),
   latest: db.prepare("SELECT id, kind, created_at, verdict, score FROM runs WHERE store_id = ? AND status = 'done' AND result_json IS NOT NULL AND (trigger IS NULL OR trigger != 'release') ORDER BY id DESC LIMIT 1"),
@@ -120,10 +124,20 @@ export function incidentBrief(storeId) {
 
 export function startIncident(store, { reason = '', contacts = [], now = Date.now() } = {}) {
   if (activeIncident(store.id, now)) throw Object.assign(new Error('Incident mode is already on for this store.'), { status: 409 });
+  const next = nextStartAt(store.id, now);
+  if (next) throw Object.assign(new Error(`Incident mode can be started once a week per store. You can start it again on ${new Date(next).toUTCString().slice(0, 22)} UTC. Your store is still checked on its usual schedule; if you need help sooner, email ${config.contactEmail}.`), { status: 429 });
   const team = cleanContacts(contacts);
   const healthy = Q.lastHealthy.get(store.id);
   const info = Q.insert.run(store.id, iso(now), iso(now + INCIDENT_HOURS * HOUR), String(reason || '').trim().slice(0, 500), JSON.stringify(team), healthy?.id ?? null);
   return Q.byId.get(Number(info.lastInsertRowid));
+}
+
+/** When incident mode may be started again (ms), or null if it may be started now. */
+export function nextStartAt(storeId, now = Date.now()) {
+  const last = Q.lastStart.get(storeId);
+  if (!last) return null;
+  const at = Date.parse(last.started_at) + COOLDOWN_DAYS * 24 * HOUR;
+  return at > now ? at : null;
 }
 
 export function updateIncident(storeId, { contacts, steps } = {}) {
@@ -191,7 +205,10 @@ export function incidentView(store, { shopify = false } = {}) {
     return STEPS.map((s) => ({ key: s.key, title: s.title, how: shopify ? s.shopify : s.other, doneAt: done[s.key] || null }));
   };
   const history = Q.history.all(store.id).map((h) => ({ id: h.id, startedAt: h.started_at, endedAt: h.ended_at, endedBy: h.ended_reason, reason: h.reason, stepsDone: Object.keys(JSON.parse(h.steps_json)).length, steps: STEPS.length }));
-  if (!r) return { active: null, history, steps: STEPS.map((s) => ({ key: s.key, title: s.title, how: shopify ? s.shopify : s.other })), hours: INCIDENT_HOURS, everyMinutes: INCIDENT_JOURNEY_MIN };
+  if (!r) {
+    const next = nextStartAt(store.id);
+    return { active: null, history, steps: STEPS.map((s) => ({ key: s.key, title: s.title, how: shopify ? s.shopify : s.other })), hours: INCIDENT_HOURS, everyMinutes: INCIDENT_JOURNEY_MIN, nextStartAt: next ? iso(next) : null, cooldownDays: COOLDOWN_DAYS };
+  }
   return {
     active: {
       id: r.id, startedAt: r.started_at, endsAt: r.ends_at, reason: r.reason, contacts: JSON.parse(r.contacts_json),
