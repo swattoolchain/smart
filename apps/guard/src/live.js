@@ -14,6 +14,7 @@ export const PHASES = [
   { key: 'visual', label: 'Comparing screenshots', run: ['full'], groups: ['visual'] },
   { key: 'catalog', label: 'Checking every product', run: ['full'], groups: ['catalog'] },
   { key: 'variants', label: 'Adding every variant to the cart', run: ['full'], groups: ['catalog.variants'] },
+  { key: 'domain', label: 'Domain, certificate and email records', run: ['full'], groups: ['security.domain'] },
   { key: 'ai', label: 'AI review', run: ['full'], groups: ['ai.visual'] },
   { key: 'shopper', label: 'AI shopper', run: ['full'], groups: ['ai.shopper'] },
 ];

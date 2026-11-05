@@ -188,6 +188,7 @@ async function prepare(job) {
     disabled: runDisabled,
     previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
     testProduct: cfg.testProduct || null, discountCodes: codes, shopifyCodes, preview: preview || null, captureOnly: !!captureOnly,
+    release: !!release,
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).
     video: !!cfg.failureVideo && !release,
     // Sale traffic readiness: a few shoppers at once, when the store has it switched on (never for publish checks).

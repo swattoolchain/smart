@@ -514,6 +514,7 @@ app.delete('/api/stores/:id', requireUser, (req, res) => {
   q.deleteStore.run(s.id, req.user.id);
   fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
   fs.rmSync(path.join(config.dataDir, 'variants', `store-${s.id}.json`), { force: true });
+  fs.rmSync(path.join(config.dataDir, 'domain', `store-${s.id}.json`), { force: true });
   res.json({ ok: true });
 });
 

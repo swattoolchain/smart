@@ -1057,3 +1057,7 @@ ui-nav-menu { display: none !important; }
 .theme-restore ul.tr-files { list-style: none; margin: 0 0 8px; padding: 0; }
 .theme-restore ul.tr-files li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
 .theme-restore .tr-act { display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+
+/* Domain record changes (before / now) in report rows */
+.record-changes{margin-top:8px;font-size:13px}
+.record-changes code{word-break:break-all;white-space:normal}

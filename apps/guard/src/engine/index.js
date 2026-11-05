@@ -21,6 +21,7 @@ import { watchHijack, hijackChecks } from './hijack.js';
 import { watchForms, formChecks } from './forms.js';
 import { runShopper } from './agent.js';
 import { runSpam } from './spam.js';
+import { runDomain } from './domain.js';
 import { aiEnabled } from '../ai.js';
 import { VIDEO_FILE, VIDEO_DAYS } from '../video.js';
 
@@ -39,7 +40,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -214,6 +215,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
           fs.mkdirSync(path.dirname(posFile), { recursive: true });
           fs.writeFileSync(posFile, JSON.stringify({ next: variants.next, total: variants.total, at: new Date().toISOString() }));
         }
+      }
+      // Domain, certificate and records belong to the live store: not to a draft theme or a Safe to publish check.
+      if (kind === 'full' && storeId && !preview && !release && on('security.domain')) {
+        phase('domain');
+        await runDomain({ rec, request: ctx.request, origin, storeId }).catch((e) => rec.add(check('sec.domain.dns', 'security', 'Domain and email records unchanged', 'skip', { severity: 'minor', detail: shortErr(e) })));
       }
       if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
         phase('ai');
