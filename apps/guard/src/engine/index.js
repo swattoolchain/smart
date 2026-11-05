@@ -121,7 +121,20 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       // In Safe to publish it shops the draft theme too (its own window opens the preview first).
       if (kind === 'full' && storeId && on('ai.shopper') && aiEnabled() && info.isShopify) {
         phase('shopper');
-        shopper = await runShopper({ rec, origin, password, shot, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
+        const shop = (r) => runShopper({ rec: r, origin, password, shot, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
+        shopper = await shop(rec);
+        // Safe to publish: the AI is not deterministic, so a shopper that got stuck (or ran out of steps) gets one
+        // more try before the publish check can treat it as a reason not to publish.
+        if (captureOnly && shopper && (shopper.outcome === 'stuck' || shopper.outcome === 'limit')) {
+          const rec2 = new Recorder();
+          const again = await shop(rec2).catch(() => null);
+          if (again?.outcome === 'checkout') {
+            rec.checks = rec.checks.filter((c) => c.id !== 'ai.shopper').concat(rec2.checks.filter((c) => c.id === 'ai.shopper'));
+            shopper = { ...again, tries: [shopper.outcome, again.outcome] };
+          } else {
+            shopper = { ...shopper, tries: [shopper.outcome, again?.outcome || 'error'] };
+          }
+        }
       }
     }
     // A home screenshot gives every report a visual anchor.
