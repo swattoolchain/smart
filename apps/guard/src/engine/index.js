@@ -32,7 +32,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [] }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -136,6 +136,8 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         ai = await reviewScreens({ runDir, origin, rec });
       }
     }
+    // Checks made outside the browser (theme files through the Shopify API) count like any other.
+    for (const c of extraChecks) rec.add(c);
     // A home screenshot gives every report a visual anchor.
     // Drop anything from a switched-off group (some sections share page visits).
     rec.checks = rec.checks.filter((c) => { const g = groupOf(c.id); return !g || on(g); });
