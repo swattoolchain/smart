@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
+import { purgeStoreFiles } from './purge.js';
 import { db, q } from './db.js';
 import { ensureLicense, updateLicense, listPlans, getPlan, audit, setting } from './license.js';
 
@@ -287,10 +288,8 @@ export function redactShop(shop) {
   const row = Q.get.get(shop);
   if (row?.uninstalled_at == null && row?.access_token) return false; // reinstalled since; keep
   if (row?.user_id) {
-    for (const s of q.storesByUser.all(row.user_id)) {
-      for (const r of db.prepare('SELECT id FROM runs WHERE store_id = ?').all(s.id)) fs.rmSync(path.join(config.dataDir, 'shots', `run-${r.id}`), { recursive: true, force: true });
-      fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
-    }
+    // Shopify's shop/redact: every file and row for this shop goes (screenshots, approved looks, product snapshots).
+    for (const s of q.storesByUser.all(row.user_id)) purgeStoreFiles(s.id);
     audit('shopify', null, 'note', { text: `Deleted all data for ${shop} (shop/redact)` });
     db.prepare('DELETE FROM users WHERE id = ?').run(row.user_id);
   }

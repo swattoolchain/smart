@@ -18,6 +18,7 @@ import { adminRoutes } from './admin.js';
 import * as shopify from './shopify.js';
 import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
 import { paymentRoutes, razorpayWebhook } from './payments.js';
+import { purgeStoreFiles } from './purge.js';
 import { webAccessRoutes, sessionValid, sessionEpoch, emailTaken } from './web-access.js';
 import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './release.js';
 import { comparePair } from './compare.js';
@@ -439,8 +440,9 @@ app.delete('/api/stores/:id', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   if (shopify.shopForStore(s.id)) return res.status(400).json({ error: 'This is the store Tharam was installed on. To stop checking it, uninstall Tharam from your Shopify admin.' });
+  // Files first (they are found through the store's runs), then the rows.
+  purgeStoreFiles(s.id);
   q.deleteStore.run(s.id, req.user.id);
-  fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
   res.json({ ok: true });
 });
 
