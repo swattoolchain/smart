@@ -305,3 +305,27 @@ export function liveChanges(prevFails = [], findings = []) {
   const cur = new Set(now.map((f) => f.key));
   return { broke: now.filter((f) => !prev.has(f.key)), fixed: prevFails.filter((f) => !cur.has(f.key)), still: now.filter((f) => prev.has(f.key)) };
 }
+
+// ---------- end of the sale (part 3) ----------
+/**
+ * After the sale: is every price back to normal? Takes livePrices() output (computed with no cart rules) and
+ * returns rows with state back | still (still at the sale price) | changed (neither) | soldout.
+ */
+export function endPrices(live) {
+  const rows = live.rows.map((r) => {
+    const sale = Math.abs(r.expected - r.normal) > 0.005;
+    const state = r.state === 'soldout' ? 'soldout' : nearPrice(r.shown, r.normal) ? 'back' : sale && nearPrice(r.shown, r.expected) ? 'still' : 'changed';
+    return { ...r, state };
+  });
+  const n = (s) => rows.filter((r) => r.state === s).length;
+  return { rows, counts: { variants: rows.length, products: new Set(rows.map((r) => r.handle)).size, back: n('back'), still: n('still'), changed: n('changed'), soldout: n('soldout') } };
+}
+/**
+ * Is an automatic end check due? The first one as soon as the scheduler sees the ended sale (it only looks
+ * 10 minutes after the end); more only while something is still on, every `again` ms, up to `max` in all.
+ */
+export function endCheckDue({ count = 0, lastAt = null, lastVerdict = null } = {}, now = Date.now(), { again = 2 * 3600000, max = 3 } = {}) {
+  if (!count) return true;
+  if (count >= max || lastVerdict !== 'fail') return false;
+  return !lastAt || now - lastAt >= again;
+}

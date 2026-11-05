@@ -17,6 +17,7 @@ const STORE_ROUTES = [
   ['patch', '/api/stores/:id/sale-plans/1'], ['delete', '/api/stores/:id/sale-plans/1'], ['post', '/api/stores/:id/sale-plans/1/rehearse'],
   ['get', '/api/stores/:id/sale-plans/1/rehearsals/1'],
   ['get', '/api/stores/:id/sale-plans/1/live'], ['post', '/api/stores/:id/sale-plans/1/live-check'], ['get', '/api/stores/:id/sale-plans/1/live-checks/1'],
+  ['get', '/api/stores/:id/sale-calendar'], ['post', '/api/stores/:id/sale-calendar'], ['delete', '/api/stores/:id/sale-calendar/1'],
 ];
 
 describe('Data isolation', () => {

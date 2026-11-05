@@ -996,3 +996,9 @@ ui-nav-menu { display: none !important; }
 .sale-live-card .pv-kicker { display: block; }
 .sale-live-card .st-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--soft, #f1f1f4); color: var(--muted); }
 .sale-live-card.healthy .st-ic { background: #e7f6ec; color: #1a7f45; } .sale-live-card.warning .st-ic { background: #fdf3e1; color: #a86a00; } .sale-live-card.critical .st-ic { background: #fdecec; color: #c4262c; }
+.sale-suggest { display: flex; gap: 14px; align-items: center; justify-content: space-between; }
+.sale-suggest p { margin: 0; }
+.sale-day-form { flex-wrap: wrap; gap: 8px; margin-top: 10px; } .sale-day-form input[name=name] { flex: 1 1 180px; }
+.sale-day-form label.check { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; font-size: 13.5px; margin: 0; }
+#sale-cal td.go { white-space: nowrap; text-align: right; }
+@media (max-width: 640px) { .sale-suggest { flex-direction: column; align-items: flex-start; } }

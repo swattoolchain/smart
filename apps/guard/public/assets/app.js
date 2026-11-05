@@ -1700,10 +1700,43 @@
   const saleWhen = (p) => { const own = localTz(); const mine = own !== p.timeZone ? ` · your time ${new Date(p.startsAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''; return `${esc(fmtLocal(p.startsLocal))} → ${esc(fmtLocal(p.endsLocal))} <span class="cell-sub">(${esc(p.timeZone)})${esc(mine)}</span>`; };
   const ruleText = (r) => `${r.type === 'percent' ? `${r.value}% off` : r.type === 'fixed' ? `${r.value} off` : `new price ${r.value}`} · ${r.scope === 'all' ? 'everything' : `${r.scope} “${r.target}”`}`;
 
+  // The sale calendar: big sale days where the store sells, suggested 3 weeks ahead; the owner's own days too.
+  const dayDate = (iso) => new Date(iso + 'T00:00:00Z').toLocaleDateString(undefined, { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const nextDayIso = (iso) => new Date(new Date(iso + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10);
+  function saleCalendarHtml(s, cal, canAdd) {
+    const when = (d) => `${esc(dayDate(d.start))}${d.days > 1 ? ` – ${esc(dayDate(d.end))}` : ''}${d.approx ? ' <span class="cell-sub">(about)</span>' : ''}`;
+    const until = (d) => d.daysUntil <= 0 ? 'Now' : d.daysUntil === 1 ? 'Tomorrow' : `In ${d.daysUntil} days`;
+    const planBtn = (d, cls = 'btn small') => canAdd ? `<button type="button" class="${cls}" data-plan-day="${esc(d.key)}">${icon('add', 14)}Plan this sale</button>` : '';
+    // The owner's own days first, then the nearest built-in ones; three at most.
+    const sug = [...cal.suggestions].sort((a, b) => (b.custom - a.custom) || a.daysUntil - b.daysUntil).slice(0, 3).map((d) => `<div class="notice sale-suggest"><p><b>${esc(d.name)} is ${d.daysUntil <= 0 ? 'on now' : `in ${d.daysUntil} day${d.daysUntil === 1 ? '' : 's'}`}.</b> ${when(d)}. Plan it now and we rehearse it every day until it starts.${d.note ? ` <span class="muted">${esc(d.note)}</span>` : ''}</p>${planBtn(d)}</div>`).join('');
+    const rows = cal.days.slice(0, 10).map((d) => `<tr><td><span class="cell-main">${esc(d.name)}</span>${d.custom ? '<div class="cell-sub">Your sale day</div>' : d.note ? `<div class="cell-sub">${esc(d.note)}</div>` : ''}</td><td>${when(d)}</td><td>${d.covered ? '<span class="pill healthy">Planned</span>' : `<span class="cell-sub">${esc(until(d))}</span>`}</td>
+      <td class="go">${d.covered ? '' : planBtn(d, 'btn small ghost')}${d.custom ? `<button type="button" class="icon-btn" data-del-day="${d.id}" aria-label="Remove ${esc(d.name)}">${icon('trash', 15)}</button>` : ''}</td></tr>`).join('');
+    return `${sug}<section class="panel" id="sale-cal"><div class="panel-head"><h2>Sale calendar</h2><span class="muted">${cal.markets.length ? `For ${esc(cal.markets.join(', '))}` : 'All markets · choose yours in Store settings'}</span></div>
+      <div class="table-wrap flat"><table class="data"><thead><tr><th>Sale day</th><th>When</th><th>Plan</th><th aria-label="Actions"></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No sale days in the next year.</td></tr>'}</tbody></table></div>
+      <details class="still" style="margin-top:12px"><summary>Add your own sale day</summary><form id="sday" class="inline-row sale-day-form" novalidate>
+        <input name="name" maxlength="60" placeholder="Store anniversary" aria-label="Name" required><input name="date" type="date" aria-label="Starts" required>
+        <input name="days" type="number" min="1" max="60" value="1" aria-label="Days" style="width:80px"><label class="check"><input type="checkbox" name="everyYear" checked> Every year</label>
+        <button class="btn small" type="submit">Add</button></form><p class="error-msg" id="sday-err" role="alert"></p></details></section>`;
+  }
+  function wireSaleCalendar(s, cal) {
+    $$('[data-plan-day]').forEach((b) => (b.onclick = () => {
+      const d = cal.days.find((x) => x.key === b.dataset.planDay);
+      S.salePrefill = { name: `${d.name} ${d.start.slice(0, 4)}`, startsLocal: `${d.start}T00:00`, endsLocal: `${nextDayIso(d.end)}T00:00` };
+      location.hash = `#/s/${s.id}/sales/new`;
+    }));
+    $$('[data-del-day]').forEach((b) => (b.onclick = async () => { await api(`/api/stores/${s.id}/sale-calendar/${b.dataset.delDay}`, { method: 'DELETE' }); render({ silent: true }); }));
+    const f = $('#sday');
+    if (f) f.onsubmit = async (e) => {
+      e.preventDefault();
+      try { await api(`/api/stores/${s.id}/sale-calendar`, { method: 'POST', body: { name: f.name.value, date: f.date.value, days: f.days.value, everyYear: f.everyYear.checked } }); render({ silent: true }); }
+      catch (ex) { $('#sday-err').textContent = ex.message; }
+    };
+  }
+
   STORE_PAGES.sales = async (ctx, s) => {
     if (ctx.r.a === 'new' || ctx.r.b === 'edit') return saleForm(ctx, s, ctx.r.b === 'edit' ? Number(ctx.r.a) : null);
     if (ctx.r.a && /^\d+$/.test(ctx.r.a)) return saleDetail(ctx, s, Number(ctx.r.a));
-    const d = await api(`/api/stores/${s.id}/sale-plans`);
+    const [d, cal] = await Promise.all([api(`/api/stores/${s.id}/sale-plans`), api(`/api/stores/${s.id}/sale-calendar`).catch(() => null)]);
     if (!ctx.alive()) return;
     const open = d.plans.filter((p) => p.phase !== 'ended').length;
     const add = open >= d.limit ? `<span class="btn secondary" aria-disabled="true" title="Your plan covers ${d.limit} upcoming sale plans">${icon('lock', 16)}New sale plan</span>` : `<a class="btn" href="#/s/${s.id}/sales/new">${icon('add', 16)}New sale plan</a>`;
@@ -1712,8 +1745,9 @@
     const list = d.plans.length ? `<section class="panel"><div class="panel-head"><h2>Your sale plans</h2></div><div class="table-wrap flat"><table class="data"><thead><tr><th>Sale</th><th>When</th><th>Last rehearsal</th><th aria-label="Open"></th></tr></thead><tbody>
       ${d.plans.map((p) => `<tr class="link" data-href="#/s/${s.id}/sales/${p.id}" tabindex="0"><td><span class="cell-main">${esc(p.name)}</span><div class="cell-sub">${esc(SALE_PHASE[p.phase])}${p.codes.length ? ` · ${plural(p.codes.length, 'code')}` : ''}${p.rules.length ? ` · ${plural(p.rules.length, 'discount')}` : ''}</div></td>
         <td>${saleWhen(p)}</td><td>${salePill(p.last)}${p.last ? `<div class="cell-sub">${time(p.last.createdAt)}</div>` : ''}</td><td class="go">${icon('right', 16)}</td></tr>`).join('')}</tbody></table></div></section>` : '';
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Sale plans', { actions: add })}${intro}${list}</div>`;
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Sale plans', { actions: add })}${cal ? saleCalendarHtml(s, cal, open < d.limit) : ''}${intro}${list}</div>`;
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => (location.hash = tr.dataset.href); tr.onkeydown = (e) => { if (e.key === 'Enter') location.hash = tr.dataset.href; }; });
+    if (cal) wireSaleCalendar(s, cal);
   };
 
   async function saleForm(ctx, s, planId) {
@@ -1721,7 +1755,9 @@
     if (!ctx.alive()) return;
     const p = planId ? d.plans.find((x) => x.id === planId) : null;
     if (planId && !p) { location.hash = `#/s/${s.id}/sales`; return; }
-    const v = p || { name: '', timeZone: localTz(), startsLocal: '', endsLocal: '', markets: s.config.markets || [], codes: [], rules: [{ scope: 'all', type: 'percent', value: '' }], themeId: null, banner: '', freeShipping: null, notes: '' };
+    const pre = !p && S.salePrefill ? S.salePrefill : {};
+    S.salePrefill = null;
+    const v = p || { ...{ name: '', timeZone: localTz(), startsLocal: '', endsLocal: '', markets: s.config.markets || [], codes: [], rules: [{ scope: 'all', type: 'percent', value: '' }], themeId: null, banner: '', freeShipping: null, notes: '' }, ...pre };
     let zones = [];
     try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = [v.timeZone]; }
     // Common sale time zones are always offered, whatever name the browser uses for them.
@@ -1807,6 +1843,27 @@
         ${off.map((r) => `<tr class="${r.state === 'normal' || r.state === 'wrong' ? 'row-new' : ''}"><td><span class="cell-main">${esc(r.product)}</span>${r.variant ? `<div class="cell-sub">${esc(r.variant)}</div>` : ''}</td><td class="num">${esc(r.normal)}</td><td class="num">${esc(r.expected)}</td><td class="num">${esc(r.shown)}</td><td class="cell-sub">${esc(LIVE_STATE[r.state])}</td></tr>`).join('')}</tbody></table></div></details></section>` : ''}`;
   }
 
+  // After the sale: is everything back to normal?
+  const END_V = { ok: ['Sale ended cleanly', 'healthy', 'check'], warn: ['Sale ended, with things to look at', 'warning', 'alerts'], fail: ['Still on after the sale', 'critical', 'stop'] };
+  const END_STATE = { still: 'Still at the sale price', changed: 'Not the price before the sale', soldout: 'Sold out' };
+  function saleEndSection(s, p, L) {
+    const btn = L.canCheckEnd ? `<button type="button" class="btn small" id="se-run" ${L.running ? 'disabled' : ''}>${icon('play', 14)}${L.running ? 'Checking…' : L.end ? 'Check again' : 'Check now'}</button>` : '';
+    const x = L.end;
+    if (!x) return `<section class="panel sale-live" id="sale-end"><div class="panel-head"><h2>${icon('calendar', 18)} Sale ended</h2>${btn}</div><p class="muted" style="margin:0">${L.running ? 'Checking that prices, codes, banner and theme are back to normal.' : 'About 10 minutes after the end we check that prices, codes, banner and theme are back to normal, and email you.'}</p></section>`;
+    const [vl, vk, vi] = END_V[x.verdict] || END_V.warn;
+    const sum = x.summary, c = sum.counts;
+    const order = ['fail', 'warn', 'pass'];
+    const items = [...sum.findings].sort((a, b) => order.indexOf(a.level) - order.indexOf(b.level));
+    const off = sum.prices ? sum.prices.rows.filter((r) => r.state !== 'back') : [];
+    return `<section class="panel pub-verdict ${vk}" id="sale-end"><span class="pv-icon">${icon(vi, 26)}</span><div class="pv-text"><p class="pv-kicker">Sale ended</p>
+        <h2>${esc(vl)}</h2><p class="muted">Checked ${time(x.createdAt)} · ${c.fail} still on · ${c.warn} to look at · ${c.pass} back to normal</p></div><div>${btn}</div></section>
+      <section class="panel"><h2>After the sale</h2><ul class="list">${items.map((f) => `<li><div class="row"><span class="sev ${SALE_LEVEL[f.level][1]}">${f.level === 'pass' ? 'OK' : SALE_LEVEL[f.level][0]}</span>
+        <span><span class="t">${esc(f.title)}</span>${f.detail ? `<span class="d">${esc(f.detail)}</span>` : ''}${f.fix ? `<div class="fix-line"><b>What to do:</b> ${esc(f.fix)}</div>` : ''}</span><span></span></div></li>`).join('')}</ul></section>
+      ${off.length ? `<section class="panel"><details class="still" open><summary>Prices to look at: ${off.length}</summary><div class="table-wrap flat" style="margin-top:10px"><table class="data"><thead><tr><th>Product</th><th class="num">Before the sale</th><th class="num">Sale price</th><th class="num">Shown now</th><th>Note</th></tr></thead><tbody>
+        ${off.map((r) => `<tr class="${r.state === 'still' ? 'row-new' : ''}"><td><span class="cell-main">${esc(r.product)}</span>${r.variant ? `<div class="cell-sub">${esc(r.variant)}</div>` : ''}</td><td class="num">${esc(r.normal)}</td><td class="num">${esc(r.expected)}</td><td class="num">${esc(r.shown)}</td><td class="cell-sub">${esc(END_STATE[r.state] || '')}</td></tr>`).join('')}</tbody></table></div></details></section>` : ''}
+      ${L.latest ? '<h2 class="sale-sub">While the sale was live</h2>' : ''}`;
+  }
+
   async function saleDetail(ctx, s, planId) {
     const d = await api(`/api/stores/${s.id}/sale-plans/${planId}`);
     if (!ctx.alive()) return;
@@ -1846,9 +1903,11 @@
       body = hero + find + prices;
     }
     const hist = d.history.length > 1 ? `<section class="panel"><h2>Earlier rehearsals</h2><ul class="list">${d.history.slice(1, 10).map((h) => `<li><div class="row"><span>${salePill(h)}</span><span class="d">${h.counts ? `${h.counts.fail} to fix · ${h.counts.warn} to look at` : esc(h.error || '')}</span><span class="r">${time(h.createdAt)}</span></div></li>`).join('')}</ul></section>` : '';
-    const liveHtml = L && (p.phase === 'live' || L.latest) ? saleLiveSection(s, p, L) + (r ? '<h2 class="sale-sub">Last rehearsal before the sale</h2>' : '') : '';
+    const liveHtml = (L && p.phase === 'ended' ? saleEndSection(s, p, L) : '') + (L && (p.phase === 'live' || L.latest) ? saleLiveSection(s, p, L) + (r ? '<h2 class="sale-sub">Last rehearsal before the sale</h2>' : '') : '');
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, p.name, { crumb, actions, meta: `${esc(SALE_PHASE[p.phase])}` })}<div class="grid-2 tight"><div>${liveHtml}${L && p.phase !== 'upcoming' && !r ? '' : body}</div><div>${facts}${hist}</div></div></div>`;
     const slr = $('#sl-run');
+    const ser = $('#se-run');
+    if (ser) ser.onclick = async () => { const done = busy(ser, 'Starting'); try { await api(`/api/stores/${s.id}/sale-plans/${p.id}/live-check`, { method: 'POST' }); render({ silent: true }); } catch (ex) { done(); toast(ex.message, 'error'); } };
     if (slr) slr.onclick = async () => { const done = busy(slr, 'Starting'); try { await api(`/api/stores/${s.id}/sale-plans/${p.id}/live-check`, { method: 'POST' }); render({ silent: true }); } catch (ex) { done(); toast(ex.message, 'error'); } };
     if (L?.running) poll(4000);
     const run = $('#sp-run');

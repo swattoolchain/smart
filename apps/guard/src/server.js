@@ -29,6 +29,7 @@ import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
 import { salePlanRoutes } from './sale-plans.js';
 import { saleLiveRoutes } from './sale-live.js';
+import { saleCalendarRoutes } from './sale-calendar.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -764,6 +765,7 @@ app.post('/api/stores/:id/approve-visual', requireUser, (req, res) => {
 // ---------- Sale plans and the sale rehearsal ----------
 salePlanRoutes(app, { requireUser, ownStore, refuse });
 saleLiveRoutes(app, { requireUser, ownStore, refuse });
+saleCalendarRoutes(app, { requireUser, ownStore, refuse });
 
 // ---------- Founder console: customers, licences, payments, plans ----------
 adminRoutes(app, { requireUser, isAdmin });

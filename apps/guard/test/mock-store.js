@@ -33,7 +33,15 @@ const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v
 // on every page, the sale theme live (window.Shopify.theme), and the listed variants sold out. GET /__sale starts it now.
 const SALE = process.env.MOCK_SALE ? JSON.parse(process.env.MOCK_SALE) : null;
 let saleOn = false;
+let saleEnded = false; // GET /__sale?end=1: the sale was ended properly (prices back, banner and theme off, BF20 expired)
+function endSale() {
+  if (!saleOn || saleEnded) return;
+  saleEnded = true; saleOn = false;
+  for (const id of Object.keys(SALE.prices || {})) { const hit = byId.get(Number(id)); if (hit && hit.v.compare_at_price) { hit.v.price = hit.v.compare_at_price; hit.v.compare_at_price = null; } }
+  for (const id of SALE.soldOut || []) { const hit = byId.get(Number(id)); if (hit) hit.v.available = true; }
+}
 function saleClock() {
+  if (saleEnded) return;
   if (!SALE || saleOn || Date.now() < SALE.at) return;
   saleOn = true;
   for (const [id, price] of Object.entries(SALE.prices || {})) { const hit = byId.get(Number(id)); if (hit) { hit.v.compare_at_price = hit.v.price; hit.v.price = Number(price).toFixed(2); } }
@@ -56,7 +64,7 @@ const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
 function cartJson(items) {
   const original = items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0);
   const code = items.discount;
-  const rule = code && !(B.has('discount') && code === 'BF20') ? CODES[code] : null;
+  const rule = code && !(B.has('discount') && code === 'BF20') && !(saleEnded && code === 'BF20') ? CODES[code] : null;
   const applicable = !!rule && original >= rule.min;
   const off = applicable ? Math.round((original * rule.pct) / 100) : 0;
   return {
@@ -106,7 +114,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
   }
-  if (p === '/__sale') { if (SALE) { SALE.at = 0; saleClock(); } return send(res, 200, { on: saleOn }, 'application/json'); } // tests: start the sale now
+  if (p === '/__sale') { if (SALE) { if (u.searchParams.get('end')) endSale(); else { SALE.at = 0; saleClock(); } } return send(res, 200, { on: saleOn, ended: saleEnded }, 'application/json'); } // tests: start (or end) the sale now
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });
