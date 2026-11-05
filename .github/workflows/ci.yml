@@ -1,0 +1,44 @@
+# Tests every pull request and every push to main. Deployment is separate and manual.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Tharam tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/guard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/guard/package-lock.json
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Syntax check
+        run: |
+          for f in $(git ls-files 'src/**/*.js' 'src/*.js' 'public/assets/*.js' 'test/**/*.js' 'test/*.js' 'scripts/*.js'); do node --check "$f" || exit 1; done
+      - name: Tests
+        run: mkdir -p test-results && npm test
+      - name: Test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tharam-test-report
+          path: apps/guard/test-results/
+          retention-days: 30

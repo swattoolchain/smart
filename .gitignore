@@ -4,3 +4,4 @@ data/
 *.log
 verify-report.json
 .DS_Store
+test-results/
