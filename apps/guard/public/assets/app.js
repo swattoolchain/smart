@@ -2260,6 +2260,44 @@
         ${fig(m.load1, `Load, ${m.cpus} CPUs`, m.load1 > m.cpus)}</div></section></div>`;
   }
 
+  // The machines that run checks: the main server and any workers. Founders add workers with a one-time join token.
+  async function adminRunners(ctx, head) {
+    const d = await api('/api/admin/runners');
+    if (!ctx.alive()) return;
+    const STAT = { active: ['healthy', 'Active'], draining: ['warning', 'Draining'], paused: ['', 'Paused'] };
+    const row = (r) => {
+      const [cls, label] = STAT[r.status] || ['', r.status];
+      const health = r.kind === 'main' ? '<span class="pill healthy">This server</span>' : r.healthy ? `<span class="pill healthy">Checking in</span><div class="cell-sub">${time(r.lastSeen)}</div>` : `<span class="pill critical">Not responding</span><div class="cell-sub">last seen ${time(r.lastSeen)}</div>`;
+      const btn = (st, txt) => (r.status === st ? '' : `<button type="button" class="btn small secondary" data-runner="${r.id}" data-status="${st}">${txt}</button>`);
+      return `<tr class="runner-row" data-name="${esc(r.name)}"><td><span class="cell-main">${esc(r.name)}</span><div class="cell-sub">${r.kind === 'main' ? 'Main server · web, database, scheduler' : 'Worker'}</div></td>
+        <td><span class="pill ${cls}">${label}</span></td><td>${health}</td><td class="num">${r.used} of ${r.slots}</td>
+        <td>${r.tags.length ? r.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join(' ') : '<span class="muted">–</span>'}</td>
+        <td class="actions">${btn('active', 'Activate')} ${btn('draining', 'Drain')} ${btn('paused', 'Pause')}</td></tr>`;
+    };
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <p class="lede-sm">Checks go to the active runner with the most free slots. Stores in sale mode prefer runners tagged <code>sale</code>, paid plans prefer their plan's tag (for example <code>pro</code>), and stores prefer their region's tag (<code>india</code>, <code>eu</code>, <code>us</code>). If no such runner has room, any runner takes the check. Workers take journey checks; full and publish checks run on the main server. A worker that stops checking in for a minute gets no new checks, and its unfinished checks are retried once elsewhere. <b>Drain</b> finishes current checks and takes no new ones.</p>
+      <section class="panel"><div class="table-wrap flat"><table class="data" id="runners"><thead><tr><th>Runner</th><th>Status</th><th>Health</th><th class="num">Slots in use</th><th>Tags</th><th></th></tr></thead>
+        <tbody>${d.runners.map(row).join('')}</tbody></table></div></section>
+      <section class="panel"><h2>Add a worker</h2><p class="muted" style="margin-top:0">Creates a join token that works once, for 24 hours. Start the worker with it; the worker then gets its own credentials.</p>
+        <form id="rjoin" class="inline-form"><div class="field"><label>Name</label><input name="name" required maxlength="40" placeholder="worker-1"></div>
+          <div class="field"><label>Slots</label><input name="slots" type="number" min="1" max="16" value="2"></div>
+          <div class="field"><label>Tags (comma separated)</label><input name="tags" placeholder="sale, india"></div>
+          <div class="field"><label>&nbsp;</label><button class="btn" type="submit">Create join token</button></div></form>
+        <p class="error-msg" id="rjoin-err" role="alert"></p><div id="rjoin-out"></div></section></div>`;
+    ctx.main.querySelectorAll('[data-runner]').forEach((b) => (b.onclick = async () => {
+      try { await api(`/api/admin/runners/${b.dataset.runner}`, { method: 'PATCH', body: { status: b.dataset.status } }); toast('Runner updated'); adminRunners(ctx, head); } catch (ex) { toast(ex.message, 'error'); }
+    }));
+    $('#rjoin').onsubmit = async (e) => {
+      e.preventDefault();
+      const b = Object.fromEntries(new FormData(e.target));
+      $('#rjoin-err').textContent = '';
+      try {
+        const t = await api('/api/admin/runners/join-tokens', { method: 'POST', body: { name: b.name, slots: Number(b.slots), tags: b.tags } });
+        $("#rjoin-out").innerHTML = `<div class="notice" style="display:block"><p><b>Join token for ${esc(t.name)}</b>, shown once, valid ${t.expiresInHours} hours:</p><pre class="code" id="rjoin-token">${esc(t.token)}</pre><p class="muted">On the worker machine: <code>MAIN_URL=${esc(location.origin)} JOIN_TOKEN=… node src/worker.js</code></p></div>`;
+      } catch (ex) { $('#rjoin-err').textContent = ex.message; }
+    };
+  }
+
   // ---------- Founder console ----------
   const STATE_PILL = (st) => { const [l, k] = STATE[st] || [st, '']; return `<span class="pill ${k}">${esc(l)}</span>`; };
   const sumMoney = (obj) => Object.entries(obj || {}).map(([c, v]) => minorMoney(v, c)).join(' + ') || '0';
@@ -2286,7 +2324,7 @@
     if (!S.admin) { location.hash = '#/'; return; }
     const tab = ctx.r.a;
     const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder console</h1><div class="meta">Customers, plans and revenue · only visible to founders</div></div></div>`
-      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity']], tab);
+      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity'], ['runners', 'Runners']], tab);
     if (tab === 'customers' && ctx.r.b) return adminCustomer(ctx, head, ctx.r.b);
     if (tab === 'customers') return adminCustomers(ctx, head);
     if (tab === 'plans') return adminPlans(ctx, head);
@@ -2295,6 +2333,7 @@
     if (tab === 'settings') return adminSettings(ctx, head);
     if (tab === 'leads') return adminLeads(ctx, head);
     if (tab === 'capacity') return adminCapacity(ctx, head);
+    if (tab === 'runners') return adminRunners(ctx, head);
     const d = await api('/api/admin/billing');
     if (!ctx.alive()) return;
     const c = d.counts;
