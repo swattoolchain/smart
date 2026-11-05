@@ -7,6 +7,8 @@ import { live } from './live.js';
 import { settleRelease } from './release.js';
 import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
+import { themeWatch } from './theme-watch.js';
+import { check } from './engine/checks.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
 
 /** Groups switched off for this run: the store's choices, markets, and anything the owner's plan doesn't include. */
@@ -99,14 +101,26 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
         codes = [...codes, ...live.filter((c) => !seen.has(c.code.toUpperCase()))].slice(0, 5);
       } catch (e) { console.error('discount codes from Shopify', link.shop, e.message); }
     }
+    // Theme file fingerprints (Shopify stores, full checks): read through the Admin API, saved only once the run is.
+    let theme = null;
+    const runDisabled = planDisabled(store, cfg, disabled);
+    if (link && kind === 'full' && !release && !preview && !runDisabled.includes('security.theme')) {
+      try {
+        theme = await Promise.race([themeWatch({ storeId, shop: link.shop }), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 90000))]);
+      } catch (e) {
+        console.error('theme files from Shopify', link.shop, e.message);
+        theme = { checks: [check('sec.theme', 'security', 'Theme code unchanged', 'skip', { severity: 'major', detail: 'We couldn’t read your theme files from Shopify this time. We’ll try again on the next full check.' })], commit: () => {} };
+      }
+    }
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
-      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly, previousScripts: storeId && !release ? previousScripts(storeId, runId) : null }),
+      runScan({ runId, origin, kind, password, storeId, disabled: runDisabled, extraChecks: theme?.checks || [], testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly, previousScripts: storeId && !release ? previousScripts(storeId, runId) : null }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.
     if (controller.signal.aborted) throw new Error(timedOut ? 'timeout' : 'cancelled');
     q.finishRun.run(result.score, result.verdict, JSON.stringify(result), runId);
+    if (theme && (result.checks || []).some((c) => c.id === 'sec.theme' && c.status !== 'skip')) { try { theme.commit(); } catch (e) { console.error('theme record save failed', storeId, e); } }
     // Publish-check runs (live and draft) never change the store's status and never alert.
     if (storeId && !release) {
       q.updateStoreAfterRun.run(result.verdict, result.score, storeId);

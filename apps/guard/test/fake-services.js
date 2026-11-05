@@ -1,10 +1,14 @@
 // A stand-in for Shopify's Admin API and Razorpay's API, for local end-to-end tests.
 // Shopify:  POST /:shop/admin/oauth/access_token, POST /:shop/admin/api/:v/graphql.json
 // Razorpay: POST /rzp/v1/orders, GET /rzp/v1/payments/:id
-// Control:  POST /control {subscription, primaryDomain, payStatus}
+// Control:  POST /control {subscription, primaryDomain, payStatus, mainTheme, themeFiles, themeError}
+//           themeFiles: { 'layout/theme.liquid': '<text>', 'assets/logo.png': null (binary) } for the live theme
 import http from 'node:http';
+import crypto from 'node:crypto';
 const PORT = Number(process.env.FAKE_PORT || 4200);
-const state = { subscription: null, primaryDomain: 'http://localhost:4100', orders: new Map(), payments: new Map(), tokenCalls: [], payStatus: 'captured' };
+const state = { subscription: null, primaryDomain: 'http://localhost:4100', orders: new Map(), payments: new Map(), tokenCalls: [], payStatus: 'captured',
+  mainTheme: { id: 'gid://shopify/OnlineStoreTheme/111', name: 'Dawn' }, themeError: false,
+  themeFiles: { 'layout/theme.liquid': '<!doctype html>\n<html>\n<head>\n{{ content_for_header }}\n</head>\n<body>\n{{ content_for_layout }}\n</body>\n</html>', 'sections/header.liquid': '<header>{{ shop.name }}</header>', 'assets/global.js': 'console.log(1);', 'config/settings_data.json': '{"current":{}}', 'assets/logo.png': null } };
 const read = (req) => new Promise((r) => { let b = ''; req.on('data', (c) => (b += c)); req.on('end', () => r(b)); });
 const json = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 http.createServer(async (req, res) => {
@@ -24,6 +28,19 @@ http.createServer(async (req, res) => {
     const qy = JSON.parse(body).query;
     if (qy.includes('shop {')) return json(res, 200, { data: { shop: { name: 'Test Shop', email: 'owner@testshop.example', contactEmail: 'hello@testshop.example', currencyCode: 'INR', myshopifyDomain: m[1], primaryDomain: { url: state.primaryDomain }, billingAddress: { countryCodeV2: 'DE' } } } });
     if (qy.includes('activeSubscriptions')) return json(res, 200, { data: { currentAppInstallation: { activeSubscriptions: state.subscription ? [state.subscription] : [] } } });
+    // The live theme and its files (theme file fingerprints).
+    if (/roles: \[MAIN\]|theme\(id:/.test(qy) && state.themeError) return json(res, 200, { errors: [{ message: 'Throttled' }] });
+    if (qy.includes('roles: [MAIN]')) return json(res, 200, { data: { themes: { nodes: [{ ...state.mainTheme, updatedAt: new Date().toISOString() }] } } });
+    if (qy.includes('theme(id:')) {
+      const v = JSON.parse(body).variables || {};
+      const all = Object.entries(state.themeFiles);
+      const md5 = (c) => crypto.createHash('md5').update(c ?? '').digest('hex');
+      if (qy.includes('filenames')) return json(res, 200, { data: { theme: { files: { nodes: all.filter(([n]) => (v.names || []).includes(n)).map(([n, c]) => ({ filename: n, size: (c ?? '').length, body: c == null ? { url: 'https://cdn.example/x' } : { content: c } })) } } } });
+      // Pages of 2, to exercise paging.
+      const start = v.after ? Number(v.after) : 0;
+      const page = all.slice(start, start + 2);
+      return json(res, 200, { data: { theme: { files: { nodes: page.map(([n, c]) => ({ filename: n, checksumMd5: md5(c ?? n), size: (c ?? n).length })), pageInfo: { hasNextPage: start + 2 < all.length, endCursor: String(start + 2) } } } } });
+    }
     if (qy.includes('themes(')) return json(res, 200, { data: { themes: { nodes: [{ id: 'gid://shopify/OnlineStoreTheme/222', name: 'Dawn – Black Friday', role: 'UNPUBLISHED', updatedAt: new Date(Date.now() - 3600e3).toISOString() }] } } });
     if (qy.includes('codeDiscountNodes')) return json(res, 200, { data: { codeDiscountNodes: { nodes: [{ codeDiscount: { title: 'BF', codes: { nodes: [{ code: 'BF20' }] }, customerGets: { value: { percentage: 0.2 } } } }] } } });
     return json(res, 200, { data: {} });
