@@ -189,6 +189,8 @@ async function prepare(job) {
     disabled: runDisabled,
     previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
     testProduct: cfg.testProduct || null, discountCodes: codes, shopifyCodes, preview: preview || null, captureOnly: !!captureOnly,
+    // Price rules the owner set, as many as the plan allows.
+    priceRules: store ? (cfg.priceRules || []).slice(0, entitlements(store.user_id).limits.priceRules) : [],
     release: !!release,
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).
     video: !!cfg.failureVideo && !release,

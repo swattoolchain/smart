@@ -618,7 +618,7 @@
   // What a run does, in order. Mirrors src/live.js on the server.
   const PHASES = [
     { key: 'open', label: 'Open your store', sub: 'On a desktop and a phone-sized screen' },
-    { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount'] },
+    { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'pricing.journey', 'errors.js', 'sale.discount'] },
     { key: 'quality', label: 'Measure speed, SEO and accessibility', groups: ['speed', 'seo', 'a11y', 'links', 'policies'], full: true },
     { key: 'regional', label: 'Check the laws where you sell', groups: ['law.de', 'law.cookies', 'access.law', 'law.us'], full: true },
     { key: 'visual', label: 'Compare screenshots with the approved look', groups: ['visual'], full: true },
@@ -626,7 +626,7 @@
     { key: 'domain', label: 'Check your domain, certificate and email records', groups: ['security.domain'], full: true },
     { key: 'ai', label: 'AI review of how pages look', groups: ['ai.visual'], full: true },
   ];
-  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1, 'security.domain': 3 };
+  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'pricing.journey': 3, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1, 'security.domain': 3 };
   const estimate = (keys) => {
     const sec = 8 + keys.reduce((n, k) => n + (EST[k] || 5), 0);
     return sec < 60 ? 'under a minute' : `about ${Math.ceil(sec / 60)} minutes`;
@@ -1004,10 +1004,10 @@
   STORE_PAGES.suite = async (ctx, s) => {
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (!ctx.alive()) return;
-    const tab = ['product', 'codes'].includes(ctx.r.a) ? ctx.r.a : null;
+    const tab = ['product', 'codes', 'prices'].includes(ctx.r.a) ? ctx.r.a : null;
     const base = `#/s/${s.id}/suite`;
     const shopify = !s.platform || /shopify/i.test(s.platform);
-    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes']], tab);
+    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes'], ['prices', 'Price rules']], tab);
     if (!tab) {
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id, saleTraffic: !!s.config.saleTraffic })}</form></div>`;
       const form = $('#suite');
@@ -1016,6 +1016,34 @@
         onDiscard: () => render(),
       });
       form.addEventListener('change', (e) => { e.target.closest('.check-row')?.classList.toggle('off', !e.target.checked); mark(); });
+      return;
+    }
+    if (tab === 'prices') {
+      const limit = S.license?.limits?.priceRules ?? 10;
+      const rules = s.config.priceRules?.length ? s.config.priceRules : [{ product: '', variant: '', quantity: 1, price: '' }];
+      const row = (r, i) => `<div class="code-row price-rule"><div class="field"><label for="pr${i}">Product</label><input id="pr${i}" name="product" value="${esc(r.product)}" placeholder="Product link or handle, e.g. cotton-kurta" maxlength="300" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="pv${i}">Variant</label><input id="pv${i}" name="variant" value="${esc(r.variant || '')}" placeholder="Optional, e.g. Large" maxlength="100"></div>
+        <div class="field"><label for="pq${i}">Quantity</label><input id="pq${i}" name="quantity" type="number" min="1" max="99" value="${r.quantity ?? 1}"></div>
+        <div class="field"><label for="pp${i}">Price each</label><input id="pp${i}" name="price" inputmode="decimal" value="${r.price ?? ''}" placeholder="e.g. 1299"></div>
+        <button type="button" class="icon-btn" data-rm aria-label="Remove rule" data-tip="Remove">${icon('trash', 16)}</button></div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
+        <div class="form-section" style="border-top:0;padding-top:0"><div><h3>Prices you expect</h3><p class="explain">Every check already compares the price on the product page with what the cart and checkout ask for. Here you can add your own rules, like “3 of this kurta cost 1,299 each” for quantity or volume pricing. Each rule puts the product in a fresh cart and checks the price. Nothing is bought, and the cart is emptied.</p></div>
+          <div class="controls"><form id="prules">${rules.map(row).join('')}</form>
+            <div class="inline-row"><button type="button" class="btn secondary small" id="addr">${icon('add', 15)}Add a rule</button><span class="muted" style="font-size:12.5px">Your plan includes ${plural(limit, 'rule')} per store.</span></div>
+            <p class="error-msg" id="pr-err" role="alert"></p>
+            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Price rules are checked on Shopify stores for now.</p>' : ''}</div></div></div>`;
+      const form = $('#prules');
+      const mark = savebar($('.main-inner', ctx.main), {
+        onSave: async () => {
+          const list = $$('.price-rule', form).map((r) => ({ product: r.querySelector('[name=product]').value.trim(), variant: r.querySelector('[name=variant]').value.trim() || null, quantity: r.querySelector('[name=quantity]').value, price: r.querySelector('[name=price]').value.trim() })).filter((x) => x.product || x.price);
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
+          await loadStores();
+        },
+        onDiscard: () => render(),
+      });
+      form.addEventListener('input', mark);
+      form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.price-rule', form).length > 1) b.closest('.price-rule').remove(); else b.closest('.price-rule').querySelectorAll('input').forEach((i) => (i.value = i.name === 'quantity' ? '1' : '')); mark(); });
+      $('#addr').onclick = () => { if ($$('.price-rule', form).length >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
       return;
     }
     if (tab === 'codes') {
@@ -1655,7 +1683,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.changes?.length ? `<table class="data record-changes"><thead><tr><th>What changed</th><th>Before</th><th>Now</th></tr></thead><tbody>${x.evidence.changes.map((r) => `<tr><td>${esc(r.what)}</td><td><code>${esc(r.before)}</code></td><td><code>${esc(r.after)}</code></td></tr>`).join('')}</tbody></table>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a === 'fail' && x.evidence?.files ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.changes?.length ? `<table class="data record-changes"><thead><tr><th>What changed</th><th>Before</th><th>Now</th></tr></thead><tbody>${x.evidence.changes.map((r) => `<tr><td>${esc(r.what)}</td><td><code>${esc(r.before)}</code></td><td><code>${esc(r.after)}</code></td></tr>`).join('')}</tbody></table>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a === 'fail' && x.evidence?.files ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -2840,7 +2868,8 @@
           <div class="field"><label>Full check, at most</label><select name="fullMinInterval">${Object.entries(FULL_EVERY).map(([k, l]) => opt(k, l, p.limits.fullMinInterval)).join('')}</select></div>
           <div class="field"><label>Environments per store</label><input name="environments" type="number" min="0" max="50" value="${p.limits.environments ?? 0}"></div>
           <div class="field"><label>Max stores</label><input name="maxStores" type="number" min="1" max="1000" value="${p.limits.maxStores ?? ''}" placeholder="No limit"></div>
-          <div class="field"><label>Tests a customer can start, per store per day</label><input name="manualRunsPerDay" type="number" min="1" max="500" value="${p.limits.manualRunsPerDay ?? 20}"></div></div>
+          <div class="field"><label>Tests a customer can start, per store per day</label><input name="manualRunsPerDay" type="number" min="1" max="500" value="${p.limits.manualRunsPerDay ?? 20}"></div>
+          <div class="field"><label>Price rules per store</label><input name="priceRules" type="number" min="0" max="10" value="${p.limits.priceRules ?? 10}"></div></div>
         <label class="check-line"><input type="checkbox" name="public" ${p.public ? 'checked' : ''}><span>Show on the pricing page</span></label>
         <label class="check-line"><input type="checkbox" name="highlight" ${p.highlight ? 'checked' : ''}><span>Highlight it</span></label>
         <label class="check-line"><input type="checkbox" name="active" ${p.active ? 'checked' : ''}><span>Available (untick to retire; existing customers keep it)</span></label>
@@ -2849,7 +2878,7 @@
         const prices = {};
         for (const c of ['USD', 'EUR', 'INR', 'GBP']) { const m = f[`pm_${c}`].value, y = f[`py_${c}`].value; if (m !== '' || y !== '') prices[c] = { month: m === '' ? null : toMinor(m), year: y === '' ? null : toMinor(y) }; }
         const b = { name: f.name.value, tagline: f.tagline.value, kind: f.kind.value, sort: Number(f.sort.value), prices, features: $$('input[name=f]:checked', f).map((x) => x.value),
-          limits: { journeyMinInterval: Number(f.journeyMinInterval.value), fullMinInterval: Number(f.fullMinInterval.value), environments: Number(f.environments.value || 0), maxStores: f.maxStores.value === '' ? null : Number(f.maxStores.value), manualRunsPerDay: Number(f.manualRunsPerDay.value || 20) },
+          limits: { journeyMinInterval: Number(f.journeyMinInterval.value), fullMinInterval: Number(f.fullMinInterval.value), environments: Number(f.environments.value || 0), maxStores: f.maxStores.value === '' ? null : Number(f.maxStores.value), manualRunsPerDay: Number(f.manualRunsPerDay.value || 20), priceRules: Number(f.priceRules.value === '' ? 10 : f.priceRules.value) },
           public: f.public.checked, highlight: f.highlight.checked, active: f.active.checked };
         return isNew ? api('/api/admin/plans', { method: 'POST', body: { ...b, key: f.key.value.trim() } }) : api(`/api/admin/plans/${p.key}`, { method: 'PATCH', body: b });
       } });
