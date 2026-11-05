@@ -69,7 +69,26 @@ app.use((req, res, next) => {
 });
 
 const ip = (req) => req.ip || req.socket.remoteAddress || 'unknown';
-const isEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s) && s.length < 200;
+// Length first, and a pattern with no overlapping parts, so a huge or crafted input can never be slow (ReDoS).
+const isEmail = (s) => typeof s === 'string' && s.length < 200 && /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)*\.[^\s@.]{2,}$/.test(s);
+
+// Simple per-key limits for routes that send email or create accounts, so nobody can use them to spam.
+const hits = new Map();
+function overLimit(key, max, windowMs = 3600e3) {
+  const now = Date.now();
+  const list = (hits.get(key) || []).filter((t) => now - t < windowMs);
+  if (list.length >= max) { hits.set(key, list); return true; }
+  list.push(now);
+  hits.set(key, list);
+  if (hits.size > 50000) for (const [k, v] of hits) if (!v.some((t) => now - t < windowMs)) hits.delete(k);
+  return false;
+}
+const LIMITS = {
+  signup: Number(process.env.SIGNUPS_PER_IP_PER_HOUR || 5),
+  leads: Number(process.env.LEADS_PER_IP_PER_HOUR || 10),
+  testAlerts: Number(process.env.TEST_ALERTS_PER_STORE_PER_HOUR || 5),
+};
+const tooMany = (res, what) => res.status(429).json({ error: `Too many ${what}. Try again in an hour.` });
 
 function requireUser(req, res, next) {
   // Inside Shopify admin there are no cookies: every request carries a Shopify session token.
@@ -215,6 +234,7 @@ app.get('/api/runs/:id', (req, res) => {
 app.post('/api/leads', (req, res) => {
   const { email, runId, url, source } = req.body || {};
   if (!isEmail(email)) return res.status(400).json({ error: 'Enter a valid email' });
+  if (overLimit(`lead:${ip(req)}`, LIMITS.leads)) return tooMany(res, 'requests from this address');
   q.insertLead.run(email.toLowerCase(), String(url || '').slice(0, 300), Number(runId) || null, String(source || 'scan').slice(0, 40));
   if (config.adminEmail) sendMail({ to: config.adminEmail, subject: `New lead: ${email}`, text: `${email}\n${url || ''}\nRun ${runId || '-'}` }).catch(() => {});
   res.json({ ok: true });
@@ -241,6 +261,7 @@ app.post('/api/auth/signup', async (req, res) => {
   if (q.userByEmail.get(e) || emailTaken(e)) return res.status(409).json({ error: 'An account with this email already exists. Log in instead.' });
   // Founder accounts get console access by email, so they are created on the server (scripts/create-user.js), never by signing up.
   if (ADMINS.has(e)) return res.status(403).json({ error: 'This email can’t be used to sign up here.' });
+  if (overLimit(`signup:${ip(req)}`, LIMITS.signup)) return tooMany(res, 'sign-ups from this address');
   const hash = await bcrypt.hash(password, 10);
   const info = q.insertUser.run(e, hash, String(name || '').slice(0, 80));
   req.session.uid = Number(info.lastInsertRowid);
@@ -837,6 +858,7 @@ app.get('/api/stores/:id/runs', requireUser, (req, res) => {
 app.post('/api/stores/:id/test-alert', requireUser, async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
+  if (overLimit(`test-alert:${s.id}`, LIMITS.testAlerts)) return tooMany(res, 'test alerts for this store');
   const name = s.name || new URL(s.url).host;
   const text = `This is a test alert for ${name} from Tharam Store Guard. Real alerts look like this, with what broke, how to fix it, and a link to the report.\n\n${config.baseUrl}/app#/s/${s.id}`;
   const chat = has(entitlements(s.user_id), 'slack');
