@@ -18,6 +18,7 @@ const PROBLEM = {
   'sec.redirect': 'your store is sending shoppers to another website',
   'sec.mining': "a script is using shoppers' devices to mine cryptocurrency",
   'sec.frames': 'your store loads a hidden page from a known malicious website',
+  'sec.scripts.forms': 'a script is reading what shoppers type and sending it to another website',
 };
 
 export function scoreChecks(checks) {

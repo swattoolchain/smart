@@ -998,6 +998,7 @@ ui-nav-menu { display: none !important; }
 @media (max-width: 900px) { .sale-grid { grid-template-columns: 1fr; } .sale-verdict .figures { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
 /* Script watch: a known malicious site in the Scripts and apps tab */
 .callout.fail { border: 1px solid var(--fail); background: var(--fail-bg); padding: 12px 14px; border-radius: 10px; margin: 0 0 14px; }
+.callout.warn { border: 1px solid var(--warn); background: var(--warn-bg); padding: 12px 14px; border-radius: 10px; margin: 0 0 14px; }
 .scripts-table td .cell-main { word-break: break-all; }
 
 /* Theme code changes: changed lines per file */

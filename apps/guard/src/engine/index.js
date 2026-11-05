@@ -15,6 +15,7 @@ import { runDiscounts } from './discount.js';
 import { reviewScreens } from './visual-ai.js';
 import { watchScripts, scriptChecks } from './scripts.js';
 import { watchHijack, hijackChecks } from './hijack.js';
+import { watchForms, formChecks } from './forms.js';
 import { aiEnabled } from '../ai.js';
 
 async function isLocked(ctx, origin) {
@@ -103,6 +104,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let scripts = null;
     phase('journey');
     const inventory = on('security.scripts') ? watchScripts(page, origin) : null;
+    const forms = on('security.scripts') ? await watchForms(page, origin).catch((e) => { console.error('form watch failed', e.message); return null; }) : null;
     const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
     // Script watch compares with the store's previous check; publish-check runs only record.
     if (inventory && !fn.locked && !fn.blocked && !fn.down) scripts = scriptChecks({ rec, inventory: inventory(), previous: previousScripts, monitored: !!storeId && !preview && !captureOnly });
@@ -110,6 +112,8 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       await hijack.probe(mctx);
       hijackChecks({ rec, found: await hijack.result() });
     }
+    // Scripts reading what shoppers type, on the product and cart pages (also on drafts: a skimmer in a draft theme matters).
+    if (scripts && forms) scripts.forms = formChecks({ rec, found: forms() });
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
