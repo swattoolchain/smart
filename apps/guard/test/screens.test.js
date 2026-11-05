@@ -45,12 +45,15 @@ describe('Screens', () => {
     note(t, `${await p.locator('.kpi').count()} tiles, ${await p.locator('.act-feed li').count()} activity rows`);
   });
 
-  it('the sale readiness quick action opens the run page with the sale checks chosen', async (t) => {
+  it('the sale readiness quick action opens the Sale readiness page, and its button the run page with the sale checks chosen', async (t) => {
     const p = await page();
     await p.goto(`${P.base}/app#/s/${storeId}`);
-    await p.waitForSelector('[data-preset=sale]');
+    await p.waitForSelector('a.qa[href$="/sale"]');
     await quiet(p);
-    await p.click('[data-preset=sale]');
+    await p.click('a.qa[href$="/sale"]');
+    await p.waitForSelector('#sale-run', { timeout: 20000 });
+    await quiet(p);
+    await p.click('#sale-run');
     await p.waitForFunction(() => location.hash.endsWith('/run'));
     await p.waitForTimeout(800);
     assert.match(await p.textContent('body'), /SALE READINESS|Sale readiness/);

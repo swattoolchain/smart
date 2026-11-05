@@ -337,6 +337,7 @@
       ${item(`${base}/publish`, 'publish', 'Safe to publish', at('publish'))}
       ${item(`${base}/catalog`, 'catalog', 'Catalog', at('catalog'))}
       ${item(`${base}/visual`, 'visual', 'Visual changes', at('visual'))}
+      ${item(`${base}/sale`, 'sparkle', 'Sale readiness', at('sale'))}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
@@ -665,7 +666,7 @@
       const actions = [
         action(`${base}/run`, 'play', 'Run a check now', 'Shopping journey, full suite or pick checks'),
         action(`${base}/publish`, 'publish', 'Check a design before publishing', 'Your draft themes, side by side with live'),
-        action(`${base}/run`, 'sparkle', 'Sale readiness check', 'Before Black Friday or a big sale', 'data-preset="sale"'),
+        action(`${base}/sale`, 'sparkle', 'Sale readiness', 'Before Black Friday or a big sale'),
         action(`${base}/suite/codes`, 'catalog', 'Test discount codes', s.config.discountCodes?.length ? `${plural(s.config.discountCodes.length, 'code')} checked daily` : 'Make sure your sale codes work'),
         action(`${base}/alerts`, 'alerts', 'Alerts', `Sent to ${esc(s.alert_email || 'your email')}`),
       ].join('');
@@ -727,7 +728,7 @@
     const PRESETS = [
       { key: 'quick', title: 'Quick journey', desc: 'Can customers find a product, add it to the cart and reach checkout?', keys: keys(usable.filter((g) => g.run === 'journeys')) },
       { key: 'suite', title: 'Your test suite', desc: 'Everything switched on for scheduled full checks of this store.', keys: suite, tag: 'Recommended' },
-      { key: 'sale', title: 'Sale readiness', desc: 'Before Black Friday or a big sale: buying on a phone, every price, discount codes, speed, app errors and how the store looks.', keys: keys(usable.filter((g) => ['journey.core', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount', 'catalog', 'speed', 'visual', 'law.cookies'].includes(g.key) && (g.key !== 'law.cookies' || inMarket(g, s.config.markets)))) },
+      { key: 'sale', title: 'Sale readiness', desc: 'Before Black Friday or a big sale: buying on a phone, every price, discount codes, speed, app errors and how the store looks.', keys: keys(usable.filter((g) => ['journey.core', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount', 'catalog', 'speed', 'visual', 'law.cookies', 'law.de', 'access.law', 'law.us'].includes(g.key) && (!g.markets || inMarket(g, s.config.markets)))) },
       { key: 'all', title: 'Everything', desc: 'Every validation available, including ones switched off in your suite.', keys: keys(usable) },
     ].filter((p, i, all) => p.key !== 'all' || !same(p.keys, all[1].keys));
     let sel = [...suite];
@@ -1103,6 +1104,43 @@
   };
 
   // Visual changes
+  // ---------- Sale readiness ----------
+  STORE_PAGES.sale = async (ctx, s) => {
+    const d = await api(`/api/stores/${s.id}/sale-readiness`).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+    if (!ctx.alive()) return;
+    const runBtn = `<a class="btn" href="#/s/${s.id}/run" data-preset="sale" id="sale-run">Run a sale readiness check</a>`;
+    const intro = '<p class="lede-sm">One report before a sale or Black Friday: can customers buy, is every price right, do your codes work, is the store fast on a phone, are apps breaking anything, are the laws where you sell met, and does it look right.</p>';
+    const wire = () => $$('[data-preset]', ctx.main).forEach((a) => a.addEventListener('click', () => (S.runPreset = a.dataset.preset)));
+    if (!d) {
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Sale readiness')}${intro}<div class="panel empty"><h2>No full check yet</h2><p>A sale readiness check takes a few minutes. Nothing is bought, and the cart is emptied afterwards.</p>${runBtn}</div></div>`;
+      wire();
+      return;
+    }
+    const V = { ready: 'healthy', partial: 'healthy', attention: 'warning', blocked: 'critical' };
+    const P = { ready: 'healthy', attention: 'warning', blocker: 'critical', not_checked: '' };
+    const sections = d.sections.map((x) => `<section class="panel sale-sec status-${x.status}" data-sec="${esc(x.key)}">
+      <header><h2>${esc(x.title)}</h2><span class="pill ${P[x.status]}">${esc(x.label)}</span></header>
+      <p class="sub">${esc(x.summary)}</p>
+      ${x.items.length ? `<ul class="sale-items">${x.items.map((i) => `<li><span class="sev ${i.status}">${i.status === 'fail' ? 'Fix' : 'Check'}</span><span><b>${esc(i.title)}</b><span class="d">${esc(i.detail)}</span>${i.fix ? `<span class="fix-inline">Fix: ${esc(i.fix)}</span>` : ''}</span></li>`).join('')}${x.more ? `<li class="muted">and ${x.more} more in the report</li>` : ''}</ul>` : ''}
+      ${x.key === 'codes' && x.status === 'not_checked' ? `<p><a href="#/s/${s.id}/suite/codes">Add your sale codes</a></p>` : ''}
+    </section>`).join('');
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Sale readiness', { actions: `<button class="btn secondary" id="sale-email">Email me this summary</button>${runBtn}` })}${intro}
+      <div class="panel sale-verdict sv-${d.verdict}"><span class="pill ${V[d.verdict]}">${d.verdict === 'blocked' ? 'Not ready' : d.verdict === 'attention' ? 'Almost ready' : 'Ready'}</span>
+        <h2>${esc(d.headline)}</h2>
+        <p class="muted">From the ${d.kind === 'full' ? 'full ' : ''}check ${time(d.checkedAt)}. <a href="#/s/${s.id}/reports/${d.runId}">Open the full report</a>${d.recipient ? ` · The summary email goes to ${esc(d.recipient)}.` : ''}</p>
+        <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+          <div class="figure"><b style="color:var(--pass)">${d.counts.ready}</b><span>ready</span></div>
+          <div class="figure"><b style="color:${d.counts.attention ? 'var(--warn)' : 'var(--ink)'}">${d.counts.attention}</b><span>need attention</span></div>
+          <div class="figure"><b style="color:${d.counts.blockers ? 'var(--fail)' : 'var(--ink)'}">${d.counts.blockers}</b><span>to fix before the sale</span></div>
+          <div class="figure"><b style="color:var(--ink)">${d.counts.notChecked}</b><span>not checked</span></div></div></div>
+      <div class="sale-grid">${sections}</div></div>`;
+    wire();
+    $('#sale-email').onclick = async (e) => {
+      const done = busy(e.currentTarget, 'Sending');
+      try { const r = await api(`/api/stores/${s.id}/sale-readiness/email`, { method: 'POST', body: { run: d.runId } }); toast(`Sent to ${r.to}`); } catch (ex) { toast(ex.message, 'error'); } finally { done(); }
+    };
+  };
+
   STORE_PAGES.visual = async (ctx, s) => {
     const d = await api(`/api/stores/${s.id}/visual`);
     if (!ctx.alive()) return;
@@ -2468,7 +2506,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false;
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', alerts: '/alerts', suite: '/suite', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {

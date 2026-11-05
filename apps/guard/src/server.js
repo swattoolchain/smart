@@ -27,6 +27,7 @@ import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
+import { saleReadiness, emailSaleReadiness, saleRecipients, saleGroups } from './sale-readiness.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -727,6 +728,25 @@ app.get('/api/stores/:id/catalog', requireUser, (req, res) => {
   const data = catalogReport(s.id, req.query.run ? Number(req.query.run) : null, String(req.query.base || 'prev'));
   if (!data) return res.status(404).json({ error: 'No catalog snapshot yet. Run a full check first.' });
   res.json(data);
+});
+
+// Sale readiness: one report before a sale, from the latest full check (or ?run=), and as an email.
+app.get('/api/stores/:id/sale-readiness', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const r = saleReadiness(s, req.query.run ? Number(req.query.run) || -1 : null);
+  if (!r) return res.status(404).json({ error: 'No full check yet. Run a sale readiness check first.', groups: saleGroups(s), recipient: saleRecipients(s) });
+  res.json({ ...r, groups: saleGroups(s), recipient: saleRecipients(s) });
+});
+
+app.post('/api/stores/:id/sale-readiness/email', requireUser, async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const r = saleReadiness(s, req.body?.run ? Number(req.body.run) || -1 : null);
+  if (!r) return res.status(404).json({ error: 'No full check yet. Run a sale readiness check first.' });
+  const to = saleRecipients(s);
+  if (!to) return res.status(400).json({ error: 'Add an alert email under Alerts first.' });
+  try { res.json(await emailSaleReadiness(s, r, to)); } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'The email could not be sent. Try again in a minute.' }); }
 });
 
 app.post('/api/stores/:id/explain-change', requireUser, async (req, res) => {
