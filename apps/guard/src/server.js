@@ -32,6 +32,7 @@ import { catalogReport } from './catalog-report.js';
 import { saleReadiness, emailSaleReadiness, saleRecipients, saleGroups } from './sale-readiness.js';
 import { appHealth } from './app-health.js';
 import { runnerRoutes } from './runner-routes.js';
+import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportName } from './export.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -812,6 +813,49 @@ app.get('/api/stores/:id/apps', requireUser, (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   res.json(appHealth(s));
+});
+
+// ---------- Exports: CSV and printable / PDF report (owner only) ----------
+const sendFile = (res, name, type, body) => { res.set({ 'Content-Type': type, 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }); res.send(body); };
+app.get('/api/stores/:id/export/runs.csv', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  sendFile(res, exportName(s, 'checks-history'), 'text/csv; charset=utf-8', runsCsv(s, req.query.days));
+});
+app.get('/api/stores/:id/export/checks.csv', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const run = runFor(s, req.query.run);
+  if (!run || !run.result_json) return res.status(404).json({ error: 'Report not found' });
+  sendFile(res, exportName(s, `check-${run.seq ?? run.id}`), 'text/csv; charset=utf-8', checksCsv(s, run));
+});
+app.get('/api/stores/:id/export/products.csv', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (req.query.run && !runFor(s, req.query.run)) return res.status(404).json({ error: 'Report not found' });
+  const out = productsCsv(s, req.query.run);
+  if (!out) return res.status(404).json({ error: 'No product list yet. Run a full check first.' });
+  sendFile(res, exportName(s, 'products'), 'text/csv; charset=utf-8', out.csv);
+});
+app.get('/api/stores/:id/runs/:runId/report.html', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const run = runFor(s, req.params.runId);
+  if (!run || !run.result_json) return res.status(404).json({ error: 'Report not found' });
+  res.set({ 'Cache-Control': 'private, no-store', 'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
+  res.type('html').send(reportHtml(s, run, { autoPrint: req.query.print === '1' }));
+});
+app.get('/api/stores/:id/runs/:runId/report.pdf', requireUser, async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const run = runFor(s, req.params.runId);
+  if (!run || !run.result_json) return res.status(404).json({ error: 'Report not found' });
+  try {
+    sendFile(res, exportName(s, `report-${run.seq ?? run.id}`, 'pdf'), 'application/pdf', await reportPdf(s, run));
+  } catch (e) {
+    console.error('pdf export failed', e.message);
+    res.status(503).json({ error: 'The PDF could not be made right now. Try again in a minute, or use Print instead.' });
+  }
 });
 
 app.post('/api/stores/:id/explain-change', requireUser, async (req, res) => {
