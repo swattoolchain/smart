@@ -1030,3 +1030,7 @@ ui-nav-menu { display: none !important; }
 .video-replay { margin-top: 8px; }
 .video-replay summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--ink, inherit); }
 .video-replay video { display: block; width: 100%; max-width: 640px; margin: 8px 0 4px; border-radius: 8px; background: #000; }
+/* Sale traffic readiness: step times alone vs several shoppers */
+.traffic-table { border-collapse: collapse; margin: 10px 0 4px; font-size: 13px; width: 100%; max-width: 560px; }
+.traffic-table th, .traffic-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line, #e5e7eb); }
+.traffic-table th { font-weight: 600; color: var(--muted, #6b7280); }

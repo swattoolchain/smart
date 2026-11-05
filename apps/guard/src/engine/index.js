@@ -13,6 +13,7 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { runVariantSweep } from './variants.js';
+import { runTraffic } from './traffic.js';
 import { reviewScreens } from './visual-ai.js';
 import { watchScripts, scriptChecks, pageKind } from './scripts.js';
 import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js';
@@ -36,7 +37,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -126,6 +127,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let catalog = null;
     let variants = null;
     const catalogKeep = {};
+    let trafficOut = null;
     let ai = null;
     let scripts = null;
     phase('journey');
@@ -174,6 +176,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         const cost = scripts && on('speed') ? watchCost(mobilePage) : null;
         metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;
         if (cost) scripts.phone = await cost();
+      }
+      // Opt-in only (Store settings), never on publish previews, at most every 6 hours (see traffic.js).
+      if (kind === 'full' && storeId && traffic && !preview && on('sale.traffic')) {
+        phase('traffic');
+        trafficOut = await runTraffic({ rec, origin, info, password, storeId, dataDir: config.dataDir, shoppers: traffic.shoppers });
       }
       if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
         phase('regional');
@@ -226,6 +233,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       catalog,
       variants,
       video: videoOut,
+      traffic: trafficOut,
       ai,
       scripts,
       testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,

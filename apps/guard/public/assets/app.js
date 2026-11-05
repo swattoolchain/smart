@@ -188,6 +188,9 @@
   const videoHtml = (ev) => !ev?.video ? '' : ev.videoUntil && new Date(ev.videoUntil) < new Date()
     ? '<p class="cell-sub video-gone">The video replay was deleted after 7 days.</p>'
     : `<details class="video-replay"><summary>Watch the replay</summary><video controls preload="metadata" playsinline src="${esc(ev.video)}"></video><span class="cell-sub">Kept until ${esc(new Date(ev.videoUntil).toLocaleDateString())}</span></details>`;
+  // Sale traffic readiness: step times for one shopper alone and for several at once.
+  const trafficHtml = (ev) => { const t = ev?.traffic; if (!t?.steps) return ''; const s = (ms) => (ms == null ? '–' : ms < 100 ? '<0.1 s' : `${(ms / 1000).toFixed(1)} s`);
+    return `<table class="traffic-table"><thead><tr><th>Step</th><th>One shopper</th><th>${t.shoppers} at once (typical)</th><th>Slowest</th></tr></thead><tbody>${t.steps.map((x) => `<tr><td>${esc(x.label)}</td><td>${s(x.alone)}</td><td>${s(x.median)}</td><td>${s(x.max)}</td></tr>`).join('')}</tbody></table>`; };
 
   // ---------- Auth ----------
   function authView(mode, notice) {
@@ -863,17 +866,18 @@
   // Test suite
   const marketNames = (codes) => codes.map((c) => S.catalog.markets.find((m) => m.code === c)?.label || c);
   const inMarket = (g, markets) => !g.markets || g.markets.some((m) => (markets || []).includes(m));
-  function suiteRows(groups, disabled, { shopify = true, aiEnabled = false, markets = null, storeId = null } = {}) {
+  function suiteRows(groups, disabled, { shopify = true, aiEnabled = false, markets = null, storeId = null, saleTraffic = false } = {}) {
     const list = groups.filter((g) => !g.ai || aiEnabled);
     const areas = [...new Set(list.map((g) => g.area))];
     return areas.map((area) => `<section class="suite-area"><h3>${esc(area)}</h3><div class="rows">${list.filter((g) => g.area === area).map((g) => {
       const journeyOnly = g.key.startsWith('journey.') && !g.locked && !shopify;
       const outside = markets && !inMarket(g, markets);
       const notPlan = !groupAllowed(g);
-      const on = g.locked || (!disabled.includes(g.key) && !journeyOnly && !outside && !notPlan);
+      const optOff = g.optIn && !saleTraffic; // opt-in tests run only after the owner switches them on in Store settings
+      const on = g.locked || (!disabled.includes(g.key) && !journeyOnly && !outside && !notPlan && !optOff);
       return `<label class="check-row ${on ? '' : 'off'}">
-        <span class="switch"><input type="checkbox" name="g" value="${esc(g.key)}" ${on ? 'checked' : ''} ${g.locked || journeyOnly || outside || notPlan ? 'disabled' : ''} aria-label="${esc(g.label)}"><span></span></span>
-        <span><b>${esc(g.label)}</b><p>${esc(g.description)}</p>${journeyOnly ? '<p class="unavailable">Available for Shopify stores. Other platforms are coming.</p>' : ''}${g.markets && !notPlan ? `<p class="${outside ? 'unavailable' : 'muted'}" style="font-size:12.5px">For stores selling in ${esc(marketNames(g.markets).join(', '))}.${outside ? (storeId ? ` <a href="#/s/${storeId}/settings">Add where you sell</a> to turn it on.` : ' Choose one of these countries above to turn it on.') : ''}</p>` : ''}</span>
+        <span class="switch"><input type="checkbox" name="g" value="${esc(g.key)}" ${on ? 'checked' : ''} ${g.locked || journeyOnly || outside || notPlan || optOff ? 'disabled' : ''} aria-label="${esc(g.label)}"><span></span></span>
+        <span><b>${esc(g.label)}</b><p>${esc(g.description)}</p>${journeyOnly ? '<p class="unavailable">Available for Shopify stores. Other platforms are coming.</p>' : ''}${optOff && !notPlan ? `<p class="unavailable">Off until you switch it on${storeId ? ` in <a href="#/s/${storeId}/settings">Store settings</a>` : ' in Store settings after adding the store'}.</p>` : ''}${g.markets && !notPlan ? `<p class="${outside ? 'unavailable' : 'muted'}" style="font-size:12.5px">For stores selling in ${esc(marketNames(g.markets).join(', '))}.${outside ? (storeId ? ` <a href="#/s/${storeId}/settings">Add where you sell</a> to turn it on.` : ' Choose one of these countries above to turn it on.') : ''}</p>` : ''}</span>
         <span class="when">${notPlan ? `<a class="plan-tag" href="#/account/billing" title="Included in ${esc(plansFor(featureOf(g.key)))}">${icon('lock', 12)}${esc(plansFor(featureOf(g.key)))}</a>` : g.locked ? 'Always on' : g.run === 'journeys' ? 'Every test' : 'Full check'}</span></label>`;
     }).join('')}</div></section>`).join('');
   }
@@ -904,7 +908,7 @@
     const shopify = !s.platform || /shopify/i.test(s.platform);
     const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes']], tab);
     if (!tab) {
-      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id })}</form></div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id, saleTraffic: !!s.config.saleTraffic })}</form></div>`;
       const form = $('#suite');
       const mark = savebar(form.parentElement, {
         onSave: async () => { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { disabled: readDisabled(form) } } }); await loadStores(); },
@@ -1296,6 +1300,9 @@
           <div class="field" style="width:120px;margin:0"><label for="cur">Currency</label><select id="cur" name="currency">${['', 'INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'].map((c) => `<option value="${c}" ${c === (s.config.currency || '') ? 'selected' : ''}>${c || 'Store’s'}</option>`).join('')}</select></div></div></div></div>
       <div class="form-section"><div><h3>Video replay</h3><p class="explain">See exactly what our test shopper saw when buying broke. Videos are kept for 7 days and only you can open them.</p></div>
         <div class="controls"><label class="toggle-line"><span class="switch"><input type="checkbox" name="failureVideo" id="fv" ${s.config.failureVideo ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Record a video when a shopping check fails</b><span>We record each shopping journey and keep the video only if something failed, such as Add to cart or checkout.</span></span></label></div></div>
+      <div class="form-section"><div><h3>Sale traffic test <span class="muted" style="font-weight:400">(optional)</span></h3><p class="explain">A few shoppers buy at the same time during the daily full check, to show whether your store slows down when a sale starts. Never a load test: at most 5 shoppers, each goes through once and stops before checkout details, at most every 6 hours.</p></div>
+        <div class="controls"><label class="toggle-line"><span class="switch"><input type="checkbox" name="saleTraffic" id="st" ${s.config.saleTraffic ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Test with several shoppers at once</b><span>Product page, add to cart, cart and checkout, compared with one shopper alone.</span></span></label>
+          <div class="field" style="max-width:220px;margin-top:12px"><label for="stn">Shoppers at once</label><select id="stn" name="saleTrafficShoppers">${[2, 3, 4, 5].map((n) => `<option value="${n}" ${n === (s.config.saleTrafficShoppers || 3) ? 'selected' : ''}>${n}</option>`).join('')}</select></div></div></div>
       <div class="form-section"><div><h3>Storefront password</h3><p class="explain">Only needed while your store is password protected (for example before launch). We use it to open the store for testing and never show it again.</p></div>
         <div class="controls"><div class="field"><label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="off" placeholder="${s.has_password ? 'Saved. Type to replace' : 'Not set'}"></div>
         ${s.has_password ? '<label class="toggle-line"><span class="switch"><input type="checkbox" name="clearpw"><span></span></span><span class="tl-text"><b>Remove saved password</b><span>Use this once your store is public.</span></span></label>' : ''}</div></div>
@@ -1306,7 +1313,7 @@
     const mark = savebar($('.main-inner', ctx.main), {
       onSave: async () => {
         const fd = new FormData(form);
-        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null, markets: fd.getAll('market'), failureVideo: !!fd.get('failureVideo') } };
+        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null, markets: fd.getAll('market'), failureVideo: !!fd.get('failureVideo'), saleTraffic: !!fd.get('saleTraffic'), saleTrafficShoppers: Number(fd.get('saleTrafficShoppers')) || 3 } };
         if (fd.get('clearpw')) body.password = '';
         else if (fd.get('password')) body.password = fd.get('password');
         await api(`/api/stores/${s.id}`, { method: 'PATCH', body });
@@ -1406,7 +1413,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${videoHtml(x.evidence)}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>

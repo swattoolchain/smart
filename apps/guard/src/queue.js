@@ -187,6 +187,8 @@ async function prepare(job) {
     testProduct: cfg.testProduct || null, discountCodes: codes, preview: preview || null, captureOnly: !!captureOnly,
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).
     video: !!cfg.failureVideo && !release,
+    // Sale traffic readiness: a few shoppers at once, when the store has it switched on (never for publish checks).
+    traffic: !release && cfg.saleTraffic ? { shoppers: cfg.saleTrafficShoppers } : null,
   };
 }
 

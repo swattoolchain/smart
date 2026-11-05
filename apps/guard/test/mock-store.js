@@ -114,6 +114,11 @@ const CART_REFUSES = new Map();
 if (EXTRA.includes('brokenvariant')) CART_REFUSES.set(103, [422, { status: 422, message: 'Cart Error', description: 'This item could not be added to your cart.' }]);
 if (EXTRA.includes('unpublishedvariant')) CART_REFUSES.set(102, [404, { status: 404, message: 'Cart Error', description: 'Cannot find variant' }]);
 let ADD_CALLS = 0; // cart/add.js requests, so tests can see the sweep is capped
+// Sale traffic (MOCK_EXTRA): slowcrowd = pages get slow when several shoppers are on them at once;
+// crowdfail = Add to cart fails when shoppers add at the same moment (only the first of a burst succeeds).
+let INFLIGHT = 0;
+let LAST_ADD = 0;
+const CROWD_PAGE = (p) => (p.startsWith('/products/') && !p.endsWith('.js')) || p === '/cart' || p.startsWith('/checkouts/') || p === '/checkout';
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
 
 function cartFor(req, res) {
@@ -196,6 +201,14 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/__collected') return send(res, 200, { collected: COLLECTED }, 'application/json');
   if (FORM_JS[p]) return send(res, 200, FORM_JS[p], 'application/javascript');
+  if (EXTRA.includes('slowcrowd') && CROWD_PAGE(p) && req.method === 'GET') {
+    INFLIGHT++;
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      if (INFLIGHT >= 2) await new Promise((r) => setTimeout(r, 2500));
+    } finally { INFLIGHT--; }
+  }
+  if (p === '/__carts') return send(res, 200, { carts: [...carts.values()].map((c) => c.length) }, 'application/json');
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   // Every request the store received (method, path, user agent), for tests that limit how a visitor behaves.
   if (p === '/__requests') return send(res, 200, { requests: REQUESTS }, 'application/json');
@@ -272,6 +285,7 @@ const server = http.createServer(async (req, res) => {
     const items = cartFor(req, res);
     const body = JSON.parse((await readBody(req)) || '{}');
     ADD_CALLS++;
+    if (EXTRA.includes('crowdfail')) { const now = Date.now(); const busy = now - LAST_ADD < 400; LAST_ADD = now; if (busy) return send(res, 503, { status: 503, description: 'Too many requests at once' }, 'application/json'); }
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
       const refused = CART_REFUSES.get(Number(it.id));
       if (refused) return send(res, refused[0], refused[1], 'application/json');

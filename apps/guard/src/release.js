@@ -11,7 +11,7 @@ import { effectiveDisabled } from './engine/catalog.js';
 import { entitlements, has, blockReason, envAllowed } from './license.js';
 import { sendMail, sendSlack } from './alerts.js';
 
-const SKIP = ['catalog', 'catalog.variants', 'ai.copy', 'ai.visual']; // the catalog and cart are the same for both themes
+const SKIP = ['catalog', 'catalog.variants', 'sale.traffic', 'ai.copy', 'ai.visual']; // the catalog and cart are the same for both themes
 
 /** Accepts a Shopify preview link for this store. Returns the URL to open, or throws a merchant-readable error. */
 export function previewUrlFor(store, input) {
