@@ -105,12 +105,21 @@ else
 fi
 
 say "Waiting for the app"
+HEALTHY=0
 for i in $(seq 1 60); do
   if $COMPOSE exec -T guard node -e "fetch('http://localhost:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
-    echo "App is healthy."; break
+    echo "App is healthy."; HEALTHY=1; break
   fi
   sleep 3
 done
+
+# Free disk only after a successful deploy, so a failed one keeps everything for a quick look or rollback.
+if [ "$HEALTHY" = "1" ]; then
+  say "Cleaning up old Docker images and build cache"
+  bash "$DIR/deploy/docker-cleanup.sh" || true
+else
+  echo "The app did not answer yet, so old Docker images were kept. Check: cd $DIR/deploy && $COMPOSE logs guard"
+fi
 
 IP=$(curl -fsS https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
 say "Done ($MODE mode)"
