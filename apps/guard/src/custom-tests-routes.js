@@ -11,7 +11,8 @@
  */
 import express from 'express';
 import { entitlements, blockReason } from './license.js';
-import { currentTests, testsVersion, testsHistory, saveTests, testLimits, readFile, validate, runTest, checkIdOf, fileFromTests, lastResults, STEPS, MAX_FILE_BYTES, MAX_STEPS } from './custom-tests.js';
+import { currentTests, testsVersion, testsHistory, saveTests, testLimits, readFile, validate, runTest, checkIdOf, fileFromTests, fileDoc, lastResults, STEPS, MAX_FILE_BYTES, MAX_STEPS } from './custom-tests.js';
+import { templateList, testFromTemplate, freeName } from './custom-test-templates.js';
 import { storeConfig } from './scheduler.js';
 
 const TRIES_PER_HOUR = 30;
@@ -61,7 +62,7 @@ export function customTestRoutes(app, { requireUser, ownStore }) {
       res.set('Content-Disposition', `attachment; filename="tharam-tests-${host}-v${file.version}.${ext}"`);
       return res.type(ext === 'json' ? 'application/json' : 'text/yaml').send(file.text);
     }
-    res.json({ file: file || null, limits: testLimits(entitlements(s.user_id)), history: testsHistory(s.id), results: lastResults(s.id), library: LIBRARY, maxSteps: MAX_STEPS, example: EXAMPLE });
+    res.json({ file: file || null, limits: testLimits(entitlements(s.user_id)), history: testsHistory(s.id), results: lastResults(s.id), library: LIBRARY, templates: templateList(), maxSteps: MAX_STEPS, example: EXAMPLE });
   });
 
   app.put('/api/stores/:id/custom-tests', requireUser, express.text({ type: ['text/*', 'application/yaml', 'application/x-yaml'], limit: MAX_FILE_BYTES + 1024 }), (req, res) => {
@@ -72,6 +73,26 @@ export function customTestRoutes(app, { requireUser, ownStore }) {
       const { text, format } = bodyText(req, limits);
       const file = saveTests(s.id, req.user.id, text, { format, limits });
       res.json({ ok: true, unchanged: !!file.unchanged, file: { ...file, unchanged: undefined }, history: testsHistory(s.id) });
+    } catch (e) {
+      res.status(400).json({ error: e.message, problems: e.problems || [e.message] });
+    }
+  });
+
+  // Add a ready-made template (src/custom-test-templates.js) with the owner's values, as a new version of the file.
+  app.post('/api/stores/:id/custom-tests/templates/:key', requireUser, (req, res) => {
+    const s = ownStore(req, res);
+    if (!s) return;
+    const limits = testLimits(entitlements(s.user_id));
+    const cur = currentTests(s.id);
+    const list = cur ? fileDoc(cur.tests).tests : [];
+    if (list.length >= limits.tests) return res.status(403).json({ error: `Your plan allows ${limits.tests} of your own tests per store. Delete or replace one to add this template.`, upgrade: true });
+    let test;
+    try { test = testFromTemplate(String(req.params.key), req.body?.values || {}); } catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+    test.name = freeName(test.name, list);
+    try {
+      const { text, format } = fileFromTests([...list, test], cur?.format === 'json' ? 'json' : 'yaml', limits);
+      const file = saveTests(s.id, req.user.id, text, { format, limits });
+      res.json({ ok: true, name: test.name, index: list.length, file: { ...file, unchanged: undefined }, history: testsHistory(s.id) });
     } catch (e) {
       res.status(400).json({ error: e.message, problems: e.problems || [e.message] });
     }

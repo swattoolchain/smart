@@ -64,5 +64,9 @@ tests:
 - `PUT /api/stores/:id/custom-tests` — upload: the file as the body (`text/yaml` or JSON), or `{ "text": "…" }`.
   Mistakes come back as `400 { error, problems: ["Test 1 (“…”), step 3: “click” needs a target …"] }`.
   Every saved file becomes a new version; older versions are never deleted.
+- `POST /api/stores/:id/custom-tests/templates/:key` — `{ values }`: adds a ready-made template (delivery checker,
+  cash on delivery, size guide, store locator, gift card, subscription, reviews, wishlist, newsletter, WhatsApp/chat,
+  language or currency switcher; see `src/custom-test-templates.js`) with the owner's values, as a new version.
+  Blanks left empty keep their defaults. The newsletter template only checks the form unless `submit: true`.
 - `POST /api/stores/:id/custom-tests/:name/try` — run one test now; returns each step with its result and a
   screenshot. `{ "text": "…" }` tries a test from a file that isn't saved yet.
