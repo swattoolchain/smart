@@ -1470,12 +1470,13 @@
       const a = d.active;
       if (!a) {
         ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Incident mode')}
-          <p class="lede-sm">Think your store was hacked, or something just broke badly? Switch on incident mode. For ${d.hours} hours we check your store every ${d.everyMinutes} minutes, show what changed since the last healthy check, give you a recovery checklist, and send every alert to the people you add below.</p>
+          <p class="lede-sm">Think your store was hacked, or something just broke badly? Switch on incident mode. For ${d.hours} hours we check your store every ${d.everyMinutes} minutes, show what changed since the last healthy check, give you a recovery checklist, and send every alert to the people you add below. It can be started once a week per store.</p>
           <section class="panel inc-start"><h2>Start incident mode</h2>
             <form id="inc-form" class="stack">
               <div class="field"><label for="inc-reason">What happened? <span class="muted">(optional, goes in the emails)</span></label><input id="inc-reason" maxlength="500" placeholder="For example: prices changed by themselves, strange app installed"></div>
               <div class="field"><label for="inc-team">Who else should get alerts? <span class="muted">(up to 5 emails, optional)</span></label><input id="inc-team" placeholder="developer@example.com, partner@example.com"></div>
-              <div><button class="btn danger" id="inc-go" type="submit">${icon('lock', 16)}Start incident mode</button></div>
+              ${d.nextStartAt ? `<p class="notice" id="inc-wait">Incident mode can be started once a week per store. You can start it again ${esc(when(d.nextStartAt))}. Your store is still checked on its usual schedule.</p>` : ''}
+              <div><button class="btn danger" id="inc-go" type="submit" ${d.nextStartAt ? 'disabled' : ''}>${icon('lock', 16)}Start incident mode</button></div>
             </form></section>
           <section class="panel"><h2>What you'll be asked to do</h2><ol class="inc-steps-preview">${d.steps.map((x) => `<li><b>${esc(x.title)}.</b> <span class="muted">${esc(x.how)}</span></li>`).join('')}</ol></section>
           ${d.history.length ? `<section class="panel"><h2>Earlier incidents</h2><ul class="list">${d.history.map((h) => `<li><span>${esc(when(h.startedAt))} → ${esc(when(h.endedAt))}${h.reason ? ` · ${esc(h.reason)}` : ''}</span><span class="muted">${h.stepsDone} of ${h.steps} steps · ${h.endedBy === 'time' ? 'ended after 48 hours' : 'ended by you'}</span></li>`).join('')}</ul></section>` : ''}
