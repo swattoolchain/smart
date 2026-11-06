@@ -11,6 +11,7 @@
 import crypto from 'node:crypto';
 import { db } from './db.js';
 import { config } from './config.js';
+import { GROUPS } from './engine/catalog.js';
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS runners (
@@ -176,8 +177,9 @@ export function wantedTags({ sale = false, plan = null, markets = [] } = {}) {
 }
 
 /** A full check uses AI review when the AI key is set and its suite has an AI group switched on. */
+const AI_GROUPS = GROUPS.filter((g) => g.ai).map((g) => g.key); // AI visual review, AI copy review, AI shopper
 export function usesAi(kind, disabled = [], aiOn = false) {
-  return kind === 'full' && !!aiOn && !(disabled.includes('ai.visual') && disabled.includes('ai.copy'));
+  return kind === 'full' && !!aiOn && !AI_GROUPS.every((g) => disabled.includes(g));
 }
 
 /**

@@ -11,6 +11,7 @@ import { sendLicenseNotices } from './billing-mail.js';
 import { syncAllBilling } from './shopify.js';
 import { checkCapacityAlerts, sqlTime } from './capacity.js';
 import { queueDepth } from './queue.js';
+import { pruneVideos } from './video.js';
 
 export function minutesSince(ts) {
   if (!ts) return Infinity;
@@ -92,6 +93,7 @@ export function startScheduler() {
     sendLicenseNotices().catch((e) => console.error('licence notices failed', e));
     pruneOldRuns();
     checkCapacityAlerts({ queue: queueDepth() }).catch((e) => console.error('capacity alerts failed', e));
+    pruneVideos();
   });
   // Once a day: keep Shopify-billed plans in step with Shopify (managed pricing sends no webhooks).
   cron.schedule('17 3 * * *', () => syncAllBilling().catch((e) => console.error('billing sync failed', e)));

@@ -16,6 +16,8 @@
  * Script extras (env MOCK_EXTRA): newscript, badscript, atcscript (see LIVE_EXTRA below).
  * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below);
  * apps, appsbug, appsupdate, appsnowidget, appscode (App Health: two outside apps, see APP_SCRIPTS below).
+ * Variant extras (MOCK_EXTRA): brokenvariant (Kurta Large shown in stock, cart refuses it), unpublishedvariant
+ * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -105,6 +107,18 @@ const products = [
     ? { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '<p>Set of four hand-cast brass diyas for Diwali and everyday puja.</p>', images: [{ src: '/img/d.png' }], variants: [{ id: 301, title: 'Default Title', sku: 'DIY-4', price: '799.00', available: true }] }
     : { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: '0.00', available: true }] },
 ];
+if (EXTRA.includes('manyvariants')) products.push({ id: 4, title: 'Block Print Cushion Cover', handle: 'cushion-cover', product_type: 'Decor', vendor: 'Tharam', tags: 'cotton', body_html: '<p>Hand block printed cotton cushion cover, 16 by 16 inches.</p>', images: [{ src: '/img/c.png' }],
+  variants: Array.from({ length: 40 }, (_, i) => ({ id: 401 + i, title: `Colour ${i + 1}`, sku: `CUS-${i + 1}`, price: '799.00', available: i !== 39 })) });
+// Variants the cart treats differently from the product list (what the every-variant sweep looks for).
+const CART_REFUSES = new Map();
+if (EXTRA.includes('brokenvariant')) CART_REFUSES.set(103, [422, { status: 422, message: 'Cart Error', description: 'This item could not be added to your cart.' }]);
+if (EXTRA.includes('unpublishedvariant')) CART_REFUSES.set(102, [404, { status: 404, message: 'Cart Error', description: 'Cannot find variant' }]);
+let ADD_CALLS = 0; // cart/add.js requests, so tests can see the sweep is capped
+// Sale traffic (MOCK_EXTRA): slowcrowd = pages get slow when several shoppers are on them at once;
+// crowdfail = Add to cart fails when shoppers add at the same moment (only the first of a burst succeeds).
+let INFLIGHT = 0;
+let LAST_ADD = 0;
+const CROWD_PAGE = (p) => (p.startsWith('/products/') && !p.endsWith('.js')) || p === '/cart' || p.startsWith('/checkouts/') || p === '/checkout';
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
 
 function cartFor(req, res) {
@@ -187,6 +201,14 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/__collected') return send(res, 200, { collected: COLLECTED }, 'application/json');
   if (FORM_JS[p]) return send(res, 200, FORM_JS[p], 'application/javascript');
+  if (EXTRA.includes('slowcrowd') && CROWD_PAGE(p) && req.method === 'GET') {
+    INFLIGHT++;
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      if (INFLIGHT >= 2) await new Promise((r) => setTimeout(r, 2500));
+    } finally { INFLIGHT--; }
+  }
+  if (p === '/__carts') return send(res, 200, { carts: [...carts.values()].map((c) => c.length) }, 'application/json');
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   // Every request the store received (method, path, user agent), for tests that limit how a visitor behaves.
   if (p === '/__requests') return send(res, 200, { requests: REQUESTS }, 'application/json');
@@ -203,6 +225,7 @@ const server = http.createServer(async (req, res) => {
     for (const k of LIVE_KEYS) if (u.searchParams.has(k)) u.searchParams.get(k) === '1' ? LIVE_EXTRA.add(k) : LIVE_EXTRA.delete(k);
     return send(res, 200, { extra: [...LIVE_EXTRA] }, 'application/json');
   }
+  if (p === '/__addcount') return send(res, 200, { adds: ADD_CALLS, carts: [...carts.values()].map((c) => c.length) }, 'application/json');
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
     res.writeHead(302, { Location: '/password' });
     return res.end();
@@ -261,7 +284,11 @@ const server = http.createServer(async (req, res) => {
   if (p === '/cart/add.js' && req.method === 'POST') {
     const items = cartFor(req, res);
     const body = JSON.parse((await readBody(req)) || '{}');
+    ADD_CALLS++;
+    if (EXTRA.includes('crowdfail')) { const now = Date.now(); const busy = now - LAST_ADD < 400; LAST_ADD = now; if (busy) return send(res, 503, { status: 503, description: 'Too many requests at once' }, 'application/json'); }
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
+      const refused = CART_REFUSES.get(Number(it.id));
+      if (refused) return send(res, refused[0], refused[1], 'application/json');
       const hit = byId.get(Number(it.id));
       if (!hit || !hit.v.available) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
       items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price: hit.v.price, handle: hit.p.handle });

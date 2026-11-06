@@ -86,14 +86,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS payments_reference ON payments(reference) WHER
 /** What a plan can include. Each feature switches validation groups or product areas on. */
 export const FEATURES = [
   { key: 'journeys', label: 'Shopping checks: search, product, add to cart, checkout', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount'], always: true },
-  { key: 'quality', label: 'Speed, Google, mobile, accessibility and broken links', groups: ['speed', 'seo', 'a11y', 'links', 'policies'] },
-  { key: 'catalog', label: 'Product and price checks on every product', groups: ['catalog'] },
+  { key: 'quality', label: 'Speed, Google, mobile, accessibility and broken links', groups: ['speed', 'seo', 'a11y', 'links', 'policies', 'sale.traffic'] },
+  { key: 'catalog', label: 'Product and price checks on every product', groups: ['catalog', 'catalog.variants'] },
   { key: 'visual', label: 'Design change detection with screenshots', groups: ['visual'] },
   { key: 'publish', label: 'Safe to publish: check a theme before it goes live' },
   { key: 'environments', label: 'Saved staging environments, checked daily' },
   { key: 'pipeline', label: 'Deploy pipeline checks (GitHub and others)' },
   { key: 'regional', label: 'Laws where you sell (Germany, EU, UK, US)', groups: ['law.de', 'law.cookies', 'access.law', 'law.us'] },
-  { key: 'ai', label: 'AI that looks at your store like a shopper', groups: ['ai.visual', 'ai.copy'] },
+  { key: 'ai', label: 'AI that looks at your store like a shopper', groups: ['ai.visual', 'ai.copy', 'ai.shopper'] },
   { key: 'slack', label: 'Slack alerts' },
 ];
 const FEATURE_KEYS = FEATURES.map((f) => f.key);

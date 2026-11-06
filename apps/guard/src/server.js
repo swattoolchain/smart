@@ -33,6 +33,8 @@ import { catalogReport } from './catalog-report.js';
 import { saleReadiness, emailSaleReadiness, saleRecipients, saleGroups } from './sale-readiness.js';
 import { appHealth } from './app-health.js';
 import { runnerRoutes } from './runner-routes.js';
+import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportName } from './export.js';
+import { teamRoutes, membership, memberMay, teamAllowed } from './team.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -86,6 +88,15 @@ function requireUser(req, res, next) {
   const v = sessionValid(req, u.id);
   if (!v.ok) { req.session = null; return res.status(401).json({ error: v.error || 'Please log in' }); }
   req.user = u;
+  // Working in someone else's workspace as a team member: act as that account, within the member's role.
+  if (req.session.acct) {
+    const m = membership(req.session.acct, u.id);
+    const acc = m && teamAllowed(req.session.acct) && q.userById.get(req.session.acct);
+    if (!acc) { delete req.session.acct; return next(); } // removed from the team: back to their own account
+    if (!memberMay(m.role, req.method, req.path)) return res.status(403).json({ error: m.role === 'viewer' ? 'You can view this workspace but not change it. Ask the account owner for admin access.' : 'Only the account owner can do this.', role: m.role });
+    req.member = { user: u, role: m.role, accountId: acc.id };
+    req.user = acc;
+  }
   next();
 }
 function ownStore(req, res) {
@@ -125,7 +136,12 @@ app.post('/api/scan', async (req, res) => {
 
 /** The signed-in user: a login cookie on the website, or a Shopify session token inside Shopify admin. */
 function currentUserId(req) {
-  if (req.session?.uid) return sessionValid(req, req.session.uid).ok ? req.session.uid : null;
+  if (req.session?.uid) {
+    if (!sessionValid(req, req.session.uid).ok) return null;
+    // A team member sees the workspace they are working in (screenshots, reports), and only while still a member.
+    if (req.session.acct) return membership(req.session.acct, req.session.uid) && teamAllowed(req.session.acct) ? req.session.acct : req.session.uid;
+    return req.session.uid;
+  }
   const auth = req.get('authorization') || '';
   if (/^Bearer\s+ey/i.test(auth) && shopify.shopifyEnabled()) {
     try {
@@ -224,6 +240,7 @@ app.post('/api/auth/signup', async (req, res) => {
   const hash = await bcrypt.hash(password, 10);
   const info = q.insertUser.run(e, hash, String(name || '').slice(0, 80));
   req.session.uid = Number(info.lastInsertRowid);
+  delete req.session.acct; // a fresh login starts in the person's own account
   // Signing up from a free-check report ("Start monitoring") adds that store with recommended settings.
   let store = null;
   if (storeUrl) {
@@ -263,6 +280,7 @@ app.post('/api/auth/login', async (req, res) => {
   if (!v.ok) return res.status(401).json({ error: v.error || 'Email or password is incorrect' });
   loginAttempts.delete(key);
   req.session.uid = u.id;
+  delete req.session.acct; // a fresh login starts in the person's own account
   req.session.ep = sessionEpoch(u.id);
   res.json({ ok: true });
 });
@@ -273,8 +291,11 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', requireUser, (req, res) => {
-  res.json({ user: req.user, admin: isAdmin(req.user), license: licenseView(req.user.id), features: enabledKeys() });
+  const member = req.member ? { email: req.member.user.email, name: req.member.user.name, role: req.member.role } : null;
+  // Founder access belongs to the person, never to a workspace they visit.
+  res.json({ user: req.user, member, admin: !req.member && isAdmin(req.user), license: licenseView(req.user.id), team: !req.member && isOn('teams') && teamAllowed(req.user.id), features: enabledKeys() });
 });
+teamRoutes(app, { requireUser });
 
 // The customer's own plan and payment history.
 app.get('/api/account/billing', requireUser, (req, res) => {
@@ -361,7 +382,7 @@ function storeView(s) {
   return {
     ...publicStore(s),
     blocked: blockReason(ent, s.id),
-    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, ...iv },
+    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
@@ -493,6 +514,7 @@ app.delete('/api/stores/:id', requireUser, (req, res) => {
   if (shopify.shopForStore(s.id)) return res.status(400).json({ error: 'This is the store Tharam was installed on. To stop checking it, uninstall Tharam from your Shopify admin.' });
   q.deleteStore.run(s.id, req.user.id);
   fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
+  fs.rmSync(path.join(config.dataDir, 'variants', `store-${s.id}.json`), { force: true });
   res.json({ ok: true });
 });
 
@@ -813,6 +835,49 @@ app.get('/api/stores/:id/apps', requireUser, requireFeature('app_health'), (req,
   const s = ownStore(req, res);
   if (!s) return;
   res.json(appHealth(s));
+});
+
+// ---------- Exports: CSV and printable / PDF report (owner only) ----------
+const sendFile = (res, name, type, body) => { res.set({ 'Content-Type': type, 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }); res.send(body); };
+app.get('/api/stores/:id/export/runs.csv', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  sendFile(res, exportName(s, 'checks-history'), 'text/csv; charset=utf-8', runsCsv(s, req.query.days));
+});
+app.get('/api/stores/:id/export/checks.csv', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const run = runFor(s, req.query.run);
+  if (!run || !run.result_json) return res.status(404).json({ error: 'Report not found' });
+  sendFile(res, exportName(s, `check-${run.seq ?? run.id}`), 'text/csv; charset=utf-8', checksCsv(s, run));
+});
+app.get('/api/stores/:id/export/products.csv', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (req.query.run && !runFor(s, req.query.run)) return res.status(404).json({ error: 'Report not found' });
+  const out = productsCsv(s, req.query.run);
+  if (!out) return res.status(404).json({ error: 'No product list yet. Run a full check first.' });
+  sendFile(res, exportName(s, 'products'), 'text/csv; charset=utf-8', out.csv);
+});
+app.get('/api/stores/:id/runs/:runId/report.html', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const run = runFor(s, req.params.runId);
+  if (!run || !run.result_json) return res.status(404).json({ error: 'Report not found' });
+  res.set({ 'Cache-Control': 'private, no-store', 'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
+  res.type('html').send(reportHtml(s, run, { autoPrint: req.query.print === '1' }));
+});
+app.get('/api/stores/:id/runs/:runId/report.pdf', requireUser, async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const run = runFor(s, req.params.runId);
+  if (!run || !run.result_json) return res.status(404).json({ error: 'Report not found' });
+  try {
+    sendFile(res, exportName(s, `report-${run.seq ?? run.id}`, 'pdf'), 'application/pdf', await reportPdf(s, run));
+  } catch (e) {
+    console.error('pdf export failed', e.message);
+    res.status(503).json({ error: 'The PDF could not be made right now. Try again in a minute, or use Print instead.' });
+  }
 });
 
 app.post('/api/stores/:id/explain-change', requireUser, async (req, res) => {

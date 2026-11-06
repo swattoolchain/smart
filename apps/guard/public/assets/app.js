@@ -29,6 +29,39 @@
     if (!r.ok) throw Object.assign(new Error(j.error || 'Something went wrong. Try again.'), { status: r.status });
     return j;
   }
+  // Downloads and printing go through fetch, so they work with a session cookie and inside Shopify admin alike.
+  async function fetchFile(path) {
+    const headers = {};
+    if (EMB) headers.Authorization = `Bearer ${await window.shopify.idToken()}`;
+    const r = await fetch(path, { headers, credentials: 'same-origin' });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'The file could not be made. Try again.'); }
+    const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || 'tharam-export';
+    return { blob: await r.blob(), name };
+  }
+  document.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-download],[data-print]');
+    if (!b || b.disabled) return;
+    e.preventDefault();
+    const label = b.innerHTML;
+    b.disabled = true;
+    b.classList.add('busy');
+    try {
+      if (b.dataset.download) {
+        const { blob, name } = await fetchFile(b.dataset.download);
+        const url = URL.createObjectURL(blob);
+        const a = Object.assign(document.createElement('a'), { href: url, download: name });
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+      } else {
+        const { blob } = await fetchFile(b.dataset.print);
+        let f = document.getElementById('print-frame');
+        if (!f) { f = Object.assign(document.createElement('iframe'), { id: 'print-frame', title: 'Printable report' }); f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'; document.body.appendChild(f); }
+        f.onload = () => setTimeout(() => f.contentWindow.print(), 200);
+        f.srcdoc = await blob.text();
+      }
+    } catch (err) { toast(err.message, 'error'); }
+    finally { b.disabled = false; b.classList.remove('busy'); b.innerHTML = label; }
+  });
   const host = (u) => { try { return new URL(u).host; } catch { return u || ''; } };
   const parseTs = (ts) => (ts ? new Date(/[TZ]/.test(ts) ? ts : ts.replace(' ', 'T') + 'Z') : null);
   function ago(ts) {
@@ -186,6 +219,13 @@
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.6 3.5 5.4 3.5 8.5s-1.1 5.9-3.5 8.5c-2.4-2.6-3.5-5.4-3.5-8.5s1.1-5.9 3.5-8.5z"/>',
   };
   const icon = (k, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
+  // Video replay of a failed shopping journey (kept 7 days, owner-only like screenshots).
+  const videoHtml = (ev) => !ev?.video ? '' : ev.videoUntil && new Date(ev.videoUntil) < new Date()
+    ? '<p class="cell-sub video-gone">The video replay was deleted after 7 days.</p>'
+    : `<details class="video-replay"><summary>Watch the replay</summary><video controls preload="metadata" playsinline src="${esc(ev.video)}"></video><span class="cell-sub">Kept until ${esc(new Date(ev.videoUntil).toLocaleDateString())}</span></details>`;
+  // Sale traffic readiness: step times for one shopper alone and for several at once.
+  const trafficHtml = (ev) => { const t = ev?.traffic; if (!t?.steps) return ''; const s = (ms) => (ms == null ? '–' : ms < 100 ? '<0.1 s' : `${(ms / 1000).toFixed(1)} s`);
+    return `<table class="traffic-table"><thead><tr><th>Step</th><th>One shopper</th><th>${t.shoppers} at once (typical)</th><th>Slowest</th></tr></thead><tbody>${t.steps.map((x) => `<tr><td>${esc(x.label)}</td><td>${s(x.alone)}</td><td>${s(x.median)}</td><td>${s(x.max)}</td></tr>`).join('')}</tbody></table>`; };
 
   // ---------- Auth ----------
   function authView(mode, notice) {
@@ -289,14 +329,16 @@
             <div class="menu">
               <button class="avatar" id="user-btn" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">${esc(initials(S.me))}</button>
               <div class="pop right" id="user-pop" role="menu" hidden>
-                <div class="pop-head"><b>${esc(S.me.name || 'Your account')}</b><span>${esc(S.me.email)}</span></div>
-                <a href="#/account" role="menuitem">${icon('user', 16)}Account settings</a>
-                <a href="#/account/billing" role="menuitem">${icon('reports', 16)}Plan and billing</a>
+                <div class="pop-head"><b>${esc(S.member ? S.member.name || S.member.email : S.me.name || 'Your account')}</b><span>${esc(S.member ? S.member.email : S.me.email)}</span></div>
+                <div id="ws-list" class="ws-list" hidden></div>
+                ${S.member ? '' : `<a href="#/account" role="menuitem">${icon('user', 16)}Account settings</a>
+                <a href="#/account/billing" role="menuitem">${icon('reports', 16)}Plan and billing</a>${S.team ? `<a href="#/account/team" role="menuitem">${icon('user', 16)}Team</a>` : ''}`}
                 ${S.admin ? `<a href="#/admin" role="menuitem">${icon('founder', 16)}Founder console</a>` : ''}
                 <hr><button type="button" id="logout" role="menuitem">${icon('logout', 16)}Log out</button>
               </div>
             </div>
           </header>
+          ${S.member ? `<div class="member-banner" id="member-banner"><span>You're working in <b>${esc(S.me.name || S.me.email)}</b>'s workspace as ${S.member.role === 'admin' ? 'an admin' : 'a viewer'}${S.member.role === 'viewer' ? ': you can see everything but not change it' : ''}.</span><button type="button" class="btn small secondary" data-ws="">Back to my account</button></div>` : ''}
           <div id="plan-banner"></div>
           <main class="main" id="main" tabindex="-1"></main>
         </div>
@@ -304,6 +346,23 @@
     if (navMenu) document.body.prepend(navMenu);
     const userBtn = $('#user-btn'), userPop = $('#user-pop');
     userBtn.onclick = (e) => { e.stopPropagation(); const open = userPop.hidden; closePops(); userPop.hidden = !open; userBtn.setAttribute('aria-expanded', String(open)); };
+    document.body.classList.toggle('role-viewer', S.member?.role === 'viewer');
+    // Workspaces this person belongs to, in the account menu.
+    if (!EMB) api('/api/team/workspaces').then((w) => {
+      if (!w.workspaces.length) return;
+      const el = $('#ws-list');
+      if (!el) return;
+      const row = (id, label, sub, on) => `<button type="button" role="menuitem" class="ws-item ${on ? 'on' : ''}" data-ws="${id ?? ''}">${icon(on ? 'check' : 'user', 15)}<span><b>${esc(label)}</b><small>${esc(sub)}</small></span></button>`;
+      el.innerHTML = `<div class="ws-head">Workspaces</div>${row(null, 'My account', S.member ? S.member.email : S.me.email, !w.current)}${w.workspaces.map((x) => row(x.accountId, x.name || x.email, x.role === 'admin' ? 'Admin' : 'Viewer', w.current === x.accountId)).join('')}<hr>`;
+      el.hidden = false;
+    }).catch(() => {});
+    if (!S.wsBound) document.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-ws]');
+      if (!b) return;
+      try { await api('/api/team/switch', { method: 'POST', body: { accountId: b.dataset.ws ? Number(b.dataset.ws) : null } }); location.hash = '#/stores'; location.reload(); }
+      catch (ex) { toast(ex.message, 'error'); }
+    });
+    S.wsBound = true;
     $('#logout').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); S.me = null; location.hash = ''; authView('login'); };
     $('#menu-btn').onclick = () => { const open = !document.body.classList.contains('nav-open'); document.body.classList.toggle('nav-open', open); $('#menu-btn').setAttribute('aria-expanded', String(open)); };
     $('#scrim').onclick = () => document.body.classList.remove('nav-open');
@@ -389,7 +448,7 @@
     const h = hash.replace(/^#/, '').split('?')[0] || '/';
     let m;
     if ((m = /^\/s\/(\d+)(?:\/([a-z]+))?(?:\/([\w-]+))?(?:\/([\w-]+))?$/.exec(h))) return { store: Number(m[1]), module: m[2] || 'overview', a: m[3] || null, b: m[4] || null };
-    if ((m = /^\/account(?:\/(password|billing))?$/.exec(h))) return { page: 'account', a: m[1] || null };
+    if ((m = /^\/account(?:\/(password|billing|team))?$/.exec(h))) return { page: 'account', a: m[1] || null };
     if (h === '/stores') return { page: 'stores' };
     if (h === '/add') return { page: 'add' };
     if (h === '/guide') return { page: 'guide' };
@@ -863,17 +922,18 @@
   // Test suite
   const marketNames = (codes) => codes.map((c) => S.catalog.markets.find((m) => m.code === c)?.label || c);
   const inMarket = (g, markets) => !g.markets || g.markets.some((m) => (markets || []).includes(m));
-  function suiteRows(groups, disabled, { shopify = true, aiEnabled = false, markets = null, storeId = null } = {}) {
+  function suiteRows(groups, disabled, { shopify = true, aiEnabled = false, markets = null, storeId = null, saleTraffic = false } = {}) {
     const list = groups.filter((g) => !g.ai || aiEnabled);
     const areas = [...new Set(list.map((g) => g.area))];
     return areas.map((area) => `<section class="suite-area"><h3>${esc(area)}</h3><div class="rows">${list.filter((g) => g.area === area).map((g) => {
       const journeyOnly = g.key.startsWith('journey.') && !g.locked && !shopify;
       const outside = markets && !inMarket(g, markets);
       const notPlan = !groupAllowed(g);
-      const on = g.locked || (!disabled.includes(g.key) && !journeyOnly && !outside && !notPlan);
+      const optOff = g.optIn && !saleTraffic; // opt-in tests run only after the owner switches them on in Store settings
+      const on = g.locked || (!disabled.includes(g.key) && !journeyOnly && !outside && !notPlan && !optOff);
       return `<label class="check-row ${on ? '' : 'off'}">
-        <span class="switch"><input type="checkbox" name="g" value="${esc(g.key)}" ${on ? 'checked' : ''} ${g.locked || journeyOnly || outside || notPlan ? 'disabled' : ''} aria-label="${esc(g.label)}"><span></span></span>
-        <span><b>${esc(g.label)}</b><p>${esc(g.description)}</p>${journeyOnly ? '<p class="unavailable">Available for Shopify stores. Other platforms are coming.</p>' : ''}${g.markets && !notPlan ? `<p class="${outside ? 'unavailable' : 'muted'}" style="font-size:12.5px">For stores selling in ${esc(marketNames(g.markets).join(', '))}.${outside ? (storeId ? ` <a href="#/s/${storeId}/settings">Add where you sell</a> to turn it on.` : ' Choose one of these countries above to turn it on.') : ''}</p>` : ''}</span>
+        <span class="switch"><input type="checkbox" name="g" value="${esc(g.key)}" ${on ? 'checked' : ''} ${g.locked || journeyOnly || outside || notPlan || optOff ? 'disabled' : ''} aria-label="${esc(g.label)}"><span></span></span>
+        <span><b>${esc(g.label)}</b><p>${esc(g.description)}</p>${journeyOnly ? '<p class="unavailable">Available for Shopify stores. Other platforms are coming.</p>' : ''}${optOff && !notPlan ? `<p class="unavailable">Off until you switch it on${storeId ? ` in <a href="#/s/${storeId}/settings">Store settings</a>` : ' in Store settings after adding the store'}.</p>` : ''}${g.markets && !notPlan ? `<p class="${outside ? 'unavailable' : 'muted'}" style="font-size:12.5px">For stores selling in ${esc(marketNames(g.markets).join(', '))}.${outside ? (storeId ? ` <a href="#/s/${storeId}/settings">Add where you sell</a> to turn it on.` : ' Choose one of these countries above to turn it on.') : ''}</p>` : ''}</span>
         <span class="when">${notPlan ? `<a class="plan-tag" href="#/account/billing" title="Included in ${esc(plansFor(featureOf(g.key)))}">${icon('lock', 12)}${esc(plansFor(featureOf(g.key)))}</a>` : g.locked ? 'Always on' : g.run === 'journeys' ? 'Every test' : 'Full check'}</span></label>`;
     }).join('')}</div></section>`).join('');
   }
@@ -904,7 +964,7 @@
     const shopify = !s.platform || /shopify/i.test(s.platform);
     const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes']], tab);
     if (!tab) {
-      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id })}</form></div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id, saleTraffic: !!s.config.saleTraffic })}</form></div>`;
       const form = $('#suite');
       const mark = savebar(form.parentElement, {
         onSave: async () => { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { disabled: readDisabled(form) } } }); await loadStores(); },
@@ -975,7 +1035,7 @@
     if (filter === 'problems') runs = runs.filter((r) => r.status === 'error' || (r.verdict && r.verdict !== 'healthy'));
     if (filter === 'stopped') runs = runs.filter((r) => r.status === 'cancelled');
     const active = data.runs.some((r) => r.status === 'queued' || r.status === 'running');
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Runs', { actions: runButtons(s) })}
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Runs', { actions: `<button type="button" class="btn secondary" data-download="/api/stores/${s.id}/export/runs.csv?days=90" title="Every check of the last 90 days, for Excel or Google Sheets">Export CSV</button>` + runButtons(s) })}
       ${tabs(`#/s/${s.id}/runs`, [[null, 'All runs'], ['full', 'Full checks'], ['journeys', 'Journey tests'], ['problems', 'With problems'], ['stopped', 'Stopped']], filter)}
       ${runs.length ? `<div class="table-wrap"><table class="data"><thead><tr><th>Started</th><th>Type</th><th>Started by</th><th>Result</th><th class="num">Checks</th><th class="num">Score</th><th class="num">Took</th><th aria-label="Open"></th></tr></thead><tbody>
         ${runs.map((r) => `<tr class="link" data-href="#/s/${s.id}/runs/${r.id}" tabindex="0"><td><span class="cell-main">${time(r.created_at)}</span><div class="cell-sub">${esc(exact(r.created_at))}</div></td><td>${esc(kindLabel(r))}</td><td class="cell-sub">${esc(TRIGGER[r.trigger] || 'Scheduled')}</td>
@@ -1021,7 +1081,8 @@
       return;
     }
     const visualChanged = run.result.checks.some((c) => c.id === 'nf.visual' && c.status === 'warn');
-    renderReport(el, run.result, { actions: `<div class="inline-row" style="margin-top:12px"><a class="btn small" href="#/s/${s.id}/reports/${run.id}">Open in Reports and compare</a>${visualChanged ? `<a class="btn small secondary" href="#/s/${s.id}/visual">Review visual changes</a>` : ''}</div>` });
+    renderReport(el, run.result, { actions: `<div class="inline-row" style="margin-top:12px"><a class="btn small" href="#/s/${s.id}/reports/${run.id}">Open in Reports and compare</a>${visualChanged ? `<a class="btn small secondary" href="#/s/${s.id}/visual">Review visual changes</a>` : ''}</div>
+      <div class="inline-row export-row" style="margin-top:8px"><button type="button" class="btn small secondary" data-download="/api/stores/${s.id}/runs/${run.id}/report.pdf">Download PDF</button><button type="button" class="btn small secondary" data-print="/api/stores/${s.id}/runs/${run.id}/report.html">Print</button><button type="button" class="btn small ghost" data-download="/api/stores/${s.id}/export/checks.csv?run=${run.id}">Checks as CSV</button></div>` });
   }
 
   // Monitoring
@@ -1294,6 +1355,12 @@
       <div class="form-section"><div><h3>Sales <span class="muted" style="font-weight:400">(optional)</span></h3><p class="explain">Your average sales per day. We use it only to show how much revenue was at risk while customers couldn’t buy.</p></div>
         <div class="controls"><div class="inline-row"><div class="field" style="flex:1;margin:0"><label for="ds">Average daily sales</label><input id="ds" name="dailySales" type="number" min="0" step="1" inputmode="numeric" value="${esc(s.config.dailySales ?? '')}" placeholder="e.g. 50000"></div>
           <div class="field" style="width:120px;margin:0"><label for="cur">Currency</label><select id="cur" name="currency">${['', 'INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'].map((c) => `<option value="${c}" ${c === (s.config.currency || '') ? 'selected' : ''}>${c || 'Store’s'}</option>`).join('')}</select></div></div></div></div>
+      ${feat('failure_video') ? `<div class="form-section"><div><h3>Video replay</h3><p class="explain">See exactly what our test shopper saw when buying broke. Videos are kept for 7 days and only you can open them.</p></div>
+        <div class="controls"><label class="toggle-line"><span class="switch"><input type="checkbox" name="failureVideo" id="fv" ${s.config.failureVideo ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Record a video when a shopping check fails</b><span>We record each shopping journey and keep the video only if something failed, such as Add to cart or checkout.</span></span></label></div></div>
+` : ''}
+      ${feat('sale_traffic') ? `<div class="form-section"><div><h3>Sale traffic test <span class="muted" style="font-weight:400">(optional)</span></h3><p class="explain">A few shoppers buy at the same time during the daily full check, to show whether your store slows down when a sale starts. Never a load test: at most 5 shoppers, each goes through once and stops before checkout details, at most every 6 hours.</p></div>
+        <div class="controls"><label class="toggle-line"><span class="switch"><input type="checkbox" name="saleTraffic" id="st" ${s.config.saleTraffic ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Test with several shoppers at once</b><span>Product page, add to cart, cart and checkout, compared with one shopper alone.</span></span></label>
+          <div class="field" style="max-width:220px;margin-top:12px"><label for="stn">Shoppers at once</label><select id="stn" name="saleTrafficShoppers">${[2, 3, 4, 5].map((n) => `<option value="${n}" ${n === (s.config.saleTrafficShoppers || 3) ? 'selected' : ''}>${n}</option>`).join('')}</select></div></div></div>` : ''}
       <div class="form-section"><div><h3>Storefront password</h3><p class="explain">Only needed while your store is password protected (for example before launch). We use it to open the store for testing and never show it again.</p></div>
         <div class="controls"><div class="field"><label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="off" placeholder="${s.has_password ? 'Saved. Type to replace' : 'Not set'}"></div>
         ${s.has_password ? '<label class="toggle-line"><span class="switch"><input type="checkbox" name="clearpw"><span></span></span><span class="tl-text"><b>Remove saved password</b><span>Use this once your store is public.</span></span></label>' : ''}</div></div>
@@ -1304,7 +1371,7 @@
     const mark = savebar($('.main-inner', ctx.main), {
       onSave: async () => {
         const fd = new FormData(form);
-        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null, ...(feat('laws') ? { markets: fd.getAll('market') } : {}) } };
+        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null, ...(feat('laws') ? { markets: fd.getAll('market') } : {}), ...(feat('failure_video') ? { failureVideo: !!fd.get('failureVideo') } : {}), ...(feat('sale_traffic') ? { saleTraffic: !!fd.get('saleTraffic'), saleTrafficShoppers: Number(fd.get('saleTrafficShoppers')) || 3 } : {}) } };
         if (fd.get('clearpw')) body.password = '';
         else if (fd.get('password')) body.password = fd.get('password');
         await api(`/api/stores/${s.id}`, { method: 'PATCH', body });
@@ -1405,7 +1472,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -1534,7 +1601,7 @@
     const base = `#/s/${s.id}/catalog`;
     CUR = c.currency || null;
     const sum = c.summary;
-    const head = storeHead(s, 'Catalog') + `<p class="lede-sm">${sum.products} products${c.run.truncated ? ' (first 2,000)' : ''} read ${time(c.run.takenAt)}${c.base ? `, compared with ${time(c.base.takenAt)}` : ''}.</p>`;
+    const head = storeHead(s, 'Catalog', { actions: `<button type="button" class="btn secondary" data-download="/api/stores/${s.id}/export/products.csv">Export products (CSV)</button>` }) + `<p class="lede-sm">${sum.products} products${c.run.truncated ? ' (first 2,000)' : ''} read ${time(c.run.takenAt)}${c.base ? `, compared with ${time(c.base.takenAt)}` : ''}.</p>`;
     const figures = `<div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
       <div class="figure"><b>${sum.products}</b><span>products</span></div>
       <div class="figure"><b>${sum.withIssues}</b><span>with issues</span></div>
@@ -1813,6 +1880,18 @@
         ${breaks.length ? `<ul class="list">${breaks.map((x) => findRow(x, 'break')).join('')}</ul>` : `<p class="muted" style="margin:0">Nothing breaks on ${esc(cand)}.</p>`}</section>
       <section class="panel"><h2>Fixed by ${esc(cand)}</h2><p class="sub">Problems on your live store that ${esc(cand)} fixes.</p>
         ${sum.fixes.length ? `<ul class="list">${sum.fixes.map((x) => findRow(x, 'fix')).join('')}</ul>` : `<p class="muted" style="margin:0">No live problems are fixed by ${esc(cand)}.</p>`}</section></div>`;
+    // The AI shopper on live and on the candidate, step by step, side by side.
+    const OUT = { checkout: ['healthy', 'Reached checkout'], stuck: ['critical', 'Got stuck'], limit: ['warning', 'Ran out of steps'], error: ['', 'Did not run'] };
+    const shopperCol = (label, a) => {
+      if (!a) return `<div class="pub-shopper-col"><h3>${esc(label)}</h3><p class="muted">The AI shopper did not run here.</p></div>`;
+      const [cls, txt] = OUT[a.outcome] || OUT.error;
+      return `<div class="pub-shopper-col" data-side="${esc(label)}"><h3>${esc(label)} <span class="pill ${cls}">${txt}</span></h3>
+        <ol class="agent-steps-list">${a.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol>
+        ${a.friction.length ? `<p class="sub" style="margin-top:8px">It noticed: ${a.friction.map((f) => esc(f.issue)).join('; ')}</p>` : ''}</div>`;
+    };
+    const shopper = sum.shopper ? `<section class="panel pub-shopper"><h2>AI shopper on live and ${esc(cand)}</h2>
+        <p class="sub">The same AI shopper starts on the homepage of each, with no help, and tries to reach checkout. It only clicks and chooses options, never types or pays.</p>
+        <div class="grid-2 tight">${shopperCol(r.environment?.kind === 'store' ? 'Live store' : 'Live theme', sum.shopper.live)}${shopperCol(candCap, sum.shopper.draft)}</div></section>` : '';
     const cmp = r.compare || { visual: [], metrics: [], areas: [] };
     const DEV = [['desktop', 'Desktop'], ['tablet', 'Tablet'], ['mobile', 'Phone']].filter(([dv]) => cmp.visual.some((v) => v.key.endsWith(dv)));
     const visual = cmp.visual.length ? `<section class="panel"><div class="panel-head"><h2>How ${esc(cand)} looks</h2>
@@ -1826,7 +1905,7 @@
     const checks = cmp.areas.length ? `<section class="panel"><details class="still"><summary>All ${allChecks.length} checks compared · ${same} unchanged</summary>
       <div class="table-wrap flat" style="margin-top:10px"><table class="data"><thead><tr><th style="width:90px">Live</th><th style="width:90px">Draft</th><th>Check</th></tr></thead><tbody>
       ${allChecks.map((x) => `<tr class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.b)}</td><td>${stat(x.a)}</td><td><span class="cell-main">${esc(x.title)}</span><div class="cell-sub">${esc(x.detail || x.prevDetail)}</div></td></tr>`).join('')}</tbody></table></div></details></section>` : '';
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb, meta, actions: preview + `<a class="btn secondary" href="#/s/${s.id}/publish">${icon('publish', 16)}New check</a>` })}${hero}${findings}${visual}${metrics}${checks}</div>`;
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, title, { crumb, meta, actions: preview + `<a class="btn secondary" href="#/s/${s.id}/publish">${icon('publish', 16)}New check</a>` })}${hero}${findings}${shopper}${visual}${metrics}${checks}</div>`;
     $$('[data-shot]', ctx.main).forEach((x) => (x.onclick = () => lightbox(x.dataset.shot, 'Screenshot')));
     const draw = (dv) => {
       $('#pub-shots').innerHTML = cmp.visual.filter((v) => v.key.endsWith(dv)).map((v) => {
@@ -2094,9 +2173,11 @@
   }
 
   PAGES.account = async (ctx) => {
-    const tab = ['password', 'billing'].includes(ctx.r.a) ? ctx.r.a : null;
-    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing']] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password']], tab);
+    const tab = ['password', 'billing', 'team'].includes(ctx.r.a) ? ctx.r.a : null;
+    if (S.member) { ctx.main.innerHTML = `<div class="main-inner"><div class="panel empty"><h2>Account settings belong to the account owner</h2><p>You're working in ${esc(S.me.name || S.me.email)}'s workspace. Switch back to your own account in the account menu to see your settings.</p></div></div>`; return; }
+    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing']] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password'], ...(S.team ? [['team', 'Team']] : [])], tab);
     if (tab === 'billing') return billingPage(ctx, head);
+    if (tab === 'team') return teamPage(ctx, head);
     if (tab === 'password') {
       ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="pwf"><div class="form-section"><div><h3>Change password</h3><p class="explain">Use at least 8 characters. You'll stay logged in on this device.</p></div>
         <div class="controls"><div class="field"><label for="cur">Current password</label><input id="cur" name="current" type="password" autocomplete="current-password" required></div>
@@ -2126,6 +2207,32 @@
     });
     form.addEventListener('input', mark);
   };
+
+  // Team: invite people to work on this account's stores (website accounts only).
+  async function teamPage(ctx, head) {
+    const d = await api('/api/team');
+    if (!ctx.alive()) return;
+    const ROLE = { admin: 'Admin', viewer: 'Viewer' };
+    const roleSel = (id, cur) => `<select data-role="${id}" aria-label="Role">${d.roles.map((r) => `<option value="${r}" ${r === cur ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select>`;
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <form class="settings-card" id="inv"><div class="form-section"><div><h3>Invite someone</h3><p class="explain"><b>Admins</b> add and change stores and run checks. <b>Viewers</b> see stores and reports and download exports. Only you see billing and the team. Up to ${d.limit} people.</p></div>
+        <div class="controls"><div class="inline-row"><div class="field" style="flex:1;margin:0"><label for="ie">Email</label><input id="ie" name="email" type="email" required placeholder="name@agency.com"></div>
+        <div class="field" style="width:140px;margin:0"><label for="ir">Role</label><select id="ir" name="role"><option value="viewer">Viewer</option><option value="admin">Admin</option></select></div></div>
+        <div><button class="btn" type="submit">Send invite</button></div><p class="error-msg" id="inv-err" role="alert"></p></div></div></form>
+      <section class="settings-card"><div class="form-section"><div><h3>Team</h3><p class="explain">People who can work on your stores. Removing someone ends their access straight away.</p></div>
+        <div class="controls">${d.members.length ? `<table class="data team-table"><thead><tr><th>Person</th><th>Role</th><th></th></tr></thead><tbody>${d.members.map((m) => `<tr><td><span class="cell-main">${esc(m.name || m.email)}</span><div class="cell-sub">${esc(m.email)}</div></td><td>${roleSel(m.id, m.role)}</td><td class="num"><button type="button" class="btn small ghost" data-remove="${m.id}">Remove</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No one yet. Invite your team above.</p>'}
+        ${d.invites.length ? `<h4 style="margin:18px 0 6px">Waiting to accept</h4><table class="data team-table"><tbody>${d.invites.map((i) => `<tr><td><span class="cell-main">${esc(i.email)}</span><div class="cell-sub">${ROLE[i.role]} · link expires ${esc(dateOnly(i.expires_at))}</div></td><td class="num"><button type="button" class="btn small ghost" data-revoke="${i.id}">Cancel invite</button></td></tr>`).join('')}</tbody></table>` : ''}</div></div></section></div>`;
+    $('#inv').onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target));
+      const done = busy(e.target.querySelector('button[type=submit]'), 'Sending');
+      try { await api('/api/team/invites', { method: 'POST', body: fd }); toast(`Invite sent to ${fd.email}`); render({ silent: true }); }
+      catch (ex) { $('#inv-err').textContent = ex.message; done(); }
+    };
+    $$('[data-role]', ctx.main).forEach((sel) => (sel.onchange = async () => { try { await api(`/api/team/members/${sel.dataset.role}`, { method: 'PATCH', body: { role: sel.value } }); toast('Role changed'); } catch (ex) { toast(ex.message, 'error'); } }));
+    $$('[data-remove]', ctx.main).forEach((b) => (b.onclick = async () => { if (!confirm('Remove this person from your team? They lose access straight away.')) return; await api(`/api/team/members/${b.dataset.remove}`, { method: 'DELETE' }).catch((ex) => toast(ex.message, 'error')); render({ silent: true }); }));
+    $$('[data-revoke]', ctx.main).forEach((b) => (b.onclick = async () => { await api(`/api/team/invites/${b.dataset.revoke}`, { method: 'DELETE' }).catch((ex) => toast(ex.message, 'error')); render({ silent: true }); }));
+  }
 
   const STATE = { trial: ['Free trial', 'running'], active: ['Active', 'healthy'], grace: ['Payment due', 'warning'], expired: ['Expired', 'critical'], suspended: ['Paused', 'critical'], cancelled: ['Ended', 'critical'] };
   async function billingPage(ctx, head) {
@@ -2819,8 +2926,20 @@
         if (r.confirmed) S.flash = 'Your email is confirmed. You can now sign in to Tharam in any browser.';
       } catch (ex) { return authView('link', ex.message); }
     }
-    try { const r = await api('/api/me'); S.me = r.user; S.admin = r.admin; S.features = new Set(r.features || []); }
-    catch { return authView(location.hash === '#signup' ? 'signup' : 'login'); }
+    // Team invite links (#/join/<token>): sign in or sign up with the invited email, then join.
+    const join = /^#\/join\/([\w-]{20,80})$/.exec(location.hash);
+    let r;
+    try { r = await api('/api/me'); }
+    catch { return authView(location.hash === '#signup' ? 'signup' : 'login', join ? 'You were invited to a Tharam workspace. Log in, or create an account, with the email the invite was sent to.' : ''); }
+    if (join) {
+      try {
+        const j = await api('/api/team/join', { method: 'POST', body: { token: join[1] } });
+        S.flash = `You joined ${j.workspace.name || j.workspace.email}'s workspace as ${j.workspace.role === 'admin' ? 'an admin' : 'a viewer'}.`;
+        r = await api('/api/me');
+      } catch (ex) { S.flash = ex.message; }
+      history.replaceState(null, '', '/app#/stores');
+    }
+    S.me = r.user; S.admin = r.admin; S.features = new Set(r.features || []); S.member = r.member || null; S.team = !!r.team;
     shell();
     if (location.hash === '#signup') location.replace('#/');
     render();
