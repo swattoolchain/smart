@@ -156,6 +156,7 @@
     account: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/>',
     reports: '<path d="M7 3.5h7l4.5 4.5V20a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z"/><path d="M14 3.5V8h4.5"/><path d="M9.5 17v-3M12.5 17v-5M15.5 17v-2"/>',
     catalog: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><path d="M4 15h16M4 19h16"/>',
+    apps: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/><path d="M16.5 4v6M13.5 7h6M4 16.5h7"/>',
     founder: '<path d="M12 3.5 14.4 9l5.6.5-4.3 3.8 1.3 5.7L12 16l-5 3 1.3-5.7L4 9.5 9.6 9z"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     chevron: '<path d="m8 10 4 4 4-4"/>',
@@ -347,6 +348,7 @@
       ${item(`${base}/catalog`, 'catalog', 'Catalog', at('catalog'))}
       ${item(`${base}/visual`, 'visual', 'Visual changes', at('visual'))}
       ${feat('sale_report') ? item(`${base}/sale`, 'sparkle', 'Sale readiness', at('sale')) : ''}
+      ${feat('app_health') ? item(`${base}/apps`, 'apps', 'App health', at('apps')) : ''}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
@@ -430,7 +432,7 @@
       if (!silent) { main.innerHTML = skeleton(); window.scrollTo(0, 0); }
       const ctx = { alive, main, r };
       // Pages of features that are switched off open the overview instead.
-      const PAGE_FEATURE = { sale: 'sale_report' };
+      const PAGE_FEATURE = { sale: 'sale_report', apps: 'app_health' };
       if (r.store) await ((!PAGE_FEATURE[r.module] || feat(PAGE_FEATURE[r.module])) && STORE_PAGES[r.module] || STORE_PAGES.overview)(ctx, S.stores.find((s) => s.id === r.store));
       else await PAGES[r.page](ctx);
       if (!silent && alive()) { const h1 = main.querySelector('h1'); document.title = `${h1 ? h1.textContent + ' – ' : ''}Tharam`; }
@@ -1187,6 +1189,62 @@
       const done = busy(e.currentTarget, 'Sending');
       try { const r = await api(`/api/stores/${s.id}/sale-readiness/email`, { method: 'POST', body: { run: d.runId } }); toast(`Sent to ${r.to}`); } catch (ex) { toast(ex.message, 'error'); } finally { done(); }
     };
+  };
+
+  // ---------- App health ----------
+  const kb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : b ? `${b} bytes` : '–');
+  STORE_PAGES.apps = async (ctx, s) => {
+    const d = await api(`/api/stores/${s.id}/apps`);
+    if (!ctx.alive()) return;
+    const intro = '<p class="lede-sm">Every app and outside service your store loads for shoppers: where it runs, what it costs on a phone, the errors it causes and when its code changes. Tharam is on the list too.</p>';
+    const PG = { home: 'Home', product: 'Product', cart: 'Cart', other: 'Other' };
+    const us = d.tharam;
+    const tharamRow = `<section class="panel app-us"><h2>Tharam's own footprint</h2>
+      <p>${us.scripts || us.sites.length ? `We found ${plural(us.scripts, 'Tharam script')} on your store${us.bytes ? ` (${kb(us.bytes)} on a phone)` : ''}. Tharam does not need any code on your storefront; you can remove it.` : '<b>No code on your store.</b> Tharam adds no scripts, no app blocks and no tracking to your storefront, so it costs your shoppers nothing in speed.'}
+      Our checks visit your store from outside, like a shopper: ${plural(us.visits7d, 'check')} in the last 7 days.</p></section>`;
+    if (!d.runId) {
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'App health')}${intro}<div class="panel empty"><h2>No apps recorded yet</h2><p>${s.config.disabled.includes('security.scripts') ? 'Script watch is switched off in the test suite, and App health is built from it.' : 'The next check records every app on your home, product and cart pages.'}</p>${s.config.disabled.includes('security.scripts') ? `<a class="btn" href="#/s/${s.id}/suite">Open test suite</a>` : runLink(s, 'Run validations')}</div>${tharamRow}</div>`;
+      return;
+    }
+    const STATUS = {
+      errors: ['critical', 'Causing errors'], widget: ['warning', 'Widget missing'], missing: ['warning', 'Stopped loading'], changed: ['warning', 'Code changed'], new: ['running', 'New'], ok: ['healthy', 'Healthy'],
+    };
+    const KIND = { theme: 'Your store\'s own files', app: 'App', tracking: 'Ads and analytics', service: 'Outside service', shopify: 'Shopify', unknown: 'Outside site' };
+    const shortUrl = (u) => { try { const x = new URL(u); return x.host + (x.pathname.length > 48 ? '…' + x.pathname.slice(-47) : x.pathname); } catch { return u; } };
+    const row = (a) => {
+      const [cls, label] = STATUS[a.status] || STATUS.ok;
+      const what = [];
+      if (a.status === 'missing') what.push(`Loaded on the ${a.pages.map((p) => PG[p] || p).join(', ').toLowerCase()} page${a.pages.length > 1 ? 's' : ''} last check ${time(a.lastSeenAt)}, not this time. If you didn't remove it, its widget may be missing for shoppers.`);
+      if (a.widget?.missingOn.length) what.push(`Loads on the ${a.widget.missingOn.map((p) => PG[p] || p).join(', ').toLowerCase()} page${a.widget.missingOn.length > 1 ? 's' : ''}, but shoppers don't see its widget there. Check the app is switched on under Online Store → Themes → Customize → App embeds.`);
+      for (const e of a.errors) what.push(`Error on the ${(PG[e.page] || e.page).toLowerCase()} page: “${esc(e.message)}”`);
+      if (a.changes.added.length) what.push(`New code: ${a.changes.added.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
+      if (a.changes.updated?.length) what.push(`Code updated at the same address: ${a.changes.updated.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
+      if (a.changes.removed.length && a.status !== 'missing') what.push(`Code removed: ${a.changes.removed.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
+      if (a.status === 'new') what.push(`First seen ${time(a.firstSeenAt)}.`);
+      return `<tr class="app-row status-${a.status}" data-app="${esc(a.key)}">
+        <td><span class="cell-main">${esc(a.name)}</span><div class="cell-sub">${esc(KIND[a.kind] || '')}</div></td>
+        <td><span class="pill ${cls}">${label}</span></td>
+        <td>${a.pages.map((p) => PG[p] || p).join(', ') || '–'}</td>
+        <td class="num">${a.phone.bytes ? `${kb(a.phone.bytes)}<div class="cell-sub">about ${a.phone.slowS < 0.1 ? '<0.1' : a.phone.slowS} s on slow 4G</div>` : '–'}</td>
+        <td class="num">${a.errors.length || '–'}</td>
+        <td>${a.changes.lastChangedAt ? time(a.changes.lastChangedAt) : '<span class="muted">No change seen</span>'}</td>
+        <td class="cell-sub">${a.sites.length ? a.sites.map(esc).join(', ') : '–'}</td>
+      </tr>${what.length ? `<tr class="app-detail status-${a.status}"><td colspan="7">${what.map((w) => `<div>${w}</div>`).join('')}</td></tr>` : ''}`;
+    };
+    const trouble = d.apps.filter((a) => ['errors', 'widget', 'missing'].includes(a.status));
+    const TROUBLE = { errors: 'is causing script errors', widget: 'loads, but shoppers don\'t see its widget', missing: 'stopped loading' };
+    const t = d.totals;
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'App health')}${intro}
+      <p class="muted" style="margin:-6px 0 14px">From the check ${time(d.checkedAt)}${d.compared ? `, compared with the one before (${time(d.comparedAt)})` : ''}.${d.phone ? ` Phone cost measured ${time(d.phone.at)}.` : ' Phone cost appears after the next full check.'}</p>
+      ${trouble.length ? `<div class="notice"><p>${trouble.map((a) => `<b>${esc(a.name)}</b> ${TROUBLE[a.status]}`).join('; ')}. Details below.</p></div>` : '<div class="notice ok"><p>No app is causing errors, every app from the last check still loads, and app widgets show for shoppers.</p></div>'}
+      <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+        <div class="figure"><b>${t.apps}</b><span>apps and outside services</span></div>
+        <div class="figure"><b>${kb(t.phoneBytes)}</b><span>they add to a page on a phone</span></div>
+        <div class="figure"><b style="color:${t.errors ? 'var(--fail)' : 'inherit'}">${t.errors}</b><span>script errors</span></div></div>
+      <section class="panel"><div class="table-wrap flat"><table class="data apps-table"><thead><tr><th>App or service</th><th>Status</th><th>Loads on</th><th class="num">Phone cost per page</th><th class="num">Errors</th><th>Last code change</th><th>Talks to</th></tr></thead>
+        <tbody>${d.apps.map(row).join('')}</tbody></table></div>
+        ${d.unattributedErrors ? `<p class="muted" style="margin:10px 4px 0">${plural(d.unattributedErrors, 'script error')} could not be traced to one app. See the latest report's checks.</p>` : ''}</section>
+      ${tharamRow}</div>`;
   };
 
   STORE_PAGES.visual = async (ctx, s) => {
@@ -2166,6 +2224,138 @@
       <section class="panel"><h2>Free checks</h2>${t(d.recentScans, [['url', 'Store'], ['score', 'Score'], ['verdict', 'Result'], ['created_at', 'When'], ['id', 'Report']], (r, c) => (c === 'created_at' ? time(r[c]) : c === 'id' ? `<a href="/scan/${r.id}" target="_blank" rel="noopener">Open</a>` : c === 'verdict' ? esc(VERDICT[r.verdict] || r.status) : esc(r[c] ?? '')))}</section></div>`;
   };
 
+  // How busy the check machine is, and when to add a worker. Read-only.
+  async function adminCapacity(ctx, head) {
+    const d = await api('/api/admin/capacity');
+    if (!ctx.alive()) return;
+    const T = d.thresholds;
+    const mins = (m) => (m == null ? '–' : m < 1 && m > 0 ? '<1 min' : `${Math.round(m)} min`);
+    const secs = (x) => (x == null ? '–' : x < 90 ? `${x} s` : `${Math.round(x / 6) / 10} min`);
+    const fig = (v, l, warn) => `<div class="figure"${warn ? ' style="border-color:var(--fail)"' : ''}><b>${v}</b><span>${esc(l)}</span></div>`;
+    const ln = d.lateStarts.now;
+    const lateNow = ln.started + ln.waiting > 0;
+    const busy = d.slotUse.lastHourPct > T.busyPct;
+    const verdict = lateNow || busy
+      ? `<div class="notice warn-n"><p><b>Time to add a worker.</b> ${lateNow ? `Scheduled checks are starting more than ${T.lateMin} minutes late (longest wait ${ln.worstMin} min). ` : ''}${busy ? `Check slots were ${d.slotUse.lastHourPct}% busy over the last hour. ` : ''}We email the founders once when this starts.</p></div>`
+      : `<div class="notice ok"><p>Capacity is fine. We email the founders if scheduled checks start more than ${T.lateMin} minutes late or check slots stay above ${T.busyPct}% busy for an hour.</p></div>`;
+    const plans = d.browserMinutes.plans;
+    const bm = `<div class="table-wrap flat"><table class="data" id="cap-minutes"><thead><tr><th>Day (UTC)</th>${plans.map((p) => `<th class="num">${esc(p)}</th>`).join('')}<th class="num">All plans</th><th class="num">Checks</th><th class="num">Peak slots</th></tr></thead><tbody>
+      ${d.browserMinutes.days.map((x, i) => { const pk = d.slotUse.peaks[i]; return `<tr><td>${esc(x.date)}</td>${plans.map((p) => `<td class="num">${x.byPlan[p] != null ? esc(x.byPlan[p]) : '–'}</td>`).join('')}<td class="num"><b>${esc(x.total)}</b></td><td class="num">${x.checks}</td><td class="num">${pk.peak} of ${d.slots}${pk.pct > T.busyPct ? ` <span class="pill warning">${pk.pct}%</span>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`;
+    const dur = d.durations.length ? `<div class="table-wrap flat"><table class="data" id="cap-durations"><thead><tr><th>Kind of check</th><th class="num">Checks</th><th class="num">Typical</th><th class="num">Slowest 5%</th><th class="num">Average</th></tr></thead><tbody>
+      ${d.durations.map((x) => `<tr><td>${esc(x.kind)}</td><td class="num">${x.count}</td><td class="num">${secs(x.medianSec)}</td><td class="num">${secs(x.p95Sec)}</td><td class="num">${secs(x.avgSec)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No finished checks in this period.</p>';
+    const m = d.machine;
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      ${verdict}
+      <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        ${fig(`${d.queue.active} of ${d.slots}`, 'Check slots in use now')}
+        ${fig(d.queue.waiting, d.queue.oldestWaitingMin != null ? `Waiting · oldest ${d.queue.oldestWaitingMin} min` : 'Waiting', d.queue.oldestWaitingMin > T.lateMin)}
+        ${fig(`${d.slotUse.lastHourPct}%`, 'Slot use, last hour', busy)}
+        ${fig(mins(d.lateStarts.p95Min), `Late starts, slowest 5% (${d.days} days)`, d.lateStarts.p95Min > T.lateMin)}</div>
+      <section class="panel"><h2>Scheduled checks: how late they start</h2>
+        <p class="muted" style="margin-top:0">Time from when a check was due until it got a browser. ${d.lateStarts.count} scheduled checks in the last ${d.days} days.</p>
+        <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))" id="cap-late">
+          ${fig(mins(d.lateStarts.medianMin), 'Typical (median)')}${fig(mins(d.lateStarts.p95Min), 'Slowest 5% (p95)', d.lateStarts.p95Min > T.lateMin)}${fig(d.lateStarts.overLimit, `More than ${T.lateMin} min late`, d.lateStarts.overLimit > 0)}</div></section>
+      <section class="panel"><h2>Browser minutes per day, by plan</h2>${bm}
+        <p class="muted" style="margin-bottom:0">${d.browserMinutes.total} browser minutes in ${d.days} days. A day has ${24 * 60 * d.slots} slot minutes (${d.slots} slots × 24 h). Plans are each customer's current plan.</p></section>
+      <section class="panel"><h2>How long checks take</h2>${dur}</section>
+      <section class="panel"><h2>This machine</h2><div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        ${fig(`${m.memUsedPct}%`, `Memory used of ${Math.round(m.memTotalMb / 1024 * 10) / 10} GB`, m.memUsedPct > 85)}
+        ${fig(`${m.rssMb} MB`, 'Used by Tharam (server)')}
+        ${fig(m.diskFreeGb != null ? `${m.diskFreeGb} GB` : '–', m.diskUsedPct != null ? `Disk free · ${m.diskUsedPct}% used` : 'Disk free', m.diskUsedPct > 85)}
+        ${fig(m.load1, `Load, ${m.cpus} CPUs`, m.load1 > m.cpus)}</div></section></div>`;
+  }
+
+  // The machines that run checks: the main server and any workers. Founders add workers with a one-time join token.
+  async function adminRunners(ctx, head) {
+    const d = await api('/api/admin/runners');
+    if (!ctx.alive()) return;
+    const STAT = { active: ['healthy', 'Active'], draining: ['warning', 'Draining'], paused: ['', 'Paused'] };
+    const RUNSTAT = { done: 'Finished', error: 'Didn’t finish', cancelled: 'Stopped', running: 'Running', queued: 'Waiting' };
+    const secs = (x) => (x < 90 ? `${x} s` : `${Math.round(x / 6) / 10} min`);
+    const now = d.runners.flatMap((r) => r.current.map((c) => ({ ...c, runner: r.name })));
+    const row = (r) => {
+      const [cls, label] = STAT[r.status] || ['', r.status];
+      const health = r.kind === 'main' ? '<span class="pill healthy">This server</span>' : r.healthy ? `<span class="pill healthy">Checking in</span><div class="cell-sub">${time(r.lastSeen)}</div>` : `<span class="pill critical">Not responding</span><div class="cell-sub">last seen ${time(r.lastSeen)}</div>`;
+      const btn = (st, txt) => (r.status === st ? '' : `<button type="button" class="btn small secondary" data-runner="${r.id}" data-status="${st}">${txt}</button>`);
+      return `<tr class="runner-row" data-name="${esc(r.name)}"><td><span class="cell-main">${esc(r.name)}</span><div class="cell-sub">${r.kind === 'main' ? 'Main server · web, database, scheduler' : 'Worker'}</div></td>
+        <td><span class="pill ${cls}">${label}</span></td><td>${health}</td><td class="num">${r.used} of ${r.slots}</td>
+        <td class="num">${r.today ? `${r.today.checks}<div class="cell-sub">${r.today.minutes} min</div>` : '–'}</td>
+        <td class="num">${r.totals ? `${r.totals.checks}<div class="cell-sub">${r.totals.minutes} min</div>` : '–'}</td>
+        <td class="num">${r.totals && r.totals.failed + r.totals.lost ? `<span class="pill ${r.totals.lost ? 'critical' : 'warning'}">${r.totals.failed} failed${r.totals.lost ? ` · ${r.totals.lost} lost` : ''}</span>` : '<span class="muted">0</span>'}</td>
+        <td>${r.tags.length ? r.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join(' ') : '<span class="muted">–</span>'}</td>
+        <td class="actions">${btn('active', 'Activate')} ${btn('draining', 'Drain')} ${btn('paused', 'Pause')}</td></tr>`;
+    };
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <p class="lede-sm">Checks go to the active runner with the most free slots. Stores in sale mode prefer runners tagged <code>sale</code>, paid plans prefer their plan's tag (for example <code>pro</code>), and stores prefer their region's tag (<code>india</code>, <code>eu</code>, <code>us</code>). If no such runner has room, any runner takes the check. Workers take journey and full checks (a full check fetches the store’s approved screenshots and last product list from this server and sends new ones back). Publish checks, free website checks and full checks with AI review run on the main server. A worker that stops checking in for a minute gets no new checks, and its unfinished checks are retried once elsewhere. <b>Drain</b> finishes current checks and takes no new ones.</p>
+      <section class="panel"><div class="table-wrap flat"><table class="data" id="runners"><thead><tr><th>Runner</th><th>Status</th><th>Health</th><th class="num">Slots in use</th><th class="num">Today</th><th class="num">Last ${d.days} days</th><th class="num">Problems, ${d.days} days</th><th>Tags</th><th></th></tr></thead>
+        <tbody>${d.runners.map(row).join('')}</tbody></table></div>
+        <p class="muted" style="margin-bottom:0">Checks and browser minutes go to the day a check started (UTC). <b>Failed</b>: checks that ended with an error on this runner. <b>Lost</b>: checks this runner stopped answering for; they were retried on another runner.</p></section>
+      <section class="panel"><h2>Running now</h2>${now.length ? `<div class="table-wrap flat"><table class="data" id="runners-now"><thead><tr><th>Runner</th><th>Store</th><th>Check</th><th>Since</th></tr></thead><tbody>
+        ${now.map((c) => `<tr><td>${esc(c.runner)}</td><td>${esc(c.store || 'Free website check')}</td><td>${esc(c.kind)}</td><td>${c.since ? time(c.since) : '<span class="muted">getting ready</span>'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No checks running right now.</p>'}</section>
+      <section class="panel"><h2>Per day</h2><div class="table-wrap flat"><table class="data" id="runners-days"><thead><tr><th>Day (UTC)</th>${d.runners.map((r) => `<th class="num">${esc(r.name)}</th>`).join('')}</tr></thead><tbody>
+        ${(d.runners[0]?.days || []).map((x, i) => `<tr><td>${esc(x.date)}</td>${d.runners.map((r) => { const y = r.days[i]; return `<td class="num">${y.checks ? `${y.checks} · ${y.minutes} min` : '–'}${y.failed || y.lost ? `<div class="cell-sub">${y.failed} failed${y.lost ? `, ${y.lost} lost` : ''}</div>` : ''}</td>`; }).join('')}</tr>`).join('')}</tbody></table></div></section>
+      <section class="panel"><h2>Latest checks</h2><div class="table-wrap flat"><table class="data" id="runners-recent"><thead><tr><th>Check</th><th>Store</th><th>Runner</th><th>Queued</th><th class="num">Waited</th><th class="num">Took</th><th>Result</th></tr></thead><tbody>
+        ${d.recent.map((x) => `<tr><td>#${x.id} ${esc(x.kind)}<div class="cell-sub">${esc(x.trigger || '')}</div></td><td>${x.store ? `${esc(x.store.name)}<div class="cell-sub">${esc(x.store.account || '')}</div>` : '<span class="muted">Free website check</span>'}</td>
+          <td>${x.runner ? esc(x.runner) : '<span class="muted">–</span>'}${x.retried ? ' <span class="pill warning">Retried</span>' : ''}</td><td class="nowrap">${esc(exact(x.queuedAt))}</td>
+          <td class="num">${x.waitSec == null ? '–' : secs(x.waitSec)}</td><td class="num">${x.tookSec == null ? '–' : secs(x.tookSec)}</td><td>${esc(RUNSTAT[x.status] || x.status)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No checks yet.</td></tr>'}</tbody></table></div></section>
+      <section class="panel"><h2>Add a worker</h2><p class="muted" style="margin-top:0">Creates a join token that works once, for 24 hours. Start the worker with it; the worker then gets its own credentials.</p>
+        <form id="rjoin" class="inline-form"><div class="field"><label>Name</label><input name="name" required maxlength="40" placeholder="worker-1"></div>
+          <div class="field"><label>Slots</label><input name="slots" type="number" min="1" max="16" value="2"></div>
+          <div class="field"><label>Tags (comma separated)</label><input name="tags" placeholder="sale, india"></div>
+          <div class="field"><label>&nbsp;</label><button class="btn" type="submit">Create join token</button></div></form>
+        <p class="error-msg" id="rjoin-err" role="alert"></p><div id="rjoin-out"></div></section></div>`;
+    ctx.main.querySelectorAll('[data-runner]').forEach((b) => (b.onclick = async () => {
+      try { await api(`/api/admin/runners/${b.dataset.runner}`, { method: 'PATCH', body: { status: b.dataset.status } }); toast('Runner updated'); adminRunners(ctx, head); } catch (ex) { toast(ex.message, 'error'); }
+    }));
+    $('#rjoin').onsubmit = async (e) => {
+      e.preventDefault();
+      const b = Object.fromEntries(new FormData(e.target));
+      $('#rjoin-err').textContent = '';
+      try {
+        const t = await api('/api/admin/runners/join-tokens', { method: 'POST', body: { name: b.name, slots: Number(b.slots), tags: b.tags } });
+        $("#rjoin-out").innerHTML = `<div class="notice" style="display:block"><p><b>Join token for ${esc(t.name)}</b>, shown once, valid ${t.expiresInHours} hours:</p><pre class="code" id="rjoin-token">${esc(t.token)}</pre><p class="muted">On the worker machine: <code>MAIN_URL=${esc(location.origin)} JOIN_TOKEN=… node src/worker.js</code></p></div>`;
+      } catch (ex) { $('#rjoin-err').textContent = ex.message; }
+    };
+  }
+
+  // Browser minutes per store and account, by plan, with an estimated cost next to what each customer pays.
+  async function adminUsage(ctx, head) {
+    const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+    const period = qs.get('period') === 'day' ? 'day' : 'month';
+    let d;
+    try { d = await api(`/api/admin/usage?period=${period}${qs.get('date') ? `&date=${encodeURIComponent(qs.get('date'))}` : ''}`); }
+    catch (ex) { if (ctx.alive()) ctx.main.innerHTML = `<div class="main-inner">${head}<p class="error-msg">${esc(ex.message)}</p></div>`; return; }
+    if (!ctx.alive()) return;
+    const cur = d.rate.currency;
+    const money = (v, c = cur) => (v == null ? '–' : v > 0 && v < 0.01 ? `&lt; ${esc(c)} 0.01` : `${esc(c)} ${v < 1 && v > 0 ? v.toFixed(2) : Math.round(v * 100) / 100}`);
+    const pct = (p) => (p == null ? '<span class="muted">–</span>' : `<span class="pill ${p > 50 ? 'critical' : p > 20 ? 'warning' : 'healthy'}">${p}%</span>`);
+    const pays = (a) => (a.pays ? `${money(a.pays.amount, a.pays.currency)}${a.pays.currency !== cur && a.pays.inCostCurrency != null ? `<div class="cell-sub">≈ ${money(a.pays.inCostCurrency)}</div>` : ''}` : '<span class="muted">Nothing</span>');
+    const label = period === 'day' ? d.date : new Date(d.date + '-01T00:00:00Z').toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    const plans = [...new Set(d.days.flatMap((x) => Object.keys(x.byPlan)))].sort();
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <form id="usage-pick" class="inline-form" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:16px">
+        <div class="field" style="margin:0"><label>Period</label><select name="period">${opt('month', 'Month', period)}${opt('day', 'Day', period)}</select></div>
+        <div class="field" style="margin:0"><label>${period === 'day' ? 'Day' : 'Month'}</label><input name="date" type="${period === 'day' ? 'date' : 'month'}" value="${esc(d.date)}"></div>
+        <div class="field" style="margin:0"><button class="btn secondary" type="submit">Show</button></div></form>
+      <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="figure"><b>${d.totals.minutes}</b><span>Browser minutes, ${esc(label)}</span></div>
+        <div class="figure"><b>${money(d.totals.cost)}</b><span>Estimated cost</span></div>
+        <div class="figure"><b>${d.totals.accounts}</b><span>Accounts with checks</span></div>
+        <div class="figure"><b>${d.freeChecks.minutes}</b><span>Minutes on free website checks (${d.freeChecks.checks})</span></div></div>
+      <p class="muted">Estimated at <b>${money(d.rate.perHour)}</b> per browser hour (change it in <a href="#/admin/settings">Settings</a>). ${period === 'day' ? 'For a day, “pays” is one day’s share of the monthly price.' : '“Pays” is the monthly price of active plans; yearly plans count as one twelfth.'} Prices in another currency are converted with rough rates, so treat the percentage as a guide.</p>
+      <section class="panel"><h2>By plan</h2><div class="table-wrap flat"><table class="data" id="usage-plans"><thead><tr><th>Plan</th><th class="num">Accounts</th><th class="num">Stores</th><th class="num">Checks</th><th class="num">Browser minutes</th><th class="num">Est. cost</th><th class="num">Customers pay</th><th class="num">Cost of price</th></tr></thead><tbody>
+        ${d.plans.map((p) => `<tr><td>${esc(p.plan)}</td><td class="num">${p.accounts}</td><td class="num">${p.stores}</td><td class="num">${p.checks}</td><td class="num"><b>${p.minutes}</b></td><td class="num">${money(p.cost)}</td><td class="num">${p.pays ? money(p.pays) : '<span class="muted">Nothing</span>'}</td><td class="num">${pct(p.costPct)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No checks in this period.</td></tr>'}</tbody></table></div></section>
+      <section class="panel"><h2>By account and store</h2><div class="table-wrap flat"><table class="data" id="usage-accounts"><thead><tr><th>Account</th><th>Plan</th><th class="num">Checks</th><th class="num">Browser minutes</th><th class="num">Est. cost</th><th class="num">Pays</th><th class="num">Cost of price</th></tr></thead><tbody>
+        ${d.accounts.map((a) => `<tr class="link usage-account" data-href="#/admin/customers/${a.userId}" tabindex="0"><td><span class="cell-main">${esc(a.email)}</span></td><td>${esc(a.plan)}${a.billing === 'shopify' ? '<div class="cell-sub">Shopify billing</div>' : ''}</td><td class="num">${a.checks}</td><td class="num"><b>${a.minutes}</b></td><td class="num">${money(a.cost)}</td><td class="num">${pays(a)}</td><td class="num">${pct(a.costPct)}</td></tr>
+          ${a.stores.map((st) => `<tr class="usage-store"><td style="padding-left:28px"><span class="cell-sub">${esc(st.name)}</span></td><td></td><td class="num cell-sub">${st.checks}</td><td class="num cell-sub">${st.minutes}</td><td class="num cell-sub">${money(st.cost)}</td><td></td><td></td></tr>`).join('')}`).join('') || '<tr><td colspan="7" class="muted">No checks in this period.</td></tr>'}</tbody></table></div></section>
+      ${period === 'month' ? `<section class="panel"><h2>Per day</h2><div class="table-wrap flat"><table class="data" id="usage-days"><thead><tr><th>Day (UTC)</th>${plans.map((p) => `<th class="num">${esc(p)}</th>`).join('')}<th class="num">All</th></tr></thead><tbody>
+        ${d.days.filter((x) => x.minutes).map((x) => `<tr><td><a href="#/admin/usage?period=day&date=${esc(x.date)}">${esc(x.date)}</a></td>${plans.map((p) => `<td class="num">${x.byPlan[p] ?? '–'}</td>`).join('')}<td class="num"><b>${x.minutes}</b></td></tr>`).join('') || `<tr><td colspan="${plans.length + 2}" class="muted">No checks in this month.</td></tr>`}</tbody></table></div></section>` : ''}</div>`;
+    rowsLink(ctx.main);
+    const f = $('#usage-pick');
+    f.period.onchange = () => { location.hash = `#/admin/usage?period=${f.period.value}`; };
+    f.onsubmit = (e) => { e.preventDefault(); location.hash = `#/admin/usage?period=${f.period.value}&date=${encodeURIComponent(f.date.value)}`; };
+  }
+
   // ---------- Founder console ----------
   const STATE_PILL = (st) => { const [l, k] = STATE[st] || [st, '']; return `<span class="pill ${k}">${esc(l)}</span>`; };
   const sumMoney = (obj) => Object.entries(obj || {}).map(([c, v]) => minorMoney(v, c)).join(' + ') || '0';
@@ -2193,7 +2383,7 @@
     if (!S.admin) { location.hash = '#/'; return; }
     const tab = ctx.r.a;
     const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder console</h1><div class="meta">Customers, plans and revenue · only visible to founders</div></div></div>`
-      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['features', 'Features'], ['leads', 'Leads and free checks']], tab);
+      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['features', 'Features'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity'], ['runners', 'Runners'], ['usage', 'Usage']], tab);
     if (tab === 'customers' && ctx.r.b) return adminCustomer(ctx, head, ctx.r.b);
     if (tab === 'customers') return adminCustomers(ctx, head);
     if (tab === 'plans') return adminPlans(ctx, head);
@@ -2202,6 +2392,9 @@
     if (tab === 'settings') return adminSettings(ctx, head);
     if (tab === 'features') return adminFeatures(ctx, head);
     if (tab === 'leads') return adminLeads(ctx, head);
+    if (tab === 'capacity') return adminCapacity(ctx, head);
+    if (tab === 'runners') return adminRunners(ctx, head);
+    if (tab === 'usage') return adminUsage(ctx, head);
     const d = await api('/api/admin/billing');
     if (!ctx.alive()) return;
     const c = d.counts;
@@ -2426,6 +2619,9 @@
         <div class="controls"><div class="field"><label>Grace days</label><input name="grace_days" type="number" min="0" max="90" value="${esc(st.grace_days)}"></div></div></div>
       <div class="form-section"><div><h3>How customers pay</h3><p class="explain">Shown on every customer’s Plan and billing page and in reminder emails.</p></div>
         <div class="controls"><div class="field"><label>Payment instructions</label><textarea name="payment_note" rows="4" maxlength="2000">${esc(st.payment_note)}</textarea></div></div></div>
+      <div class="form-section"><div><h3>Running costs</h3><p class="explain">What one browser hour costs you (machine price ÷ the browser hours it gives). Used for the estimated cost on the Usage page.</p></div>
+        <div class="controls"><div class="field"><label>Cost per browser hour</label><input name="browser_hour_cost" type="number" min="0" max="100" step="0.0001" value="${esc(st.browser_hour_cost)}"></div>
+        <div class="field"><label>Currency</label><select name="cost_currency">${CURS.map((c) => opt(c, c, st.cost_currency)).join('')}</select></div></div></div>
       <div class="form-section"><div></div><div class="controls"><p class="error-msg" id="set-err" role="alert"></p><div><button class="btn" type="submit">Save settings</button></div></div></div></form></div>`;
     $('#setf').onsubmit = async (e) => {
       e.preventDefault();
@@ -2600,7 +2796,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false; S.features = new Set(me.features || []);
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', alerts: '/alerts', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', suite: '/suite', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {

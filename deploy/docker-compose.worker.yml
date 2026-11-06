@@ -1,0 +1,23 @@
+# A Tharam worker: runs checks for the main server (see apps/guard/src/worker.js and deploy/README.md).
+# Set up and updated by deploy/worker.sh. No ports are opened: the worker only calls the main server.
+services:
+  worker:
+    build: ../apps/guard
+    command: ["node", "src/worker.js"]
+    env_file: worker.env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - worker-data:/data   # keeps the runner credentials (runner.json) across restarts and updates
+    shm_size: "1gb"
+    restart: unless-stopped
+    healthcheck:
+      # Healthy while the main server answered a check-in in the last 60 seconds.
+      test: ["CMD", "node", "-e", "const f=require('fs');try{const h=JSON.parse(f.readFileSync('/data/worker-health.json','utf8'));process.exit(Date.now()-Date.parse(h.at)<60000?0:1)}catch{process.exit(1)}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  worker-data:

@@ -6,7 +6,7 @@ import { note } from './lib/evidence.js';
 
 // Every route that takes a store id. :id is the victim's store.
 const STORE_ROUTES = [
-  ['get', '/api/stores/:id'], ['get', '/api/stores/:id/catalog'], ['get', '/api/stores/:id/compare'],
+  ['get', '/api/stores/:id'], ['get', '/api/stores/:id/apps'], ['get', '/api/stores/:id/catalog'], ['get', '/api/stores/:id/compare'],
   ['get', '/api/stores/:id/environments'], ['get', '/api/stores/:id/releases'], ['get', '/api/stores/:id/reports'],
   ['get', '/api/stores/:id/runs'], ['get', '/api/stores/:id/sale-readiness'], ['get', '/api/stores/:id/scorecard'], ['get', '/api/stores/:id/shopify/themes'],
   ['get', '/api/stores/:id/visual'], ['patch', '/api/stores/:id'], ['delete', '/api/stores/:id'],

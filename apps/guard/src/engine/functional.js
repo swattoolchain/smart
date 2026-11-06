@@ -1,6 +1,7 @@
 import { check, shortErr, plural } from './checks.js';
 import { gotoStore, settle, settleChallenge } from './browser.js';
 import { searchTermFrom } from './discover.js';
+import { errorSource } from './apps.js';
 
 const ATC_SELECTORS = [
   'form[action*="/cart/add"] button[type="submit"][name="add"]',
@@ -72,7 +73,7 @@ async function dismissOverlays(page) {
 
 export async function runFunctional({ page, rec, origin, info, password, shot, on = () => true }) {
   const pageErrors = [];
-  page.on('pageerror', (e) => pageErrors.push({ url: page.url(), message: shortErr(e) }));
+  page.on('pageerror', (e) => pageErrors.push({ url: page.url(), message: shortErr(e), source: errorSource(e) }));
 
   // 1. Homepage
   rec.step('Open homepage');

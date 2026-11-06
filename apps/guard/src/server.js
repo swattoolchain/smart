@@ -31,6 +31,8 @@ import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
 import { saleReadiness, emailSaleReadiness, saleRecipients, saleGroups } from './sale-readiness.js';
+import { appHealth } from './app-health.js';
+import { runnerRoutes } from './runner-routes.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -806,6 +808,13 @@ app.post('/api/stores/:id/sale-readiness/email', requireUser, requireFeature('sa
   try { res.json(await emailSaleReadiness(s, r, to)); } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'The email could not be sent. Try again in a minute.' }); }
 });
 
+// App Health: every app and service seen on the storefront, from the latest checks.
+app.get('/api/stores/:id/apps', requireUser, requireFeature('app_health'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(appHealth(s));
+});
+
 app.post('/api/stores/:id/explain-change', requireUser, async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
@@ -838,6 +847,7 @@ app.post('/api/stores/:id/approve-visual', requireUser, (req, res) => {
 
 // ---------- Founder console: customers, licences, payments, plans ----------
 adminRoutes(app, { requireUser, isAdmin });
+runnerRoutes(app, { requireUser, isAdmin });
 
 // ---------- Founder view ----------
 app.get('/api/admin/overview', requireUser, (req, res) => {

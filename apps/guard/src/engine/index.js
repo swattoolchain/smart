@@ -13,7 +13,8 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { reviewScreens } from './visual-ai.js';
-import { watchScripts, scriptChecks } from './scripts.js';
+import { watchScripts, scriptChecks, pageKind } from './scripts.js';
+import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js';
 import { watchHijack, hijackChecks } from './hijack.js';
 import { watchForms, formChecks } from './forms.js';
 import { aiEnabled } from '../ai.js';
@@ -105,9 +106,22 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     phase('journey');
     const inventory = on('security.scripts') ? watchScripts(page, origin) : null;
     const forms = on('security.scripts') ? await watchForms(page, origin).catch((e) => { console.error('form watch failed', e.message); return null; }) : null;
+    const widgets = inventory ? await watchWidgets(page).catch(() => null) : null;
     const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
     // Script watch compares with the store's previous check; publish-check runs only record.
-    if (inventory && !fn.locked && !fn.blocked && !fn.down) scripts = scriptChecks({ rec, inventory: inventory(), previous: previousScripts, monitored: !!storeId && !preview && !captureOnly });
+    if (inventory && !fn.locked && !fn.blocked && !fn.down) {
+      await inventory.settle();
+      scripts = scriptChecks({ rec, inventory: inventory(), previous: previousScripts, monitored: !!storeId && !preview && !captureOnly });
+      // App Health: app widgets that should show where the app loads.
+      if (widgets && Object.keys(scripts.pages).length) {
+        const seen = widgets();
+        const w = missingWidgets(scripts, seen);
+        scripts.widgets = { seen, checked: w.checked, missing: w.missing };
+        widgetCheck(rec, w);
+      }
+      // App Health: which script each error came from.
+      scripts.errors = (fn.pageErrors || []).slice(0, 30).map((e) => ({ page: pageKind(e.url) || 'other', message: e.message, source: e.source || null }));
+    }
     if (hijack && !fn.locked && !fn.blocked && !fn.down) {
       await hijack.probe(mctx);
       hijackChecks({ rec, found: await hijack.result() });
@@ -119,7 +133,10 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
       if (kind !== 'journeys') {
         phase('quality');
+        // App Health: what each app's files cost on the phone while the speed check loads the pages.
+        const cost = scripts && on('speed') ? watchCost(mobilePage) : null;
         metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;
+        if (cost) scripts.phone = await cost();
       }
       if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
         phase('regional');
