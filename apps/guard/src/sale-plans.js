@@ -16,7 +16,7 @@ import { entitlements, has, blockReason } from './license.js';
 import { sendMail } from './alerts.js';
 import { startRelease } from './release.js';
 import * as shopify from './shopify.js';
-import { cleanPlan, expectedPrices, compareDiscounts, automaticFor, overlaps, rehearsalDue, verdictOf, ruleLabel, utcToZoned } from './sale-math.js';
+import { cleanPlan, expectedPrices, compareDiscounts, compareScope, compareOffers, automaticFor, overlaps, rehearsalDue, verdictOf, ruleLabel, utcToZoned, validTimeZone } from './sale-math.js';
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS sale_plans (
@@ -85,7 +85,7 @@ const running = new Set(); // plan ids being rehearsed in this process
 /** How many sale plans a store may have that haven't ended yet. */
 export const planLimit = (ent) => (has(ent, 'publish') ? 10 : 2);
 
-export const parse = (row) => ({ ...JSON.parse(row.plan_json || '{}'), id: row.id, storeId: row.store_id, name: row.name, timeZone: row.time_zone, startsAt: row.starts_at, endsAt: row.ends_at, createdAt: row.created_at, updatedAt: row.updated_at });
+export const parse = (row) => ({ offers: [], ...JSON.parse(row.plan_json || '{}'), id: row.id, storeId: row.store_id, name: row.name, timeZone: row.time_zone, startsAt: row.starts_at, endsAt: row.ends_at, createdAt: row.created_at, updatedAt: row.updated_at });
 const sqlMs = (s) => (s ? new Date(s.replace(' ', 'T') + 'Z').getTime() : null);
 export function phase(p, now = Date.now()) { return now < p.startsAt ? 'upcoming' : now < p.endsAt ? 'live' : 'ended'; }
 
@@ -106,7 +106,7 @@ function planView(row) {
     lastLive: live ? { id: live.id, status: live.status, verdict: live.verdict, createdAt: live.created_at, counts: ls?.counts || null, fails: (ls?.findings || []).filter((f) => f.level === 'fail').slice(0, 3).map((f) => f.title) } : null,
   };
 }
-const toRow = (c) => [c.name, c.timeZone, c.startsAt, c.endsAt, JSON.stringify({ markets: c.markets, codes: c.codes, rules: c.rules, themeId: c.themeId, banner: c.banner, freeShipping: c.freeShipping, notes: c.notes })];
+const toRow = (c) => [c.name, c.timeZone, c.startsAt, c.endsAt, JSON.stringify({ markets: c.markets, codes: c.codes, rules: c.rules, offers: c.offers, themeId: c.themeId, banner: c.banner, freeShipping: c.freeShipping, notes: c.notes })];
 
 // ---------- reading the store ----------
 /** Every product from the storefront's products.json, up to 1,000. */
@@ -135,14 +135,31 @@ export async function collectionIds(request, origin, handle) {
   return ids;
 }
 
+// What a discount applies to: everything, some products (or their variants), or some collections.
+const ITEMS = `__typename ... on AllDiscountItems { allItems }
+  ... on DiscountProducts { products(first: 100) { nodes { handle } pageInfo { hasNextPage } } productVariants(first: 100) { nodes { product { handle } } pageInfo { hasNextPage } } }
+  ... on DiscountCollections { collections(first: 50) { nodes { handle } pageInfo { hasNextPage } } }`;
+const BUYS = `customerBuys { items { ${ITEMS} } value { __typename ... on DiscountQuantity { quantity } ... on DiscountPurchaseAmount { amount } } }`;
+const GETS_BXGY = `customerGets { items { ${ITEMS} } value { __typename ... on DiscountOnQuantity { quantity { quantity } effect { __typename ... on DiscountPercentage { percentage } } } } }`;
+const GETS = `customerGets { items { ${ITEMS} } value { ... on DiscountPercentage { percentage } } }`;
 const DISCOUNTS_QUERY = `{ discountNodes(first: 50, query: "status:active OR status:scheduled") { nodes { id discount { __typename
-  ... on DiscountCodeBasic { title startsAt endsAt codes(first: 5) { nodes { code } } customerGets { value { ... on DiscountPercentage { percentage } } } }
-  ... on DiscountCodeBxgy { title startsAt endsAt codes(first: 5) { nodes { code } } }
+  ... on DiscountCodeBasic { title startsAt endsAt codes(first: 5) { nodes { code } } ${GETS} }
+  ... on DiscountCodeBxgy { title startsAt endsAt codes(first: 5) { nodes { code } } ${BUYS} ${GETS_BXGY} }
   ... on DiscountCodeFreeShipping { title startsAt endsAt codes(first: 5) { nodes { code } } minimumRequirement { ... on DiscountMinimumSubtotal { greaterThanOrEqualToSubtotal { amount } } } }
-  ... on DiscountAutomaticBasic { title startsAt endsAt customerGets { value { ... on DiscountPercentage { percentage } } } }
-  ... on DiscountAutomaticBxgy { title startsAt endsAt }
+  ... on DiscountAutomaticBasic { title startsAt endsAt ${GETS} }
+  ... on DiscountAutomaticBxgy { title startsAt endsAt ${BUYS} ${GETS_BXGY} }
   ... on DiscountAutomaticFreeShipping { title startsAt endsAt minimumRequirement { ... on DiscountMinimumSubtotal { greaterThanOrEqualToSubtotal { amount } } } } } } } }`;
-/** Active and scheduled discounts from Shopify (read_discounts). */
+/** Shopify's DiscountItems as { all, products, collections, partial } (null when not read). */
+export function itemsOf(it) {
+  if (!it || !it.__typename) return null;
+  if (it.__typename === 'AllDiscountItems') return { all: !!it.allItems, products: [], collections: [], partial: false };
+  const handles = (c) => (c?.nodes || []).map((n) => n.handle || n.product?.handle).filter(Boolean).map((h) => h.toLowerCase());
+  const more = (c) => !!c?.pageInfo?.hasNextPage;
+  if (it.__typename === 'DiscountProducts') return { all: false, products: [...new Set([...handles(it.products), ...handles(it.productVariants)])], collections: [], partial: more(it.products) || more(it.productVariants) };
+  if (it.__typename === 'DiscountCollections') return { all: false, products: [], collections: handles(it.collections), partial: more(it.collections) };
+  return null;
+}
+/** Active and scheduled discounts from Shopify (read_discounts; product and collection handles with read_products). */
 export async function scheduledDiscounts(shop) {
   const d = await shopify.gql(shop, DISCOUNTS_QUERY);
   return (d.discountNodes?.nodes || []).map((n) => {
@@ -150,13 +167,34 @@ export async function scheduledDiscounts(shop) {
     const t = x.__typename || '';
     const pct = x.customerGets?.value?.percentage;
     const min = x.minimumRequirement?.greaterThanOrEqualToSubtotal?.amount;
-    return {
+    const out = {
       title: x.title || 'Discount', kind: t.startsWith('DiscountCode') ? 'code' : 'automatic',
       type: /FreeShipping/.test(t) ? 'shipping' : /Bxgy/.test(t) ? 'bxgy' : 'basic',
       codes: (x.codes?.nodes || []).map((c) => c.code), startsAt: x.startsAt || null, endsAt: x.endsAt || null,
       percent: typeof pct === 'number' ? Math.round(pct * 1000) / 10 : null, minSubtotal: min != null ? Number(min) : null,
+      items: itemsOf(x.customerGets?.items),
     };
+    if (out.type === 'bxgy') {
+      const bv = x.customerBuys?.value || {}, gv = x.customerGets?.value || {};
+      const gp = gv.effect?.percentage;
+      out.buys = { items: itemsOf(x.customerBuys?.items), quantity: bv.quantity != null ? Number(bv.quantity) : null, amount: bv.amount != null ? Number(bv.amount) : null };
+      out.gets = { items: out.items, quantity: gv.quantity?.quantity != null ? Number(gv.quantity.quantity) : null, percent: typeof gp === 'number' ? Math.round(gp * 1000) / 10 : null };
+    }
+    return out;
   });
+}
+
+/** The shop's own time zone (shop.ianaTimezone), remembered for a day. Null if Shopify doesn't answer. */
+const tzCache = new Map();
+export async function shopTimeZone(shop) {
+  const hit = tzCache.get(shop);
+  if (hit && Date.now() - hit.at < 86400000) return hit.tz;
+  try {
+    const d = await shopify.gql(shop, '{ shop { ianaTimezone } }');
+    const tz = validTimeZone(d.shop?.ianaTimezone) ? d.shop.ianaTimezone : null;
+    tzCache.set(shop, { tz, at: Date.now() });
+    return tz;
+  } catch { return null; }
 }
 
 // ---------- the pre-check ----------
@@ -187,21 +225,27 @@ async function rehearse(store, plan, { trigger, rehearsalId }) {
   }
   if (plan.codes.length && plan.markets.length > 1) add('codes', 'later', 'Codes in each market are tried at go-live', `Scheduled codes don’t work in a cart before the sale starts, so they are tried in ${plan.markets.join(', ')} and their currencies when the sale goes live.`);
 
-  // Expected sale prices for every product
+  // Expected sale prices for every product, what each Shopify discount applies to, and the offers.
   let prices = null;
   const ctx = await newContext();
   try {
-    if (plan.rules.length) {
+    const offers = plan.offers || [];
+    if (plan.rules.length || offers.length) {
       const products = await storeProducts(ctx.request, store.url);
+      // Collections the plan or a Shopify discount mentions, read once each.
+      const cols = new Map();
+      const collection = async (h) => { h = h.toLowerCase(); if (!cols.has(h)) cols.set(h, await collectionIds(ctx.request, store.url, h)); return cols.get(h); };
+      const inCollection = (h, id) => !!cols.get(String(h).toLowerCase())?.has(id);
       if (!products.length) add('prices', 'warn', 'We couldn’t read your products', 'Your store’s product list (products.json) didn’t answer, so sale prices weren’t worked out.', 'Check the store is online and not password protected, or add the storefront password in Store settings.');
       else {
-        const cols = new Map();
         for (const r of plan.rules.filter((x) => x.scope === 'collection')) {
-          const h = r.target.toLowerCase();
-          if (!cols.has(h)) cols.set(h, await collectionIds(ctx.request, store.url, h));
-          if (cols.get(h) === null) add('prices', 'fail', `Collection “${r.target}” doesn’t exist`, 'No collection has this handle, so no product gets this discount.', 'Use the last part of the collection’s address, for example “summer-dresses”.');
+          if ((await collection(r.target)) === null && !findings.some((f) => f.title === `Collection “${r.target}” doesn’t exist`)) add('prices', 'fail', `Collection “${r.target}” doesn’t exist`, 'No collection has this handle, so no product gets this discount.', 'Use the last part of the collection’s address, for example “summer-dresses”.');
         }
-        prices = expectedPrices(products, plan.rules, (h, id) => !!cols.get(h)?.has(id));
+        for (const o of offers) for (const side of [o.buy, o.get]) if (side?.scope === 'collection') await collection(side.target);
+        for (const d of discounts || []) for (const it of [d.items, d.buys?.items]) for (const h of it?.collections || []) await collection(h);
+      }
+      if (plan.rules.length && products.length) {
+        prices = expectedPrices(products, plan.rules, inCollection);
         for (const r of prices.unmatchedRules) if (!(r.scope === 'collection' && cols.get(r.target.toLowerCase()) === null)) add('prices', 'warn', `The discount for ${r.scope === 'all' ? 'everything' : `${r.scope} “${r.target}”`} matches no product`, `No product in your store gets ${ruleLabel(r, money).replace(/ (everything|(collection|product|tag) “.*”)$/, '')}.`, 'Check the handle or tag, or remove the rule.');
         const bad = prices.rows.filter((x) => x.issues.some((i) => i.level === 'fail'));
         const odd = prices.rows.filter((x) => x.issues.some((i) => i.level === 'warn') && !x.issues.some((i) => i.level === 'fail'));
@@ -218,7 +262,10 @@ async function rehearse(store, plan, { trigger, rehearsalId }) {
           else atStart.push(ruleLabel(r, money));
         });
         if (atStart.length) add('prices', 'later', `${atStart.length === 1 ? 'Your sale price is' : `Sale prices from ${atStart.length} discounts are`} checked at go-live`, `${atStart.join('; ')}. Prices that change when the sale starts can’t be read before. When it starts, every product is compared with the sale prices below.`);
+        // Do the Shopify discounts apply to the products the plan discounts (and only those)?
+        if (discounts) findings.push(...compareScope(plan, discounts, products, inCollection));
       }
+      if (offers.length) findings.push(...compareOffers(plan, discounts, products, inCollection, { now }));
     }
 
     // Sale theme and banner
@@ -333,20 +380,25 @@ export function salePlanRoutes(app, { requireUser, ownStore, refuse }) {
     return true;
   };
 
-  app.get('/api/stores/:id/sale-plans', requireUser, (req, res) => {
+  app.get('/api/stores/:id/sale-plans', requireUser, async (req, res) => {
     const s = ownStore(req, res);
     if (!s) return;
     const ent = entitlements(s.user_id);
-    res.json({ plans: Q.byStore.all(s.id).map(planView), limit: planLimit(ent), markets: MARKETS, shopify: !!shopify.shopForStore(s.id) });
+    const shop = shopify.shopForStore(s.id);
+    // New plans start in the shop's own time zone (Shopify stores); otherwise the owner's browser zone.
+    const timeZone = shop ? await shopTimeZone(shop.shop) : null;
+    res.json({ plans: Q.byStore.all(s.id).map(planView), limit: planLimit(ent), markets: MARKETS, shopify: !!shop, timeZone });
   });
-  app.post('/api/stores/:id/sale-plans', requireUser, (req, res) => {
+  app.post('/api/stores/:id/sale-plans', requireUser, async (req, res) => {
     const s = ownStore(req, res);
     if (!s || !usable(s, res)) return;
     const ent = entitlements(s.user_id);
     const open = Q.byStore.all(s.id).filter((r) => r.ends_at > Date.now()).length;
     if (open >= planLimit(ent)) return refuse(res, `Your plan covers ${planLimit(ent)} upcoming sale plans per store. Remove one that you no longer need${has(ent, 'publish') ? '' : ', or upgrade for more'}.`);
+    const body = { ...(req.body || {}) };
+    if (!body.timeZone) { const shop = shopify.shopForStore(s.id); if (shop) body.timeZone = await shopTimeZone(shop.shop); }
     let c;
-    try { c = cleanPlan(req.body || {}, { markets: MARKET_CODES }); } catch (e) { return res.status(400).json({ error: e.message }); }
+    try { c = cleanPlan(body, { markets: MARKET_CODES }); } catch (e) { return res.status(400).json({ error: e.message }); }
     const id = Number(Q.insert.run(s.id, ...toRow(c)).lastInsertRowid);
     res.json({ plan: planView(Q.byId.get(id)) });
   });

@@ -1137,6 +1137,14 @@ ui-nav-menu { display: none !important; }
 .facts dd { margin: 0; font-size: 13.5px; }
 .sale-rule { display: grid; grid-template-columns: 130px 110px 130px minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-bottom: 8px; }
 .sale-rule input[hidden] { display: none; }
+.sale-offer { border: 1px solid var(--line, #e3e3e3); border-radius: 10px; padding: 10px 10px 2px; margin-bottom: 10px; }
+.sale-offer .so-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.sale-offer .so-group { display: contents; }
+.sale-offer .so-row { margin-bottom: 8px; }
+.sale-offer input, .sale-offer select { width: auto; min-width: 0; flex: 0 1 140px; }
+.sale-offer input[type=number] { flex-basis: 90px; }
+.sale-offer [hidden] { display: none !important; }
+.sale-offer .icon-btn { margin-left: auto; }
 .sale-markets { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .sale-markets label.check { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; font-size: 13.5px; margin: 0; }
 @media (max-width: 640px) { .sale-rule { grid-template-columns: 1fr 1fr; } }

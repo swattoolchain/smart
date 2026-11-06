@@ -2266,6 +2266,9 @@
       catch (ex) { $('#sday-err').textContent = ex.message; }
     };
   }
+  const offerSide = (x) => (x.amount != null ? `spend ${x.amount}` : `${x.quantity} × ${x.scope === 'all' ? 'anything' : `${x.scope} “${x.target}”`}`);
+  const offerText = (o) => o.type === 'bundle' ? `Bundle${o.name ? ` “${o.name}”` : ''}: ${o.products.join(' + ')} for ${o.price}`
+    : `${o.buy.amount != null ? `Spend ${o.buy.amount}` : `Buy ${offerSide(o.buy)}`}, get ${offerSide(o.get)} ${o.type === 'gift' || o.percent >= 100 ? 'free' : `${o.percent}% off`}${o.code ? ` · code ${o.code}` : ''}`;
 
   STORE_PAGES.sales = async (ctx, s) => {
     if (ctx.r.a === 'new' || ctx.r.b === 'edit') return saleForm(ctx, s, ctx.r.b === 'edit' ? Number(ctx.r.a) : null);
@@ -2291,7 +2294,7 @@
     if (planId && !p) { location.hash = `#/s/${s.id}/sales`; return; }
     const pre = !p && S.salePrefill ? S.salePrefill : {};
     S.salePrefill = null;
-    const v = p || { ...{ name: '', timeZone: localTz(), startsLocal: '', endsLocal: '', markets: s.config.markets || [], codes: [], rules: [{ scope: 'all', type: 'percent', value: '' }], themeId: null, banner: '', freeShipping: null, notes: '' }, ...pre };
+    const v = p || { ...{ name: '', timeZone: d.timeZone || localTz(), startsLocal: '', endsLocal: '', markets: s.config.markets || [], codes: [], rules: [{ scope: 'all', type: 'percent', value: '' }], themeId: null, banner: '', offers: [], freeShipping: null, notes: '' }, ...pre };
     let zones = [];
     try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = [v.timeZone]; }
     // Common sale time zones are always offered, whatever name the browser uses for them.
@@ -2302,6 +2305,28 @@
       <select name="scope" aria-label="Applies to">${[['all', 'Everything'], ['collection', 'Collection'], ['product', 'Product'], ['tag', 'Tag']].map(([k, l]) => `<option value="${k}" ${r.scope === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <input name="target" placeholder="handle or tag" value="${esc(r.target || '')}" aria-label="Collection, product or tag" ${!r.scope || r.scope === 'all' ? 'hidden' : ''}>
       <button type="button" class="icon-btn" data-del aria-label="Remove discount">${icon('trash', 16)}</button></div>`;
+    // Offers: buy X get Y, a free gift, or a bundle. Fields that don't apply to the chosen kind are hidden.
+    const opt = (list, cur) => list.map(([k, l]) => `<option value="${k}" ${cur === k ? 'selected' : ''}>${l}</option>`).join('');
+    const offerRow = (o = { type: 'bxgy' }) => {
+      const buy = o.buy || {}, get = o.get || {}, spend = buy.amount != null;
+      return `<div class="sale-offer" data-type="${esc(o.type)}">
+      <div class="so-row"><select name="type" aria-label="Kind of offer">${opt([['bxgy', 'Buy X get Y'], ['gift', 'Free gift'], ['bundle', 'Bundle']], o.type)}</select>
+        <span data-for="bxgy gift" class="so-group"><select name="buyMode" aria-label="Customers qualify by">${opt([['qty', 'Buy'], ['spend', 'Spend']], spend ? 'spend' : 'qty')}</select>
+          <input name="buyQty" type="number" min="1" step="1" inputmode="numeric" placeholder="2" value="${esc(buy.quantity ?? '')}" aria-label="How many customers buy" ${spend ? 'hidden' : ''}>
+          <input name="buyAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="2000" value="${esc(buy.amount ?? '')}" aria-label="Order amount" ${spend ? '' : 'hidden'}>
+          <select name="buyScope" aria-label="Of" ${spend ? 'hidden' : ''}>${opt([['all', 'of anything'], ['collection', 'from collection'], ['product', 'of product']], buy.scope || 'all')}</select>
+          <input name="buyTarget" placeholder="handle" value="${esc(buy.target || '')}" aria-label="Collection or product customers buy" ${spend || !buy.scope || buy.scope === 'all' ? 'hidden' : ''}></span>
+        <span data-for="bundle"><input name="bundleName" placeholder="Bundle name" value="${esc(o.name || '')}" aria-label="Bundle name"></span>
+        <button type="button" class="icon-btn" data-del aria-label="Remove offer">${icon('trash', 16)}</button></div>
+      <div class="so-row" data-for="bxgy gift"><span class="muted">get</span>
+        <input name="getQty" type="number" min="1" step="1" inputmode="numeric" placeholder="1" value="${esc(get.quantity ?? '')}" aria-label="How many customers get">
+        <select name="getScope" aria-label="From">${opt([['product', 'of product'], ['collection', 'from collection']], get.scope || 'product')}</select>
+        <input name="getTarget" placeholder="handle" value="${esc(get.target || '')}" aria-label="Product or collection customers get">
+        <span data-for="bxgy" class="so-group"><input name="percent" type="number" min="1" max="100" step="1" placeholder="100" value="${esc(o.type === 'bxgy' ? o.percent ?? '' : '')}" aria-label="% off what customers get"><span class="muted">% off</span></span>
+        <input name="code" placeholder="Code (optional)" value="${esc(o.code || '')}" aria-label="Discount code for the offer"></div>
+      <div class="so-row" data-for="bundle"><input name="products" placeholder="product handles, separated by commas" value="${esc((o.products || []).join(', '))}" aria-label="Products in the bundle" style="flex:2">
+        <input name="price" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Bundle price" value="${esc(o.price ?? '')}" aria-label="Bundle price"></div></div>`;
+    };
     const themeField = th.themes ? `<select id="sp-theme" name="themeId"><option value="">No sale theme</option>${th.themes.map((t) => `<option value="${esc(t.id)}" ${String(v.themeId) === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>`
       : `<input id="sp-theme" name="themeId" inputmode="numeric" placeholder="e.g. 140298567890" value="${esc(v.themeId || '')}"><p class="hint">The number after preview_theme_id= in the theme’s preview link.</p>`;
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, p ? `Edit ${p.name}` : 'New sale plan', { crumb: `<a href="#/s/${s.id}/sales">Sale plans</a> / ${p ? esc(p.name) : 'New'}` })}
@@ -2316,13 +2341,16 @@
         <div class="field"><span class="label">Discounts you expect</span><p class="hint" style="margin-top:0">We work out every product’s sale price from these and check it before the sale. The most specific one wins: product, then tag, then collection, then everything.</p>
           <div id="sp-rules">${(v.rules.length ? v.rules : [{ scope: 'all', type: 'percent' }]).map(ruleRow).join('')}</div>
           <button type="button" class="btn ghost small" id="sp-add-rule">${icon('add', 14)}Add a discount</button></div>
+        <div class="field"><span class="label">Offers <span class="muted" style="font-weight:400">(optional)</span></span><p class="hint" style="margin-top:0">Buy X get Y, free gifts and bundles. We compare them with the buy X get Y discounts in Shopify and check bundles cost less than buying the products one by one.</p>
+          <div id="sp-offers">${(v.offers || []).map(offerRow).join('')}</div>
+          <button type="button" class="btn ghost small" id="sp-add-offer">${icon('add', 14)}Add an offer</button></div>
         <div class="form-grid">
           <div class="field"><label for="sp-codes">Discount codes <span class="muted" style="font-weight:400">(one per line, with the % if you like: BF20 20)</span></label><textarea id="sp-codes" name="codes" rows="3" placeholder="BF20 20">${esc(v.codes.map((c) => c.code + (c.percent != null ? ' ' + c.percent : '')).join('\n'))}</textarea></div>
           <div class="field"><label for="sp-theme">Sale theme</label>${themeField}</div>
           <div class="field"><label for="sp-banner">Sale banner text</label><input id="sp-banner" name="banner" maxlength="140" placeholder="BLACK FRIDAY · 30% OFF EVERYTHING" value="${esc(v.banner || '')}"></div>
           <div class="field"><label for="sp-ship">Free shipping from <span class="muted" style="font-weight:400">(order amount, optional)</span></label><input id="sp-ship" name="freeShipping" type="number" min="0" step="0.01" value="${esc(v.freeShipping ?? '')}"></div>
         </div>
-        <div class="field"><label for="sp-notes">Notes <span class="muted" style="font-weight:400">(bundles, gifts, anything else)</span></label><textarea id="sp-notes" name="notes" rows="2" maxlength="500">${esc(v.notes || '')}</textarea></div>
+        <div class="field"><label for="sp-notes">Notes <span class="muted" style="font-weight:400">(anything else)</span></label><textarea id="sp-notes" name="notes" rows="2" maxlength="500">${esc(v.notes || '')}</textarea></div>
         <p class="error-msg" id="sp-err" role="alert"></p>
         <div class="inline-row"><button class="btn" type="submit">${p ? 'Save changes' : 'Save and rehearse'}</button><a class="btn ghost" href="#/s/${s.id}/sales${p ? '/' + p.id : ''}">Cancel</a></div>
       </form></div>`;
@@ -2332,6 +2360,28 @@
     });
     wire();
     $('#sp-add-rule').onclick = () => { $('#sp-rules').insertAdjacentHTML('beforeend', ruleRow({ scope: 'collection', type: 'percent' })); wire(); };
+    const wireOffers = () => $$('.sale-offer', ctx.main).forEach((box) => {
+      const f = (n) => box.querySelector(`[name=${n}]`);
+      const show = () => {
+        const type = f('type').value, spend = f('buyMode').value === 'spend';
+        box.dataset.type = type;
+        box.querySelectorAll('[data-for]').forEach((x) => { x.hidden = !x.dataset.for.split(' ').includes(type); });
+        f('buyQty').hidden = spend; f('buyScope').hidden = spend; f('buyAmount').hidden = !spend;
+        f('buyTarget').hidden = spend || f('buyScope').value === 'all';
+      };
+      f('type').onchange = show; f('buyMode').onchange = show; f('buyScope').onchange = show;
+      box.querySelector('[data-del]').onclick = () => box.remove();
+      show();
+    });
+    wireOffers();
+    $('#sp-add-offer').onclick = () => { $('#sp-offers').insertAdjacentHTML('beforeend', offerRow({ type: 'bxgy' })); wireOffers(); };
+    const offerOf = (box) => {
+      const f = (n) => box.querySelector(`[name=${n}]`).value;
+      const type = f('type');
+      if (type === 'bundle') return { type, name: f('bundleName'), products: f('products'), price: f('price') };
+      const buy = f('buyMode') === 'spend' ? { amount: f('buyAmount') } : { scope: f('buyScope'), target: f('buyTarget'), quantity: f('buyQty') || 1 };
+      return { type, buy, get: { scope: f('getScope'), target: f('getTarget'), quantity: f('getQty') || 1 }, percent: type === 'bxgy' ? f('percent') || 100 : 100, code: f('code') };
+    };
     $('#spf').oninput = () => (S.dirty = true);
     $('#spf').onsubmit = async (e) => {
       e.preventDefault();
@@ -2340,6 +2390,7 @@
         name: f.name.value, timeZone: f.timeZone.value, startsLocal: f.startsLocal.value, endsLocal: f.endsLocal.value,
         markets: $$('input[name=markets]:checked', f).map((x) => x.value),
         rules: $$('.sale-rule', f).map((row) => ({ type: row.querySelector('[name=type]').value, value: row.querySelector('[name=value]').value, scope: row.querySelector('[name=scope]').value, target: row.querySelector('[name=target]').value })).filter((r) => r.value !== ''),
+        offers: $$('.sale-offer', f).map(offerOf),
         codes: f.codes.value.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { const [code, pct] = l.split(/[\s,]+/); return { code, percent: pct ? pct.replace('%', '') : null }; }),
         themeId: f.themeId.value || null, banner: f.banner.value, freeShipping: f.freeShipping.value, notes: f.notes.value,
       };
@@ -2410,6 +2461,7 @@
       <div><dt>When</dt><dd>${saleWhen(p)}</dd></div>
       ${p.markets.length ? `<div><dt>Where</dt><dd>${esc(p.markets.join(', '))}</dd></div>` : ''}
       <div><dt>Discounts</dt><dd>${p.rules.length ? p.rules.map((x) => esc(ruleText(x))).join('<br>') : '–'}</dd></div>
+      ${p.offers?.length ? `<div><dt>Offers</dt><dd>${p.offers.map((o) => esc(offerText(o))).join('<br>')}</dd></div>` : ''}
       <div><dt>Codes</dt><dd>${p.codes.length ? p.codes.map((c) => esc(c.code + (c.percent != null ? ` (${c.percent}%)` : ''))).join(', ') : '–'}</dd></div>
       ${p.themeId ? `<div><dt>Sale theme</dt><dd>${esc(p.themeId)}</dd></div>` : ''}${p.banner ? `<div><dt>Banner</dt><dd>${esc(p.banner)}</dd></div>` : ''}
       ${p.freeShipping != null ? `<div><dt>Free shipping from</dt><dd>${esc(p.freeShipping)}</dd></div>` : ''}${p.notes ? `<div><dt>Notes</dt><dd>${esc(p.notes)}</dd></div>` : ''}</dl>

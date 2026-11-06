@@ -340,6 +340,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === '/sitemap.xml') return send(res, 200, '<?xml version="1.0"?><urlset><sitemap><loc>http://localhost:'+PORT+'/sitemap_products_1.xml</loc></sitemap></urlset>', 'application/xml');
   if (p === '/sitemap_products_1.xml') return send(res, 200, '<?xml version="1.0"?><urlset>'+products.map(x=>'<url><loc>http://localhost:'+PORT+'/products/'+x.handle+'</loc></url>').join('')+'</urlset>', 'application/xml');
+  if (p === '/collections/home-decor/products.json') return send(res, 200, { products: products.slice(2) }, 'application/json'); // only the diya set
   if (p.startsWith('/collections/') && p.endsWith('/products.json')) return send(res, 200, { products: products.slice(0,2) }, 'application/json');
   if (p === '/products.json') return send(res, 200, { products }, 'application/json');
   if (p === '/collections.json') return send(res, 200, { collections: [{ title: 'Festive', handle: 'festive', products_count: 3 }] }, 'application/json');
