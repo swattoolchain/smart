@@ -22,7 +22,7 @@ describe('Feature switches', () => {
   let P, founder, owner, browser;
   // The real defaults: the harness normally turns every feature on.
   before(async () => {
-    P = await startProduct({ env: { FEATURES_DEFAULT: '' } });
+    P = await startProduct({ env: { FEATURES_DEFAULT: '', CSP_MODE: '' } });
     founder = await founderSession(P);
     owner = await signup(P);
   });
@@ -57,6 +57,20 @@ describe('Feature switches', () => {
     note(t, `${list.length} switches, all extras off by default: ${list.map((f) => f.key).join(', ')}`);
   });
 
+  it('page-content blocking (CSP) starts in report-only, and the switch turns blocking on and off', async (t) => {
+    const h = async () => (await fetch(`${P.base}/app`)).headers;
+    let hd = await h();
+    assert.ok(hd.get('content-security-policy-report-only'), 'report-only policy by default');
+    assert.match(hd.get('content-security-policy') || '', /^frame-ancestors /, 'framing is enforced anyway');
+    await founder.patch('/api/admin/features/csp_enforce', { on: true });
+    hd = await h();
+    assert.equal(hd.get('content-security-policy-report-only'), null);
+    assert.match(hd.get('content-security-policy') || '', /script-src/, 'the full policy is enforced');
+    await founder.patch('/api/admin/features/csp_enforce', { on: false });
+    assert.ok((await h()).get('content-security-policy-report-only'), 'back to report-only');
+    note(t, 'CSP: report-only by default; the founder switch enforces it and turns it back off, no deploy needed');
+  });
+
   it('only founders can see or change the switches', async (t) => {
     assert.equal((await owner.get('/api/admin/features')).status, 403);
     assert.equal((await owner.patch('/api/admin/features/laws', { on: true })).status, 403);
@@ -78,7 +92,7 @@ describe('Feature switches', () => {
     assert.ok((await owner.get('/api/me')).json.features.includes('laws'));
     const groups = (await owner.get('/api/catalog')).json.groups.map((g) => g.key);
     for (const g of LAW_GROUPS) assert.ok(groups.includes(g), `${g} offered once on`);
-    const audit = (await founder.get('/api/admin/audit')).json.audit.find((a) => a.action === 'feature.change');
+    const audit = (await founder.get('/api/admin/audit')).json.audit.find((a) => a.action === 'feature.change' && JSON.parse(a.detail_json).key === 'laws');
     assert.ok(audit, 'audited');
     assert.deepEqual(JSON.parse(audit.detail_json), { key: 'laws', label: 'Laws where you sell', before: false, after: true });
     assert.equal(audit.actor, founder.email);
@@ -87,7 +101,7 @@ describe('Feature switches', () => {
     await founder.patch('/api/admin/features/laws', { on: false });
     await founder.patch('/api/admin/features/laws', { on: false });
     assert.ok(!(await owner.get('/api/me')).json.features.includes('laws'));
-    const rows = (await founder.get('/api/admin/audit')).json.audit.filter((a) => a.action === 'feature.change');
+    const rows = (await founder.get('/api/admin/audit')).json.audit.filter((a) => a.action === 'feature.change' && JSON.parse(a.detail_json).key === 'laws');
     assert.equal(rows.length, 2);
     note(t, 'on: visible to customers and in the catalog; audit row with before/after and actor; repeat off is not re-audited');
   });

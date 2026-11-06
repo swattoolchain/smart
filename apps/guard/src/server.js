@@ -85,7 +85,12 @@ cspReportRoute(app, express);
 
 function isShopifyPath(p) { return p === '/shopify' || p.startsWith('/shopify/'); }
 
-const ip = (req) => req.ip || req.socket.remoteAddress || 'unknown';
+// One key per client for rate limits: an IPv4 address seen through IPv6 (::ffff:1.2.3.4) is the same client,
+// and so are the two loopback forms (local requests may arrive as ::1 or 127.0.0.1 on the same machine).
+const ip = (req) => {
+  const a = String(req.ip || req.socket.remoteAddress || 'unknown').replace(/^::ffff:/i, '');
+  return a === '::1' ? '127.0.0.1' : a;
+};
 // Length first, and a pattern with no overlapping parts, so a huge or crafted input can never be slow (ReDoS).
 const isEmail = (s) => typeof s === 'string' && s.length < 200 && /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)*\.[^\s@.]{2,}$/.test(s);
 
