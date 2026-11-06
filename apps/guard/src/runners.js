@@ -218,7 +218,7 @@ export function canRun(runner, job) {
  * (the main server first on a tie, so nothing changes until workers have room).
  * `job.avoid`: a runner that lost this check before (its retry goes elsewhere when possible).
  * Pausing or draining the main server moves journey checks to workers, but never strands a check: checks only
- * the main server can run (free, full, publish) ignore its status, and so does everything while no active,
+ * the main server can run (free, publish, previews, full checks with the AI shopper) ignore its status, and so does everything while no active,
  * healthy worker exists.
  */
 export function chooseRunner(job, runners) {
