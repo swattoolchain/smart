@@ -217,11 +217,14 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         const posFile = path.join(config.dataDir, 'variants', `store-${storeId}.json`);
         let offset = 0;
         try { offset = Number(JSON.parse(fs.readFileSync(posFile, 'utf8')).next) || 0; } catch {}
-        variants = await runVariantSweep({ request: ctx.request, origin, rec, products: catalogKeep.snap?.products || null, offset });
-        if (variants) {
+        // Saved as the sweep goes, so a check stopped mid-sweep still moves on next time.
+        const savePosition = (next) => {
           fs.mkdirSync(path.dirname(posFile), { recursive: true });
-          fs.writeFileSync(posFile, JSON.stringify({ next: variants.next, total: variants.total, at: new Date().toISOString() }));
-        }
+          fs.writeFileSync(posFile, JSON.stringify({ next, at: new Date().toISOString() }));
+        };
+        // Keep well inside the 6-minute limit for a whole check (queue.js), with time left for the rest.
+        variants = await runVariantSweep({ request: ctx.request, origin, rec, products: catalogKeep.snap?.products || null, offset, signal, savePosition, deadline: started + 4.5 * 60 * 1000 });
+        if (variants) savePosition(variants.next);
       }
       // Domain, certificate and records belong to the live store: not to a draft theme or a Safe to publish check.
       if (kind === 'full' && storeId && !preview && !release && on('security.domain')) {

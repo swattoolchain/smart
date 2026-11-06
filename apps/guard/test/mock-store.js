@@ -25,6 +25,8 @@
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
  *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
  *   checkoutprice (checkout subtotal ₹200 more than the cart)
+ * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out), slowcart (each
+ * add to cart takes 300 ms, like a store with a slow bundle or upsell app).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -316,6 +318,7 @@ const server = http.createServer(async (req, res) => {
     const items = cartFor(req, res);
     const body = JSON.parse((await readBody(req)) || '{}');
     ADD_CALLS++;
+    if (EXTRA.includes('slowcart')) await new Promise((r) => setTimeout(r, 300));
     if (EXTRA.includes('crowdfail')) { const now = Date.now(); const busy = now - LAST_ADD < 400; LAST_ADD = now; if (busy) return send(res, 503, { status: 503, description: 'Too many requests at once' }, 'application/json'); }
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
       const refused = CART_REFUSES.get(Number(it.id));
