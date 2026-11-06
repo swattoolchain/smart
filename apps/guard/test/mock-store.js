@@ -3,7 +3,8 @@
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
  * Variant extras (MOCK_EXTRA): brokenvariant (Kurta Large shown in stock, cart refuses it), unpublishedvariant
- * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out).
+ * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out), slowcart (each
+ * add to cart takes 300 ms, like a store with a slow bundle or upsell app).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -163,6 +164,7 @@ const server = http.createServer(async (req, res) => {
     const items = cartFor(req, res);
     const body = JSON.parse((await readBody(req)) || '{}');
     ADD_CALLS++;
+    if (EXTRA.includes('slowcart')) await new Promise((r) => setTimeout(r, 300));
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
       const refused = CART_REFUSES.get(Number(it.id));
       if (refused) return send(res, refused[0], refused[1], 'application/json');
