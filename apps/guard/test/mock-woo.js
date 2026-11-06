@@ -11,13 +11,21 @@
  *             Add to cart and the cart page's remove links still work
  * GET /__carts: how many items are in carts across every session (tests check nothing is left behind).
  * Extras (env MOCK_EXTRA): plain  only plain permalinks (Store API at /?rest_route=…)
+ *   badcatalog  extra products with catalog mistakes (zero price, placeholder text, no image, fake discount, duplicate SKU)
+ *   cap2        the Store API returns at most 2 products per page (X-WP-TotalPages is sent)
+ *   sitemapgap  the product sitemap lists fewer products than the shop has
+ * GET /__price/<slug>/<minor units>: change a product's price while the store runs.
  */
 import http from 'node:http';
 import { URL } from 'node:url';
 
 const PORT = Number(process.env.MOCK_PORT || 4200);
 const B = new Set((process.env.MOCK_BREAK || '').split(',').filter(Boolean));
-const PLAIN = (process.env.MOCK_EXTRA || '').includes('plain');
+const EX = process.env.MOCK_EXTRA || '';
+const PLAIN = EX.includes('plain');
+const BADCAT = EX.includes('badcatalog');
+const CAP = EX.includes('cap2') ? 2 : 100;
+const GAP = EX.includes('sitemapgap');
 const sessions = new Map();
 const NONCE = 'n0nce42';
 
@@ -26,7 +34,16 @@ const products = [
   { id: 12, name: 'Linen Shirt', slug: 'linen-shirt', type: 'variable', price: 249900, stock: true, cat: 'clothing', variations: [{ id: 121, attributes: [{ name: 'Size', value: 'small' }] }, { id: 122, attributes: [{ name: 'Size', value: 'large' }] }] },
   { id: 13, name: 'Clay Water Pot', slug: 'clay-pot', type: 'simple', price: 59900, stock: false, cat: 'kitchen' },
 ];
+if (BADCAT) products.push(
+  { id: 21, name: 'Free Sample Pack', slug: 'free-sample', type: 'simple', price: 0, stock: true, cat: 'kitchen', desc: '<p>A sample pack to try our range at home.</p>' },
+  { id: 22, name: 'Brass Lamp', slug: 'brass-lamp', type: 'simple', price: 349900, stock: true, cat: 'kitchen', desc: '<p>Lorem ipsum dolor sit amet, consectetur adipiscing.</p>' },
+  { id: 23, name: 'Cane Basket', slug: 'cane-basket', type: 'simple', price: 89900, stock: true, cat: 'kitchen', noImage: true, desc: '<p>Woven by hand from cane, with a sturdy handle.</p>' },
+  { id: 24, name: 'Wool Throw', slug: 'wool-throw', type: 'simple', price: 199900, regular: 199900, onSale: true, stock: true, cat: 'clothing', desc: '<p>A warm wool throw for cold evenings by the fire.</p>' },
+  { id: 25, name: 'Silk Scarf', slug: 'silk-scarf', type: 'simple', price: 129900, stock: true, cat: 'clothing', sku: 'BOT-1', desc: '<p>A light silk scarf in deep colours, hand finished.</p>' },
+);
 const cats = [{ id: 1, name: 'Kitchen', slug: 'kitchen' }, { id: 2, name: 'Clothing', slug: 'clothing' }];
+for (const p of products) { p.desc ??= '<p>Handmade and packed with care. Ships in two days from our workshop.</p>'; p.sku ??= `SKU-${p.id}`; }
+products.find((p) => p.id === 11).sku = 'BOT-1';
 const byId = new Map(products.flatMap((p) => [[p.id, p], ...(p.variations || []).map((v) => [v.id, p])]));
 const money = (minor) => `₹${(minor / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
@@ -53,9 +70,10 @@ function add(cart, id, qty = 1) {
 function apiProduct(p, origin) {
   return {
     id: p.id, name: p.name, slug: p.slug, type: p.type, permalink: `${origin}/product/${p.slug}/`,
-    prices: { price: String(p.price), regular_price: String(p.price), sale_price: String(p.price), currency_code: 'INR', currency_minor_unit: 2 },
+    description: p.desc, short_description: '', sku: p.sku, on_sale: !!p.onSale, tags: [],
+    prices: { price: String(p.price), regular_price: String(p.regular ?? p.price), sale_price: String(p.price), currency_code: 'INR', currency_minor_unit: 2 },
     is_in_stock: p.stock, is_purchasable: true, has_options: p.type === 'variable',
-    variations: p.variations || [], categories: [{ slug: p.cat }], images: [{ src: `${origin}/img/${p.slug}.png` }],
+    variations: p.variations || [], categories: [{ slug: p.cat }], images: p.noImage ? [] : [{ src: `${origin}/img/${p.slug}.png` }],
   };
 }
 
@@ -119,7 +137,12 @@ const server = http.createServer(async (req, res) => {
   else if (u.pathname.startsWith('/wp-json/')) return json(404, { code: 'rest_no_route', message: 'No route was found matching the URL and request method.' });
   if (route !== null) {
     if (B.has('storeapi') || (B.has('cartapi') && route.startsWith('/cart'))) return json(403, { code: 'rest_forbidden', message: 'Sorry, you are not allowed to do that.' });
-    if (route === '/products' && req.method === 'GET') return json(200, products.map((p) => apiProduct(p, origin)));
+    if (route === '/products' && req.method === 'GET') {
+      const per = Math.min(CAP, Number(u.searchParams.get('per_page') || 10));
+      const pg = Number(u.searchParams.get('page') || 1);
+      res.writeHead(200, { 'Content-Type': 'application/json', Nonce: NONCE, 'X-WP-Total': String(products.length), 'X-WP-TotalPages': String(Math.ceil(products.length / per)) });
+      return res.end(JSON.stringify(products.slice((pg - 1) * per, pg * per).map((p) => apiProduct(p, origin))));
+    }
     if (route === '/products/categories') return json(200, cats.map((c) => ({ ...c, permalink: `${origin}/product-category/${c.slug}/`, count: products.filter((p) => p.cat === c.slug).length })));
     if (route === '/cart' && req.method === 'GET') return json(200, cartJson(cart));
     if (req.method !== 'GET' && req.headers.nonce !== NONCE) return json(401, { code: 'woocommerce_rest_missing_nonce', message: 'Missing the Nonce header.' });
@@ -131,6 +154,10 @@ const server = http.createServer(async (req, res) => {
     return json(404, { code: 'rest_no_route', message: 'No route.' });
   }
 
+  const setPrice = /^\/__price\/([a-z-]+)\/(\d+)$/.exec(u.pathname);
+  if (setPrice) { const p = products.find((x) => x.slug === setPrice[1]); if (p) p.price = Number(setPrice[2]); return json(200, { ok: !!p }); }
+  if (u.pathname === '/wp-sitemap.xml') { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(`<?xml version="1.0"?><sitemapindex><sitemap><loc>${origin}/wp-sitemap-posts-product-1.xml</loc></sitemap><sitemap><loc>${origin}/wp-sitemap-taxonomies-product_cat-1.xml</loc></sitemap></sitemapindex>`); }
+  if (u.pathname === '/wp-sitemap-posts-product-1.xml') { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(`<?xml version="1.0"?><urlset>${products.slice(0, GAP ? 3 : undefined).map((p) => `<url><loc>${origin}/product/${p.slug}/</loc></url>`).join('')}</urlset>`); }
   if (u.pathname === '/__carts') return json(200, { items: [...sessions.values()].reduce((s, c) => s + c.reduce((a, l) => a + l.quantity, 0), 0) });
   if (u.pathname.startsWith('/img/')) { res.writeHead(200, { 'Content-Type': 'image/svg+xml' }); return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'); }
   if (u.pathname === '/' && u.searchParams.has('s')) {

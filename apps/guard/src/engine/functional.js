@@ -5,7 +5,7 @@ import { errorSource } from './apps.js';
 import { runWooJourney } from './woo.js';
 import { pagePrice, checkoutSubtotal, cartLine, wholeCart, priceCheck, toMinor } from './pricing.js';
 
-const ATC_SELECTORS = [
+export const ATC_SELECTORS = [
   'form[action*="/cart/add"] button[type="submit"][name="add"]',
   'form[action*="/cart/add"] [type="submit"]',
   'button[name="add"]',
@@ -18,7 +18,7 @@ const ATC_SELECTORS = [
   'button:has-text("Add to Bag")',
 ];
 
-const CHECKOUT_SELECTORS = [
+export const CHECKOUT_SELECTORS = [
   'button[name="checkout"]',
   'input[name="checkout"]',
   '#checkout',
@@ -29,7 +29,7 @@ const CHECKOUT_SELECTORS = [
   'a:has-text("Checkout")',
 ];
 
-async function firstVisible(page, selectors) {
+export async function firstVisible(page, selectors) {
   for (const sel of selectors) {
     const loc = page.locator(sel);
     const n = await loc.count().catch(() => 0);
@@ -41,7 +41,7 @@ async function firstVisible(page, selectors) {
   return null;
 }
 
-async function cartJs(page) {
+export async function cartJs(page) {
   return page
     .evaluate(async () => {
       const r = await fetch('/cart.js', { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
@@ -51,13 +51,13 @@ async function cartJs(page) {
     .catch((e) => ({ error: String(e) }));
 }
 
-async function clearCart(page) {
+export async function clearCart(page) {
   await page
     .evaluate(() => fetch('/cart/clear.js', { method: 'POST', credentials: 'same-origin' }))
     .catch(() => {});
 }
 
-async function dismissOverlays(page) {
+export async function dismissOverlays(page) {
   // Newsletter and cookie popups regularly cover buttons; close the common ones politely.
   const closers = [
     'button[aria-label="Close"]',

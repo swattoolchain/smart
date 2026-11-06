@@ -217,8 +217,9 @@ describe('Public website', () => {
     const p = await open('/');
     await p.fill('#check-form input[name=url]', P.mock.origin);
     await p.click('#check-form button');
-    await p.waitForURL(/\/scan\/\d+$/, { timeout: 15000 });
-    const runId = Number(p.url().split('/').pop());
+    // Free reports open by a random link, never by their run number.
+    await p.waitForURL(/\/scan\/[a-f0-9]{32}$/, { timeout: 15000 });
+    const runId = p.url().split('/').pop();
     await screenshot(t, p, 'Free check running');
     await p.waitForSelector('#signup', { timeout: 240000 });
     await screenshot(t, p, 'Free check report', { fullPage: true });
@@ -243,7 +244,7 @@ describe('Public website', () => {
     const lead = db.prepare('SELECT * FROM leads WHERE email = ?').get(email);
     assert.ok(lead, 'lead saved');
     assert.equal(lead.source, 'report');
-    assert.equal(lead.run_id, runId);
+    assert.equal(lead.run_id, db.prepare('SELECT id FROM runs WHERE public_id = ?').get(runId).id);
     const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
     assert.ok(user, 'account created');
     const store = db.prepare('SELECT url FROM stores WHERE user_id = ?').get(user.id);

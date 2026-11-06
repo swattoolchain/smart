@@ -62,6 +62,12 @@ export function enqueue(job) {
   pump();
 }
 
+/** Whether `need` more checks fit in the waiting line. Free checks may only use a small part of it. */
+export function queueRoom({ free = false, need = 1 } = {}) {
+  const limit = free ? Math.min(config.freeQueueMax, config.queueMax) : config.queueMax;
+  return waiting.length + need <= limit;
+}
+
 /** Checks running right now, on this server and on workers (for the founder console's Runners page). */
 export function currentChecks() {
   const main = mainRunner();
@@ -196,6 +202,8 @@ async function prepare(job) {
     previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
     testProduct: cfg.testProduct || null, discountCodes: codes, shopifyCodes, preview: preview || null, captureOnly: !!captureOnly,
     // Price rules the owner set, as many as the plan allows.
+    // A/B test versions the owner listed (Test suite → A/B tests).
+    abVariants: isOn('ab_tests') ? cfg.abVariants || [] : [],
     priceRules: store && isOn('price_checks') ? (cfg.priceRules || []).slice(0, entitlements(store.user_id).limits.priceRules) : [],
     release: !!release,
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).

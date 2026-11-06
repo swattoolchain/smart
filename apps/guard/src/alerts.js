@@ -6,6 +6,7 @@ import { entitlements, has } from './license.js';
 import { deliver } from './webhooks.js';
 import { isOn } from './features.js';
 import { incidentContacts } from './incident.js';
+import { escHtml } from './html.js';
 
 let transport = null;
 function mailer() {
@@ -26,6 +27,7 @@ export async function sendMail({ to, subject, text, html }) {
   if (!t || !to) {
     console.log(`[mail skipped] to=${to} subject=${subject}`);
     if (process.env.NODE_ENV !== 'production' && process.env.MAIL_DEBUG) console.log(text);
+    if (process.env.NODE_ENV !== 'production' && process.env.MAIL_DEBUG_HTML && html) console.log(`[mail html] ${html.replace(/\n/g, ' ')}`);
     return false;
   }
   await t.sendMail({ from: config.smtp.from, to, subject, text, html });
@@ -92,7 +94,7 @@ export async function handleAlerts(storeId, runId, result) {
     : `Fixed on ${name}: ${recovered.map((x) => x.c.title).join(', ')}`;
   const text = `${lines.join('\n\n')}\n\nFull report with screenshots: ${link}\n\n— Tharam Store Guard`;
   const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#1c1917">
-<p><b>${name}</b></p>${lines.map((l) => `<p style="white-space:pre-wrap">${l.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>`).join('')}
+<p><b>${escHtml(name)}</b></p>${lines.map((l) => `<p style="white-space:pre-wrap">${escHtml(l)}</p>`).join('')}
 <p><a href="${link}" style="background:#14532d;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Open report with screenshots</a></p>
 <p style="color:#78716c;font-size:13px">Tharam Store Guard · You get alerts only when something changes.</p></div>`;
 

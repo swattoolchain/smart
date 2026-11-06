@@ -37,11 +37,13 @@ describe('Data deletion', () => {
     await owner.del(`/api/stores/${id}`);
     const scan = await P.session().post('/api/scan', { url: P.mock.origin });
     assert.equal(scan.status, 200, scan.text);
-    assert.ok(scan.json.runId > run.id, `free scan got run ${scan.json.runId}, deleted run was ${run.id}`);
-    assert.equal(exists(P, 'shots', `run-${scan.json.runId}`, 'old.png'), false, 'a new run starts with an empty folder');
+    // Free scans answer with a random report link; the run number behind it is in the database.
+    const scanRun = /^\d+$/.test(String(scan.json.runId)) ? Number(scan.json.runId) : P.db().prepare('SELECT id FROM runs WHERE public_id = ?').get(scan.json.runId).id;
+    assert.ok(scanRun > run.id, `free scan got run ${scanRun}, deleted run was ${run.id}`);
+    assert.equal(exists(P, 'shots', `run-${scanRun}`, 'old.png'), false, 'a new run starts with an empty folder');
     const id2 = await addStore(P, owner, { runNow: false });
     assert.ok(id2 > id, `new store got id ${id2}, deleted store was ${id}`);
-    note(t, `deleted store ${id} / run ${run.id}; next free scan run ${scan.json.runId}; next store ${id2}`);
+    note(t, `deleted store ${id} / run ${run.id}; next free scan run ${scanRun}; next store ${id2}`);
   });
 
   it('Shopify shop/redact removes the shop\'s account, stores and every file', async (t) => {

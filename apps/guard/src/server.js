@@ -9,7 +9,8 @@ import { normalizeStoreUrl, assertPublicTarget, newContext, gotoStore, settleCha
 import { discover } from './engine/discover.js';
 import { GROUPS, INTERVALS, FULL_INTERVALS, MARKETS, normalizeConfig } from './engine/catalog.js';
 import { startRun, startScheduler, storeConfig, intervals, nextRunIn, saleActive } from './scheduler.js';
-import { queueDepth, cancelRun } from './queue.js';
+import { queueDepth, cancelRun, queueRoom } from './queue.js';
+import { withLookupSlot } from './lookups.js';
 import { liveView } from './live.js';
 import { scorecard, weekBuyability } from './scorecard.js';
 import crypto from 'node:crypto';
@@ -20,10 +21,11 @@ import * as shopify from './shopify.js';
 import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
 import { paymentRoutes, razorpayWebhook } from './payments.js';
 import { purgeStoreFiles } from './purge.js';
-import { webAccessRoutes, sessionValid, sessionEpoch, emailTaken } from './web-access.js';
+import { webAccessRoutes, sessionValid, sessionEpoch, bumpSessionEpoch, emailTaken } from './web-access.js';
 import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './release.js';
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
+import { pluginRoutes } from './wp-plugin.js';
 import { approveBaseline } from './engine/visual.js';
 import { seal, storePassword } from './secret.js';
 import { sendMail, sendSlack } from './alerts.js';
@@ -41,6 +43,7 @@ import { checklist as securityChecklist, tick as tickSecurity, setReminders as s
 import { recoveryPacket } from './recovery-packet.js';
 import { incidentView, startIncident, updateIncident, endIncident, incidentBrief, startEmail as incidentStartEmail, endEmail as incidentEndEmail } from './incident.js';
 import { warningsFor } from './early-warning.js';
+import { cspMiddleware, cspReportRoute } from './csp.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -62,13 +65,21 @@ app.use(
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   // The Shopify app runs inside Shopify admin; everything else may only be framed by ourselves.
-  if (req.path === '/shopify' || req.path.startsWith('/shopify/')) {
-    const shop = String(req.query.shop || '').toLowerCase();
-    res.setHeader('Content-Security-Policy', `frame-ancestors https://admin.shopify.com${shopify.validShop(shop) ? ` https://${shop}` : ''};`);
-  } else res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  // The Content-Security-Policy below carries the matching frame-ancestors rule.
+  if (!isShopifyPath(req.path)) res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
+app.use(cspMiddleware({
+  frameAncestors: (req) => {
+    if (!isShopifyPath(req.path)) return "'self'";
+    const shop = String(req.query.shop || '').toLowerCase();
+    return `https://admin.shopify.com${shopify.validShop(shop) ? ` https://${shop}` : ''}`;
+  },
+}));
+cspReportRoute(app, express);
+
+function isShopifyPath(p) { return p === '/shopify' || p.startsWith('/shopify/'); }
 
 const ip = (req) => req.ip || req.socket.remoteAddress || 'unknown';
 // Length first, and a pattern with no overlapping parts, so a huge or crafted input can never be slow (ReDoS).
@@ -154,11 +165,15 @@ app.post('/api/scan', async (req, res) => {
     return res.status(400).json({ error: e.message });
   }
   const cached = q.recentFreeRunForUrl.get(origin);
-  if (cached) return res.json({ runId: cached.id, cached: true });
+  if (cached) return res.json({ runId: cached.public_id, cached: true });
   if (q.recentFreeRunsByIp.get(ip(req)).n >= config.freeScansPerIpPerHour)
     return res.status(429).json({ error: 'You have reached the free scan limit for this hour. Create a free account to keep monitoring.' });
-  const runId = startRun({ origin, kind: 'free', ip: ip(req), trigger: 'free' });
-  res.json({ runId });
+  if (!queueRoom({ free: true })) return res.status(503).json({ error: 'We’re checking a lot of stores right now. Try your free check again in a few minutes.', busy: true });
+  const id = startRun({ origin, kind: 'free', ip: ip(req), trigger: 'free' });
+  const publicId = crypto.randomBytes(16).toString('hex');
+  q.setPublicId.run(publicId, id);
+  // The report link is random: /scan/<publicId>. The run number is never shown for free checks.
+  res.json({ runId: publicId });
 });
 
 /** The signed-in user: a login cookie on the website, or a Shopify session token inside Shopify admin. */
@@ -206,15 +221,35 @@ app.use((req, res, next) => {
   next();
 });
 function runVisibleTo(run, req) {
-  if (run.kind === 'free') return true;
+  // Free checks are opened only by their random link (see /api/runs/:id); their screenshots by signed links.
+  if (run.kind === 'free') return false;
   const uid = currentUserId(req);
   const store = run.store_id && q.storeById.get(run.store_id);
   return !!(uid && store && store.user_id === uid);
 }
 
+/** A free check's screenshots, signed for this answer only (the report page asks again every few seconds while it runs). */
+function signFreeShots(obj, runId) {
+  const exp = Math.floor(Date.now() / 1000) + 6 * 3600;
+  const re = new RegExp(`^/shots/run-${runId}/[\\w.-]+$`);
+  return JSON.parse(JSON.stringify(obj), (k, v) => (typeof v === 'string' && re.test(v) ? `${v}?t=${fileSig(v, exp)}.${exp}` : v));
+}
+
 app.get('/api/runs/:id', (req, res) => {
-  const run = q.runById.get(Number(req.params.id));
-  if (!run || !runVisibleTo(run, req)) return res.status(404).json({ error: 'Report not found' });
+  const key = String(req.params.id);
+  const byLink = /^[a-f0-9]{32}$/.test(key);
+  const run = byLink ? q.runByPublicId.get(key) : /^\d{1,12}$/.test(key) ? q.runById.get(Number(key)) : null;
+  if (!run || !(byLink || runVisibleTo(run, req))) return res.status(404).json({ error: 'Report not found' });
+  if (byLink) {
+    const result = run.result_json ? signFreeShots(JSON.parse(run.result_json), run.id) : null;
+    return res.json({
+      id: run.public_id, url: run.url, kind: run.kind, status: run.status, score: run.score, verdict: run.verdict, error: run.error,
+      created_at: run.created_at, finished_at: run.finished_at,
+      position: run.status === 'queued' ? db.prepare("SELECT COUNT(*) AS n FROM runs WHERE status IN ('queued') AND id < ?").get(run.id).n : 0,
+      live: run.status === 'queued' || run.status === 'running' ? signFreeShots(liveView(run.id), run.id) : null,
+      result,
+    });
+  }
   const ahead = run.status === 'queued' ? db.prepare("SELECT COUNT(*) AS n FROM runs WHERE status IN ('queued') AND id < ?").get(run.id).n : 0;
   res.json({
     id: run.id,
@@ -239,7 +274,9 @@ app.post('/api/leads', (req, res) => {
   const { email, runId, url, source } = req.body || {};
   if (!isEmail(email)) return res.status(400).json({ error: 'Enter a valid email' });
   if (overLimit(`lead:${ip(req)}`, LIMITS.leads)) return tooMany(res, 'requests from this address');
-  q.insertLead.run(email.toLowerCase(), String(url || '').slice(0, 300), Number(runId) || null, String(source || 'scan').slice(0, 40));
+  // Reports send their random link; it is stored as the run it belongs to.
+  const leadRun = /^[a-f0-9]{32}$/.test(String(runId || '')) ? q.runByPublicId.get(String(runId))?.id || null : null;
+  q.insertLead.run(email.toLowerCase(), String(url || '').slice(0, 300), leadRun, String(source || 'scan').slice(0, 40));
   if (config.adminEmail) sendMail({ to: config.adminEmail, subject: `New lead: ${email}`, text: `${email}\n${url || ''}\nRun ${runId || '-'}` }).catch(() => {});
   res.json({ ok: true });
 });
@@ -314,7 +351,11 @@ app.post('/api/auth/login', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Logging out ends every browser session of the account, not just this one, so a cookie copied
+// from another computer stops working too. Inside Shopify admin nothing changes (no cookies there).
 app.post('/api/auth/logout', (req, res) => {
+  const uid = req.session?.uid;
+  if (uid && sessionValid(req, uid).ok) bumpSessionEpoch(uid);
   req.session = null;
   res.json({ ok: true });
 });
@@ -342,6 +383,9 @@ app.post('/api/account/password', requireUser, async (req, res) => {
   if (!(await bcrypt.compare(String(current || ''), u.password_hash))) return res.status(400).json({ error: 'Current password is incorrect' });
   if (typeof next !== 'string' || next.length < 8) return res.status(400).json({ error: 'Use a new password of at least 8 characters' });
   q.updatePassword.run(await bcrypt.hash(next, 10), u.id);
+  // A new password signs out every other browser; this one stays signed in.
+  const ep = bumpSessionEpoch(u.id);
+  if (req.session?.uid === u.id) req.session.ep = ep;
   res.json({ ok: true });
 });
 
@@ -381,12 +425,15 @@ async function discoverStore(origin, password) {
   }
 }
 
-app.post('/api/discover', requireUser, async (req, res) => {
-  const k = req.user.id;
+/** 30 store lookups per account per hour, counted for new and existing stores alike. */
+function countLookup(k) {
   const c = discoverCounts.get(k) || { n: 0, t: Date.now() };
   if (Date.now() - c.t > 3600 * 1000) Object.assign(c, { n: 0, t: Date.now() });
-  if (++c.n > 30) return res.status(429).json({ error: 'Too many lookups this hour. Try again later.' });
   discoverCounts.set(k, c);
+  return ++c.n <= 30;
+}
+app.post('/api/discover', requireUser, async (req, res) => {
+  if (!countLookup(req.user.id)) return res.status(429).json({ error: 'Too many lookups this hour. Try again later.' });
   let origin;
   try {
     origin = normalizeStoreUrl(req.body?.url);
@@ -396,8 +443,9 @@ app.post('/api/discover', requireUser, async (req, res) => {
   }
   if (q.storesByUser.all(req.user.id).some((s) => s.url === origin)) return res.status(409).json({ error: 'This store is already in your account.' });
   try {
-    res.json({ origin, ...(await discoverStore(origin, req.body?.password || null)) });
+    res.json({ origin, ...(await withLookupSlot(req.user.id, () => discoverStore(origin, req.body?.password || null))) });
   } catch (e) {
+    if (e.code === 'QUEUE_FULL') return res.status(e.status).json({ error: e.message, busy: true });
     res.status(502).json({ error: 'We could not look at this store right now. Try again in a minute.' });
   }
 });
@@ -411,7 +459,7 @@ function storeView(s) {
   return {
     ...publicStore(s),
     blocked: blockReason(ent, s.id),
-    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], priceRules: cfg.priceRules || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
+    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], priceRules: cfg.priceRules || [], abVariants: cfg.abVariants || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
@@ -457,7 +505,9 @@ app.post('/api/stores', requireUser, async (req, res) => {
     alertEmail || req.user.email, slack || null, JSON.stringify(cfg), platform ? String(platform).slice(0, 60) : null, monitoring ? 1 : 0
   );
   const id = Number(info.lastInsertRowid);
-  const runId = runNow ? startRun({ storeId: id, origin, kind: 'full', password, trigger: 'setup' }) : null;
+  // A full waiting line doesn't stop the store being added; its first check can be started again later.
+  let runId = null;
+  if (runNow) { try { runId = startRun({ storeId: id, origin, kind: 'full', password, trigger: 'setup' }); } catch (e) { if (e.code !== 'QUEUE_FULL') throw e; } }
   res.json({ id, runId });
 });
 
@@ -854,9 +904,11 @@ app.post('/api/stores/:id/discover', requireUser, async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   if (!entitlements(s.user_id).usable) return refuse(res, blockReason(entitlements(s.user_id)));
+  if (!countLookup(req.user.id)) return res.status(429).json({ error: 'Too many lookups this hour. Try again later.' });
   try {
-    res.json(await discoverStore(s.url, storePassword(s)));
-  } catch {
+    res.json(await withLookupSlot(req.user.id, () => discoverStore(s.url, storePassword(s))));
+  } catch (e) {
+    if (e.code === 'QUEUE_FULL') return res.status(e.status).json({ error: e.message, busy: true });
     res.status(502).json({ error: 'We could not look at this store right now. Try again in a minute.' });
   }
 });
@@ -1061,7 +1113,7 @@ app.get('/api/admin/overview', requireUser, (req, res) => {
     stores: db.prepare('SELECT COUNT(*) AS n FROM stores').get().n,
     freeScans24h: db.prepare("SELECT COUNT(*) AS n FROM runs WHERE kind='free' AND created_at > datetime('now','-1 day')").get().n,
     leads: db.prepare('SELECT * FROM leads ORDER BY id DESC LIMIT 200').all(),
-    recentScans: db.prepare("SELECT id, url, score, verdict, status, created_at FROM runs WHERE kind='free' ORDER BY id DESC LIMIT 100").all(),
+    recentScans: db.prepare("SELECT id, public_id, url, score, verdict, status, created_at FROM runs WHERE kind='free' ORDER BY id DESC LIMIT 100").all(),
     signups: db.prepare('SELECT u.id, u.email, u.name, u.created_at, (SELECT GROUP_CONCAT(url) FROM stores WHERE user_id=u.id) AS stores FROM users u ORDER BY id DESC LIMIT 200').all(),
     queue: queueDepth(),
   });
@@ -1084,6 +1136,7 @@ const html = (render) => (req, res) => {
   res.set('Cache-Control', 'public, max-age=300').type('html').send(out);
 };
 const old = (file, opts) => html(() => site.legacy(config.publicDir, file, opts));
+pluginRoutes(app);
 app.get('/', html(() => site.home()));
 app.get('/de', html(() => site.deHome()));
 app.get('/fr', html(() => site.frHome()));
@@ -1112,6 +1165,11 @@ app.get('/checks', old('checks.html', { path: '/checks' }));
 app.get('/demo', old('demo.html', { path: '/demo' }));
 app.use(express.static(config.publicDir, { maxAge: '1h', index: false }));
 app.use((req, res) => res.status(404).type('html').send(site.legacy(config.publicDir, '404.html', { title: 'Page not found', noindex: true })));
+// A full waiting line anywhere (manual checks, publish checks, Shopify app actions): a plain "busy" answer.
+app.use((err, req, res, next) => {
+  if (err?.code !== 'QUEUE_FULL') return next(err);
+  res.status(err.status || 503).json({ error: err.message, busy: true });
+});
 
 app.listen(config.port, () => {
   console.log(`Tharam Store Guard on ${config.baseUrl} (port ${config.port})`);

@@ -43,6 +43,7 @@ export const FLAGS = [
   { key: 'security_checklist', area: 'Security watch', label: 'Security checklist', about: 'Owner-ticked checklist (two-step login, staff and app review, passwords) with reminders and a score.' },
   { key: 'incident_mode', area: 'Security watch', label: 'Incident mode and recovery packet', about: 'One button for a suspected hack: changes since the last healthy check, frequent checks, recovery steps, team alerts and a ready message for Shopify support.' },
   { key: 'price_checks', area: 'Checks', label: 'Prices stay the same', about: 'Records the price from product page to cart to checkout on every check; owners can add price rules under Test suite.', checks: ['pricing.journey'] },
+  { key: 'ab_tests', area: 'Checks', label: 'A/B test versions', about: 'Finds A/B and price-test apps and shops once in every test version (owner-listed, or found automatically for Convert and Optimizely). Adds Test suite → A/B tests.', checks: ['sale.abtest'] },
   { key: 'woocommerce', area: 'Platforms', label: 'WooCommerce shopping tests', about: 'Add to cart and checkout tests for WooCommerce stores through the public Store API. Off: WooCommerce stores get the same checks as other non-Shopify platforms.' },
   { key: 'laws', area: 'Checks', label: 'Laws where you sell', about: 'Checks for the German legal notice, EU cookie consent and US accessibility, and the "Where you sell" setting.', checks: ['law.de', 'law.cookies', 'access.law', 'law.us'] },
 ].map((f) => ({ area: 'Other', core: false, checks: [], ...f }));

@@ -1,5 +1,6 @@
 import { cleanCodes } from './discount.js';
 import { cleanPriceRules } from './pricing.js';
+import { cleanVariants } from './abtest.js';
 /**
  * The test suite catalog: every check belongs to one group, and merchants switch groups on or off per store.
  * `run`: 'journeys' groups run on every scheduled journey test; 'full' groups run on the daily full check.
@@ -29,6 +30,9 @@ export const GROUPS = [
   { key: 'security.theme', label: 'Theme code changes', run: 'full', area: 'Security', shopify: true,
     description: 'Shopify stores: every file of your live theme is fingerprinted on each full check. When code changes, we show you which lines, so you notice anything you or your developer didn’t add. Publishing a new theme starts a new record.',
     checks: ['sec.theme'] },
+  { key: 'sale.abtest', label: 'A/B test versions', run: 'full', area: 'Shopping journey',
+    description: 'Finds A/B and price-test apps on your store, and shops once in every test version you list (Test suite → A/B tests): the page loads, Add to cart works, the cart charges the price shown, and checkout opens on your store. Your test settings are never changed.',
+    checks: ['ab.'] },
   { key: 'errors.js', label: 'JavaScript errors', run: 'journeys', area: 'Errors and links',
     description: 'Script errors that happen while shopping, usually from apps or custom code.', checks: ['nf.jserrors'] },
   { key: 'speed', label: 'Mobile speed', run: 'full', area: 'Speed',
@@ -118,6 +122,7 @@ export function normalizeConfig(input = {}, base = {}) {
   const cfg = { ...base };
   if (input.discountCodes !== undefined) cfg.discountCodes = cleanCodes(input.discountCodes);
   if (input.priceRules !== undefined) cfg.priceRules = cleanPriceRules(input.priceRules);
+  if (input.abVariants !== undefined) cfg.abVariants = cleanVariants(input.abVariants, { strict: true });
   // Onboarding progress: the welcome flow and the first-report tour.
   if (typeof input.onboarded === 'boolean') cfg.onboarded = input.onboarded;
   if (typeof input.toured === 'boolean') cfg.toured = input.toured;

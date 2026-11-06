@@ -123,6 +123,23 @@ const APP_SCRIPTS = {
 // a store page whose path merely contains "checkout", and a cart button that leaves the store by script.
 const OFFSITE = EXTRA.includes('offsite');
 const ELSEWHERE = `http://127.0.0.1:${PORT}`;
+// MOCK_EXTRA=ab: a running A/B test (VWO-style global). Version from ?ab_variant= (kept in a cookie) or the cookie:
+// b = Add to cart broken, c = product page shows a lower price than the cart charges. Anything else works.
+const AB = EXTRA.split(',').includes('ab');
+let ABV = '';
+// MOCK_EXTRA=convert: a running Convert experience (id 100) with versions 1001 "Original" and 1002
+// "Sticky buy bar" (Add to cart broken). New visitors alternate between them (kept in a cookie);
+// ?_conv_eforce=100.<id> forces a version, as Convert documents.
+const CONVERT = EXTRA.split(',').includes('convert');
+const CONV_NAMES = { 1001: 'Original', 1002: 'Sticky buy bar' };
+let CONV_NEXT = 0;
+let CONVV = '';
+// MOCK_EXTRA=optimizely: a running Optimizely experiment (id 200, "Price test") with versions 2001
+// "Original" and 2002 "Lower price" (page shows a lower price than the cart charges), plus a one-version
+// experiment that is not an A/B test. Visitors get Original; ?optimizely_x=<id> forces a version
+// (kept in a cookie), as Optimizely documents. window.optimizely.get('data') lists both, as the snippet does.
+const OPTIMIZELY = EXTRA.split(',').includes('optimizely');
+let OPTV = '';
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -189,7 +206,7 @@ function layout(title, body, { noindex = false } = {}) {
 ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta name="description" content="Handmade Indian clothing and decor from small artisans.">
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
-<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
+${AB ? '<script>window._vwo_code={version:2};</script>' : ''}${CONVERT ? `<script>window.convert={currentData:{experiences:{"100":{variation:{id:"${CONVV}",name:"${CONV_NAMES[CONVV]}"}}}},data:{}};</script>` : ''}${OPTIMIZELY ? `<script>window.optimizely={get:function(k){if(k==='data')return{experiments:{"200":{id:"200",name:"Price test",audienceIds:[],variations:[{id:"2001",name:"Original",actions:[]},{id:"2002",name:"Lower price",actions:[]}]},"300":{id:"300",name:"Personal greeting",variations:[{id:"3001",name:"Greeting",actions:[]}]}},campaigns:{}};if(k==='visitor')return{visitorId:'v1'};return null;},current:"${OPTV}"};</script>` : ''}<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}<script src="/assets/theme.js?v=111"></script>${scriptTags()}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}${B.has('restyle') ? '<style>body{background:#111;color:#eee} a{color:#9cf}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
 <main id="MainContent">${body}</main>${formBox()}${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}${frameTags()}${B.has('spam') ? '<div style="position:absolute;left:-9999px;top:0"><a href="https://best-casino-bonus.example/">online casino</a> <a href="https://pills.example/buy">cheap viagra</a></div><p style="display:none">replica watches and payday loans at low prices</p>' : ''}${B.has('cloaked') ? '<a href="https://link-farm.example/" style="font-size:0">partner</a>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${US ? ' <a href="/pages/data-sharing-opt-out">Your privacy choices</a>' : ''}${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
@@ -221,6 +238,27 @@ const server = http.createServer(async (req, res) => {
   DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
   B = DRAFT ? DRAFT_BREAK : BREAK;
   REQ_PATH = u.pathname;
+  ABV = '';
+  if (AB) {
+    const q = u.searchParams.get('ab_variant');
+    ABV = q ?? (/(?:^|;\s*)ab_variant=(\w+)/.exec(req.headers.cookie || '') || [])[1] ?? '';
+    if (q) res.appendHeader('Set-Cookie', `ab_variant=${encodeURIComponent(q)}; Path=/`);
+  }
+  CONVV = '';
+  if (CONVERT) {
+    const force = /^100\.(100[12])$/.exec(u.searchParams.get('_conv_eforce') || '');
+    CONVV = force?.[1] || (/(?:^|;\s*)conv_v=(100[12])/.exec(req.headers.cookie || '') || [])[1] || '';
+    if (!CONVV) CONVV = String(1001 + (CONV_NEXT++ % 2));
+    res.appendHeader('Set-Cookie', `conv_v=${CONVV}; Path=/`);
+    if (CONVV === '1002') ABV = 'b';
+  }
+  OPTV = '';
+  if (OPTIMIZELY) {
+    const force = /^(200[12])$/.exec(u.searchParams.get('optimizely_x') || '');
+    OPTV = force?.[1] || (/(?:^|;\s*)opt_v=(200[12])/.exec(req.headers.cookie || '') || [])[1] || '2001';
+    if (force) res.appendHeader('Set-Cookie', `opt_v=${OPTV}; Path=/`);
+    if (OPTV === '2002') ABV = 'c';
+  }
   if (B.has('cloudflare')) {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
@@ -305,7 +343,7 @@ const server = http.createServer(async (req, res) => {
     if (!prod) return send(res, 404, layout('Not found', '<h1>404</h1>'));
     const vid = Number(u.searchParams.get('variant')) || prod.variants[0].id;
     const v = prod.variants.find((x) => x.id === vid) || prod.variants[0];
-    const breakAtc = B.has('atc')
+    const breakAtc = B.has('atc') || ABV === 'b'
       ? `<script>document.addEventListener('submit',function(e){e.preventDefault();},true);</script>`
       : `<script>document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:[{id:Number(f.id.value),quantity:1}]})}).then(function(){document.getElementById('cart-count').textContent='1';});});</script>`;
     return send(
@@ -313,7 +351,7 @@ const server = http.createServer(async (req, res) => {
       200,
       layout(
         `${prod.title} – Mock Store`,
-        `<h1>${prod.title}</h1>${B.has('noprice') ? '' : `<div class="price">₹${v.price}</div>`}
+        `<h1>${prod.title}</h1>${B.has('noprice') ? '' : `<div class="price">₹${ABV === 'c' ? (Number(v.price) - 200).toFixed(2) : v.price}</div>`}
 <form method="post" action="/cart/add"><input type="hidden" name="id" value="${v.id}">
 <select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>
 <button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>${DE ? '<p class="tax-note">inkl. MwSt., zzgl. <a href="/policies/shipping-policy">Versandkosten</a></p>' : ''}

@@ -571,7 +571,8 @@
       if (!silent && alive()) { const h1 = main.querySelector('h1'); document.title = `${h1 ? h1.textContent + ' – ' : ''}Tharam`; }
     } catch (e) {
       if (!alive() || !S.me) return;
-      $('#main').innerHTML = `<div class="main-inner"><div class="empty panel"><h2>This page didn't load</h2><p>${esc(e.message)}</p><button class="btn" onclick="location.reload()">Reload</button></div></div>`;
+      $('#main').innerHTML = `<div class="main-inner"><div class="empty panel"><h2>This page didn't load</h2><p>${esc(e.message)}</p><button class="btn" type="button" data-reload>Reload</button></div></div>`;
+      $('#main [data-reload]')?.addEventListener('click', () => location.reload());
     }
   }
   function skeleton() {
@@ -649,6 +650,7 @@
   const PHASES = [
     { key: 'open', label: 'Open your store', sub: 'On a desktop and a phone-sized screen' },
     { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'pricing.journey', 'errors.js', 'sale.discount'] },
+    { key: 'abtest', label: 'Shop every A/B test version', groups: ['sale.abtest'], full: true },
     { key: 'quality', label: 'Measure speed, SEO and accessibility', groups: ['speed', 'seo', 'a11y', 'links', 'policies'], full: true },
     { key: 'regional', label: 'Check the laws where you sell', groups: ['law.de', 'law.cookies', 'access.law', 'law.us'], full: true },
     { key: 'visual', label: 'Compare screenshots with the approved look', groups: ['visual'], full: true },
@@ -656,7 +658,7 @@
     { key: 'domain', label: 'Check your domain, certificate and email records', groups: ['security.domain'], full: true },
     { key: 'ai', label: 'AI review of how pages look', groups: ['ai.visual'], full: true },
   ];
-  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'pricing.journey': 3, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1, 'security.domain': 3 };
+  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'pricing.journey': 3, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1, 'security.domain': 3, 'sale.abtest': 6 };
   const estimate = (keys) => {
     const sec = 8 + keys.reduce((n, k) => n + (EST[k] || 5), 0);
     return sec < 60 ? 'under a minute' : `about ${Math.ceil(sec / 60)} minutes`;
@@ -864,7 +866,8 @@
   // Run validations: choose what to check, see the plan, then start. Nothing runs without this preview.
   function availability(g, s) {
     const shopify = !s.platform || /shopify/i.test(s.platform);
-    if (!shopify && ((g.key.startsWith('journey.') && !g.locked) || g.key === 'catalog' || g.key === 'ai.copy')) return 'Shopify stores only for now';
+    const woo = /woocommerce/i.test(s.platform || '');
+    if (!shopify && ((g.key.startsWith('journey.') && !g.locked) || ((g.key === 'catalog' || g.key === 'ai.copy') && !woo))) return 'Shopify stores only for now';
     if (!groupAllowed(g)) return `In ${plansFor(featureOf(g.key))}`;
     return null;
   }
@@ -1034,10 +1037,10 @@
   STORE_PAGES.suite = async (ctx, s) => {
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (!ctx.alive()) return;
-    const tab = ['product', 'codes', ...(feat('price_checks') ? ['prices'] : [])].includes(ctx.r.a) ? ctx.r.a : null;
+    const tab = ['product', 'codes', ...(feat('price_checks') ? ['prices'] : []), ...(feat('ab_tests') ? ['abtests'] : [])].includes(ctx.r.a) ? ctx.r.a : null;
     const base = `#/s/${s.id}/suite`;
     const shopify = !s.platform || /shopify/i.test(s.platform);
-    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes'], ...(feat('price_checks') ? [['prices', 'Price rules']] : [])], tab);
+    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes'], ...(feat('price_checks') ? [['prices', 'Price rules']] : []), ...(feat('ab_tests') ? [['abtests', 'A/B tests']] : [])], tab);
     if (!tab) {
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id, saleTraffic: !!s.config.saleTraffic })}</form></div>`;
       const form = $('#suite');
@@ -1074,6 +1077,35 @@
       form.addEventListener('input', mark);
       form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.price-rule', form).length > 1) b.closest('.price-rule').remove(); else b.closest('.price-rule').querySelectorAll('input').forEach((i) => (i.value = i.name === 'quantity' ? '1' : '')); mark(); });
       $('#addr').onclick = () => { if ($$('.price-rule', form).length >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
+      return;
+    }
+    if (tab === 'abtests') {
+      const list = (s.config.abVariants || []).length ? s.config.abVariants : [{ name: '', kind: 'param', value: '' }];
+      const row = (v, i) => `<div class="code-row ab-row"><div class="field"><label for="abn${i}">Version name</label><input id="abn${i}" name="name" value="${esc(v.name)}" placeholder="e.g. New price" maxlength="40" autocomplete="off"></div>
+        <div class="field"><label for="abk${i}">Set by</label><select id="abk${i}" name="kind"><option value="param"${v.kind !== 'cookie' ? ' selected' : ''}>Link</option><option value="cookie"${v.kind === 'cookie' ? ' selected' : ''}>Cookie</option></select></div>
+        <div class="field"><label for="abv${i}">Setting</label><input id="abv${i}" name="value" value="${esc(v.value)}" placeholder="e.g. ab_variant=b" maxlength="260" autocomplete="off" spellcheck="false"></div>
+        <button type="button" class="icon-btn" data-rm aria-label="Remove version" data-tip="Remove">${icon('trash', 16)}</button></div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
+        <div class="form-section" style="border-top:0;padding-top:0"><div><h3>A/B and price tests</h3><p class="explain">If you test prices or a new theme with an A/B app, some shoppers see a different version of your store. Each full check shops once in every version you list here: the page loads, Add to cart works, the cart charges the price shown, and checkout opens on your store. Nothing is bought, and your test settings are never changed.</p>
+          <p class="explain">Find the setting in your A/B app’s preview link for each version, for example <code>?ab_variant=b</code>, and enter it as <code>ab_variant=b</code>.</p>
+          <p class="explain" id="ab-auto">Using Convert or Optimizely? You don’t need to list anything: we find their running test versions on our own and shop each one.</p></div>
+          <div class="controls"><form id="abv">${list.map(row).join('')}</form>
+            <div class="inline-row"><button type="button" class="btn secondary small" id="adda">${icon('add', 15)}Add a version</button><span class="muted" style="font-size:12.5px">Up to 4 versions.</span></div>
+            <p class="error-msg" id="ab-err" role="alert"></p>
+            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">A/B test versions are checked on Shopify stores for now.</p>' : ''}</div></div></div>`;
+      const form = $('#abv');
+      const mark = savebar($('.main-inner', ctx.main), {
+        onSave: async () => {
+          const next = $$('.ab-row', form).map((r) => ({ name: r.querySelector('[name=name]').value.trim(), kind: r.querySelector('[name=kind]').value, value: r.querySelector('[name=value]').value.trim() })).filter((x) => x.name || x.value);
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { abVariants: next } } }); $('#ab-err').textContent = ''; } catch (ex) { $('#ab-err').textContent = ex.message; throw ex; }
+          await loadStores();
+        },
+        onDiscard: () => render(),
+      });
+      form.addEventListener('input', mark);
+      form.addEventListener('change', mark);
+      form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.ab-row', form).length > 1) b.closest('.ab-row').remove(); else b.closest('.ab-row').querySelectorAll('input').forEach((i) => (i.value = '')); mark(); });
+      $('#adda').onclick = () => { if ($$('.ab-row', form).length >= 4) return toast('Up to 4 versions', 'error'); form.insertAdjacentHTML('beforeend', row({ name: '', kind: 'param', value: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
       return;
     }
     if (tab === 'codes') {
@@ -1867,7 +1899,7 @@
     if (tab === 'issues') {
       const types = Object.keys(c.byType);
       body = types.length ? types.map((t) => `<section class="panel"><h2>${esc(CAT_TYPE[t] || t)} <span class="muted" style="font-weight:400">(${c.byType[t].length})</span></h2>
-        <ul class="list">${c.byType[t].slice(0, 60).map((i) => `<li><a class="row" href="${esc(s.url)}/products/${esc(i.handle)}" target="_blank" rel="noopener"><span class="sev ${i.severity === 'critical' ? 'fail' : i.severity === 'major' ? 'warn' : ''}">${i.severity === 'critical' ? 'Serious' : i.severity === 'major' ? 'Issue' : 'Minor'}</span><span><span class="t">${esc(i.title)}</span><span class="d">${esc(i.message)}</span></span><span class="r" aria-label="Open product in your store">${icon('external', 15)}</span></a></li>`).join('')}</ul>
+        <ul class="list">${c.byType[t].slice(0, 60).map((i) => `<li><a class="row" href="${esc(i.url || `${s.url}/products/${i.handle}`)}" target="_blank" rel="noopener"><span class="sev ${i.severity === 'critical' ? 'fail' : i.severity === 'major' ? 'warn' : ''}">${i.severity === 'critical' ? 'Serious' : i.severity === 'major' ? 'Issue' : 'Minor'}</span><span><span class="t">${esc(i.title)}</span><span class="d">${esc(i.message)}</span></span><span class="r" aria-label="Open product in your store">${icon('external', 15)}</span></a></li>`).join('')}</ul>
         ${c.byType[t].length > 60 ? `<p class="muted" style="margin:10px 4px 0">and ${c.byType[t].length - 60} more</p>` : ''}</section>`).join('') : '<div class="panel"><p class="muted" style="margin:0">No catalog issues found. Nice.</p></div>';
     } else if (tab === 'changes') {
       if (!c.totals) body = '<div class="panel"><p class="muted" style="margin:0">No earlier snapshot to compare with yet. The next full check will show changes.</p></div>';
@@ -1879,7 +1911,7 @@
       }
     } else {
       body = `<div class="table-wrap"><table class="data"><thead><tr><th>Product</th><th>Price</th><th>Stock</th><th class="num">Issues</th><th>Changed</th><th aria-label="Open"></th></tr></thead><tbody>
-        ${c.products.map((p) => `<tr class="link" data-href="${esc(s.url)}/products/${esc(p.handle)}" tabindex="0"><td><div class="prod-cell">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}<span><span class="cell-main">${esc(p.title)}</span><div class="cell-sub">${p.variants} variant${p.variants > 1 ? 's' : ''} · ${p.images} image${p.images === 1 ? '' : 's'}</div></span></div></td>
+        ${c.products.map((p) => `<tr class="link" data-href="${esc(p.url || `${s.url}/products/${p.handle}`)}" tabindex="0"><td><div class="prod-cell">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}<span><span class="cell-main">${esc(p.title)}</span><div class="cell-sub">${p.variants} variant${p.variants > 1 ? 's' : ''} · ${p.images} image${p.images === 1 ? '' : 's'}</div></span></div></td>
           <td class="nowrap">${money(p.price)}${p.maxPrice && p.maxPrice !== p.price ? ` – ${money(p.maxPrice)}` : ''}</td>
           <td>${p.available ? '<span class="status-inline"><span class="dot healthy"></span>In stock</span>' : '<span class="status-inline"><span class="dot"></span>Sold out</span>'}</td>
           <td class="num">${p.issues ? `<span class="pill ${p.worst === 'critical' ? 'critical' : p.worst === 'major' ? 'warning' : ''}">${p.issues}</span>` : '<span class="muted">0</span>'}</td>
@@ -1890,7 +1922,7 @@
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => window.open(tr.dataset.href, '_blank', 'noopener'); tr.onkeydown = (e) => { if (e.key === 'Enter') window.open(tr.dataset.href, '_blank', 'noopener'); }; });
   };
   function catChange(ch, s) {
-    const link = `${s.url}/products/${ch.handle}`;
+    const link = ch.url || `${s.url}/products/${ch.handle}`;
     if (ch.kind === 'added') return `<li><div class="row"><span class="sev ok">Added</span><span><span class="t">${esc(ch.title)}</span><span class="d">${esc(ch.detail || '')}</span></span><span></span></div></li>`;
     if (ch.kind === 'removed') return `<li><div class="row"><span class="sev">Removed</span><span><span class="t">${esc(ch.title)}</span><span class="d">${esc(ch.detail || '')}</span></span><span></span></div></li>`;
     const fields = (ch.fields || []).map((f) => {
@@ -2584,7 +2616,7 @@
       <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))"><div class="figure"><b>${d.users}</b><span>accounts</span></div><div class="figure"><b>${d.stores}</b><span>stores added</span></div><div class="figure"><b>${d.freeScans24h}</b><span>free checks, 24 h</span></div><div class="figure"><b>${d.queue.active} / ${d.queue.waiting}</b><span>running / waiting</span></div></div>
       <section class="panel"><h2>Signups</h2>${t(d.signups, [['email', 'Email'], ['name', 'Name'], ['stores', 'Stores'], ['created_at', 'Joined']], (r, c) => (c === 'created_at' ? time(r[c]) : esc(r[c] ?? '')))}</section>
       <section class="panel"><h2>Leads</h2>${t(d.leads, [['email', 'Email'], ['store_url', 'Store'], ['source', 'Source'], ['created_at', 'When']], (r, c) => (c === 'created_at' ? time(r[c]) : esc(r[c] ?? '')))}</section>
-      <section class="panel"><h2>Free checks</h2>${t(d.recentScans, [['url', 'Store'], ['score', 'Score'], ['verdict', 'Result'], ['created_at', 'When'], ['id', 'Report']], (r, c) => (c === 'created_at' ? time(r[c]) : c === 'id' ? `<a href="/scan/${r.id}" target="_blank" rel="noopener">Open</a>` : c === 'verdict' ? esc(VERDICT[r.verdict] || r.status) : esc(r[c] ?? '')))}</section></div>`;
+      <section class="panel"><h2>Free checks</h2>${t(d.recentScans, [['url', 'Store'], ['score', 'Score'], ['verdict', 'Result'], ['created_at', 'When'], ['id', 'Report']], (r, c) => (c === 'created_at' ? time(r[c]) : c === 'id' ? (r.public_id ? `<a href="/scan/${esc(r.public_id)}" target="_blank" rel="noopener">Open</a>` : '') : c === 'verdict' ? esc(VERDICT[r.verdict] || r.status) : esc(r[c] ?? '')))}</section></div>`;
   };
 
   // How busy the check machine is, and when to add a worker. Read-only.
@@ -3169,7 +3201,8 @@
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {
-      $('#emb-loading').innerHTML = `<p><b>We couldn’t open Tharam.</b></p><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Try again</button>`;
+      $('#emb-loading').innerHTML = `<p><b>We couldn’t open Tharam.</b></p><p class="muted">${esc(e.message)}</p><button class="btn" type="button" data-reload>Try again</button>`;
+      $('#emb-loading [data-reload]')?.addEventListener('click', () => location.reload());
       return;
     }
     $('#emb-loading')?.remove();

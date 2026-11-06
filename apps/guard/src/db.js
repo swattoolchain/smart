@@ -131,6 +131,11 @@ ensureColumn('runs', 'due_at', 'TEXT');
 // Runner visibility: which runner ran the check (runners.id) and whether it was retried after a runner was lost.
 ensureColumn('runs', 'runner_id', 'INTEGER');
 ensureColumn('runs', 'retried', 'INTEGER NOT NULL DEFAULT 0');
+// Free-check reports are opened by a random link, never by their number, so nobody can page through
+// other people's reports. Older free reports get a random link too (their old numbered links stop working).
+ensureColumn('runs', 'public_id', 'TEXT');
+db.exec(`UPDATE runs SET public_id = lower(hex(randomblob(16))) WHERE kind = 'free' AND public_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS runs_public_id ON runs(public_id) WHERE public_id IS NOT NULL;`);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_login_email ON users(login_email) WHERE login_email IS NOT NULL');
 // Storefront and staging passwords are kept encrypted; encrypt any still stored in plain text (in place).
 migratePasswords(db);
@@ -191,6 +196,8 @@ export const q = {
   recentFreeRunsByIp: db.prepare(
     "SELECT COUNT(*) AS n FROM runs WHERE kind = 'free' AND requester_ip = ? AND created_at > datetime('now', '-1 hour')"
   ),
+  runByPublicId: db.prepare("SELECT * FROM runs WHERE public_id = ? AND kind = 'free'"),
+  setPublicId: db.prepare("UPDATE runs SET public_id = ? WHERE id = ?"),
   recentFreeRunForUrl: db.prepare(
     "SELECT * FROM runs WHERE kind = 'free' AND url = ? AND status IN ('queued','running','done') AND created_at > datetime('now', '-1 hour') ORDER BY id DESC LIMIT 1"
   ),
