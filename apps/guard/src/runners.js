@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS runners (
   kind TEXT NOT NULL DEFAULT 'worker',          -- main | worker
   slots INTEGER NOT NULL DEFAULT 2,
   tags_json TEXT NOT NULL DEFAULT '[]',
-  status TEXT NOT NULL DEFAULT 'active',        -- active | draining | paused
+  status TEXT NOT NULL DEFAULT 'active',        -- active | draining | paused | removed (credentials cleared for good)
   secret_hash TEXT,
   last_seen TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -60,6 +60,8 @@ export const HEARTBEAT_TIMEOUT_MS = env('RUNNER_TIMEOUT_S', 60) * 1000;
 export const LEASE_LIMIT_MS = env('RUNNER_LEASE_LIMIT_S', 8 * 60) * 1000;
 const JOIN_TOKEN_HOURS = 24;
 export const STATUSES = ['active', 'draining', 'paused'];
+/** A founder removed the runner: its credentials no longer work and it never takes checks again. */
+export const REMOVED = 'removed';
 
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 const sameHash = (a, b) => !!a && !!b && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -142,15 +144,30 @@ export function authRunner(credentials) {
   const m = /^(\d+)\.([A-Za-z0-9_-]{20,})$/.exec(String(credentials || ''));
   if (!m) return null;
   const r = S.byId.get(Number(m[1]));
-  if (!r || r.kind !== 'worker' || !sameHash(r.secret_hash, sha(m[2]))) return null;
+  if (!r || r.kind !== 'worker' || r.status === REMOVED || !sameHash(r.secret_hash, sha(m[2]))) return null;
   return parseRunner(r);
 }
 export const touchRunner = (id) => S.seen.run(id);
+
+/**
+ * Founders remove a worker for good (a machine that was retired or may be compromised): its credentials are
+ * cleared, so its next request is refused, and it never takes checks again. Its unfinished checks are moved
+ * elsewhere by the queue (queue.js removeRunner). Returns [before, after].
+ */
+export function revokeRunner(id) {
+  const before = runnerById(id);
+  if (!before) throw new Error('Runner not found');
+  if (before.kind === 'main') throw new Error('The main server cannot be removed.');
+  if (before.status === REMOVED) throw new Error('This runner was already removed.');
+  db.prepare('UPDATE runners SET secret_hash = NULL, status = ? WHERE id = ?').run(REMOVED, before.id);
+  return [before, runnerById(id)];
+}
 
 /** Founders change a runner's status, tags and (workers only) slots. Returns [before, after]. */
 export function updateRunner(id, patch) {
   const before = runnerById(id);
   if (!before) throw new Error('Runner not found');
+  if (before.status === REMOVED) throw new Error('This runner was removed. To use the machine again, join it with a new token.');
   const next = { status: before.status, tags: before.tags, slots: before.slots };
   if (patch.status !== undefined) {
     if (!STATUSES.includes(patch.status)) throw new Error(`Status must be one of: ${STATUSES.join(', ')}.`);
@@ -200,9 +217,15 @@ export function canRun(runner, job) {
  * order, the runners with that tag; if none has a free slot, any runner. Among those: most free slots
  * (the main server first on a tie, so nothing changes until workers have room).
  * `job.avoid`: a runner that lost this check before (its retry goes elsewhere when possible).
+ * Pausing or draining the main server moves journey checks to workers, but never strands a check: checks only
+ * the main server can run (free, full, publish) ignore its status, and so does everything while no active,
+ * healthy worker exists.
  */
 export function chooseRunner(job, runners) {
-  const open = runners.filter((r) => r.status === 'active' && r.healthy && r.slots - r.used > 0 && canRun(r, job));
+  const mainOnly = !canRun({ kind: 'worker' }, job);
+  const anyWorker = runners.some((r) => r.kind !== 'main' && r.status === 'active' && r.healthy);
+  const takes = (r) => r.status === 'active' || (r.kind === 'main' && (mainOnly || !anyWorker));
+  const open = runners.filter((r) => takes(r) && r.healthy && r.slots - r.used > 0 && canRun(r, job));
   const pool = open.filter((r) => r.id !== job.avoid).length ? open.filter((r) => r.id !== job.avoid) : open;
   if (!pool.length) return null;
   const best = (list) => list.slice().sort((a, b) => (b.slots - b.used) - (a.slots - a.used) || (a.kind === 'main' ? -1 : b.kind === 'main' ? 1 : a.id - b.id))[0];
@@ -229,7 +252,11 @@ export const L = {
   forRunner: db.prepare('SELECT * FROM runner_leases WHERE run_id = ? AND runner_id = ? ORDER BY id DESC LIMIT 1'),
   finish: db.prepare("UPDATE runner_leases SET state = ?, finished_at = datetime('now') WHERE id = ? AND state IN ('assigned', 'leased')"),
   attempts: db.prepare('SELECT COUNT(*) n FROM runner_leases WHERE run_id = ?'),
-  cancelledFor: db.prepare("SELECT run_id FROM runner_leases WHERE runner_id = ? AND state = 'cancelled' AND finished_at > datetime('now', '-10 minutes')"),
+  // Checks a worker must stop: cancelled by the owner, or lost (moved elsewhere after it went quiet), unless the
+  // same worker holds the check again under a newer lease.
+  cancelledFor: db.prepare(`SELECT DISTINCT l.run_id FROM runner_leases l WHERE l.runner_id = ? AND l.state IN ('cancelled', 'lost') AND l.finished_at > datetime('now', '-10 minutes')
+    AND NOT EXISTS (SELECT 1 FROM runner_leases o WHERE o.run_id = l.run_id AND o.runner_id = l.runner_id AND o.state IN ('assigned', 'leased'))`),
+  openForRunner: db.prepare("SELECT * FROM runner_leases WHERE runner_id = ? AND state IN ('assigned', 'leased')"),
   byRun: db.prepare('SELECT l.*, r.name AS runner_name FROM runner_leases l JOIN runners r ON r.id = l.runner_id WHERE l.run_id = ? ORDER BY l.id'),
   openCount: db.prepare("SELECT runner_id, COUNT(*) n FROM runner_leases WHERE state IN ('assigned', 'leased') GROUP BY runner_id"),
 };

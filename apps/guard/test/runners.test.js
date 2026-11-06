@@ -85,6 +85,93 @@ describe('Runner routing and join tokens', () => {
     assert.throws(() => r.updateRunner(j.runner.id, { status: 'gone' }), /Status/);
     assert.equal(r.updateRunner(j.runner.id, { status: 'draining', slots: 5 })[1].slots, 5);
   });
+
+  it('pausing or draining the main server never strands checks only it can run', () => {
+    for (const status of ['paused', 'draining']) {
+      const main = { ...MAIN, status };
+      for (const job of [{ kind: 'full', storeId: 5 }, { kind: 'journeys', storeId: 5, release: 3 }, { kind: 'free' }, { kind: 'journeys', storeId: 5, preview: { url: 'x' } }]) {
+        assert.equal(r.chooseRunner(job, [main, R(2)])?.id, 1, `${status} main still takes ${JSON.stringify(job)}`);
+      }
+      assert.equal(r.chooseRunner(JOURNEY, [main, R(2)]).id, 2, `${status} main: journey checks go to the worker`);
+      assert.equal(r.chooseRunner(JOURNEY, [main, R(2, { used: 2 })]), null, 'worker busy: the journey check waits for it');
+      assert.equal(r.chooseRunner(JOURNEY, [main, R(2, { healthy: false })]).id, 1, 'no working worker at all: main takes it rather than nothing running');
+      assert.equal(r.chooseRunner(JOURNEY, [main, R(2, { status: 'paused' })]).id, 1);
+    }
+  });
+
+  it('a removed worker: credentials stop working for good, and the main server cannot be removed', () => {
+    const t = r.createJoinToken({ name: 'w-gone', slots: 1 });
+    const j = r.joinWithToken(t.token);
+    assert.ok(r.authRunner(j.credentials));
+    const [before, after] = r.revokeRunner(j.runner.id);
+    assert.deepEqual([before.status, after.status, after.secret_hash], ['active', 'removed', null]);
+    assert.equal(r.authRunner(j.credentials), null);
+    assert.throws(() => r.revokeRunner(j.runner.id), /already removed/);
+    assert.throws(() => r.updateRunner(j.runner.id, { status: 'active' }), /was removed/);
+    assert.throws(() => r.revokeRunner(r.mainRunner().id), /main server cannot be removed/);
+    assert.equal(r.chooseRunner(JOURNEY, [{ ...MAIN, used: 2 }, R(j.runner.id, { status: 'removed' })]), null);
+  });
+});
+
+describe('Runner leases across a main server restart, lost checks and removal', () => {
+  let r, db, q, queue, worker, store;
+  const lease = (runId, state, { attempt = 1, kind = 'journeys', finished = false } = {}) => db.prepare(`INSERT INTO runner_leases (run_id, runner_id, attempt, state, spec_json, job_json, leased_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ${finished ? "datetime('now')" : 'NULL'})`)
+    .run(runId, worker.id, attempt, state, JSON.stringify({ runId, origin: 'http://localhost:9', kind, storeId: store, disabled: [] }), JSON.stringify({ runId, origin: 'http://localhost:9', kind, storeId: store, seqNo: runId }));
+  const run = (status, error = null) => Number(db.prepare('INSERT INTO runs (store_id, url, kind, status, error) VALUES (?, ?, ?, ?, ?)').run(store, 'http://localhost:9', 'journeys', status, error).lastInsertRowid);
+  const runRow = (id) => db.prepare('SELECT status, error FROM runs WHERE id = ?').get(id);
+  const leaseStates = (id) => db.prepare('SELECT state FROM runner_leases WHERE run_id = ? ORDER BY id').all(id).map((x) => x.state);
+  let A, B, C, D, E;
+
+  before(async () => {
+    process.env.DATA_DIR ||= fs.mkdtempSync(path.join(os.tmpdir(), 'tharam-runners-'));
+    ({ db, q } = await import('../src/db.js'));
+    r = await import('../src/runners.js');
+    const uid = Number(q.insertUser.run('restart@shop.test', 'x', 'Owner').lastInsertRowid);
+    store = Number(db.prepare('INSERT INTO stores (user_id, url, name) VALUES (?, ?, ?)').run(uid, 'http://localhost:9', 'Restart store').lastInsertRowid);
+    worker = r.joinWithToken(r.createJoinToken({ name: 'w-restart', slots: 2 }).token);
+    worker = { ...worker.runner, credentials: worker.credentials };
+    // The state a restart leaves behind: the run marked interrupted, its lease still open on a healthy worker.
+    A = run('error', 'Interrupted by restart'); lease(A, 'leased');
+    B = run('cancelled', 'Stopped by you'); lease(B, 'assigned');
+    queue = await import('../src/queue.js'); // loading the queue is what a restart does
+  });
+
+  it('after a restart, a check still running on a worker is put back: store busy, slot counted, run shown as running', (t) => {
+    assert.deepEqual(runRow(A), { status: 'running', error: null });
+    assert.equal(queue.queueDepth().remote, 1);
+    assert.equal(queue.runnerStates().find((x) => x.id === worker.id).used, 1, 'the worker slot it uses is counted');
+    assert.equal(q.activeRunForStore.get(store)?.id, A, 'the scheduler sees the store as busy');
+    assert.deepEqual(leaseStates(B), ['cancelled'], 'a lease whose run was stopped is cancelled so the worker drops it');
+    const c = queue.workerCheckIn(worker, [A, B]);
+    assert.deepEqual(c.jobs, []);
+    assert.deepEqual(c.cancel, [B]);
+    note(t, `run ${A} restored to running on w-restart (1 of 2 slots); run ${B}'s lease cancelled and sent as a stop`);
+  });
+
+  it('a worker is told to stop a check it lost, but not one it holds again', (t) => {
+    C = run('running'); lease(C, 'lost', { finished: true });
+    D = run('running'); lease(D, 'lost', { finished: true }); lease(D, 'leased', { attempt: 2 });
+    const c = queue.workerCheckIn(worker, [A, C, D]);
+    assert.ok(c.cancel.includes(C), 'lost lease: stop');
+    assert.ok(!c.cancel.includes(D), 'held again under a newer lease: keep going');
+    note(t, `cancel list: ${JSON.stringify(c.cancel)}`);
+  });
+
+  it('removing a worker cuts it off and moves (or, after two tries, fails) its unfinished checks', async (t) => {
+    assert.equal(await queue.workerComplete(worker, A, { error: 'stopped for the test' }), true);
+    E = run('running'); lease(E, 'lost', { finished: true }); lease(E, 'leased', { attempt: 2 });
+    const { before, moved } = queue.removeRunner(worker.id);
+    assert.equal(before.name, 'w-restart');
+    assert.equal(moved, 2, 'D and E were open on it');
+    assert.equal(r.authRunner(worker.credentials), null);
+    for (const id of [D, E]) {
+      assert.deepEqual(leaseStates(id), ['lost', 'lost']);
+      assert.equal(runRow(id).status, 'error');
+      assert.match(runRow(id).error, /The server running it was removed\. We tried twice/);
+    }
+    assert.equal(queue.queueDepth().remote, 0);
+    note(t, `removed w-restart: ${moved} open checks lost; both were second attempts, so they failed with a plain message`);
+  });
 });
 
 /** Creates the founder account from the server (founders can't sign up) and signs it in. */
@@ -145,6 +232,14 @@ describe('Workers running checks', () => {
     assert.equal((await post('/api/runner/check-in', { running: [] })).status, 401);
     assert.equal((await post('/api/runner/check-in', { running: [] }, `1.${'x'.repeat(40)}`)).status, 401);
     assert.equal((await post('/api/runner/runs/1/complete', { error: 'x' }, '2.nope')).status, 401);
+    // Strangers are refused before their request body is read: a broken or oversized body still gets 401
+    // (it used to be parsed first: 400 for broken JSON, 413 for 21 MB).
+    const raw = (url, body, type = TYPE) => fetch(P.base + url, { method: 'POST', headers: { 'content-type': type }, body });
+    assert.equal((await raw('/api/runner/runs/1/complete', '{"result": [')).status, 401, 'broken JSON');
+    assert.equal((await raw('/api/runner/runs/1/complete', Buffer.alloc(21 * 1024 * 1024, 32))).status, 401, '21 MB body');
+    assert.equal((await raw('/api/runner/runs/1/shots/a.png', Buffer.alloc(11 * 1024 * 1024), 'image/png')).status, 401, '11 MB image');
+    assert.equal((await raw('/api/runner/check-in', '{"running": [')).status, 401);
+    for (const s of [owners[0], P.session()]) assert.ok([401, 403].includes((await s.post('/api/admin/runners/1/remove', {})).status));
     const list = await runners();
     assert.deepEqual(list.map((r) => [r.name, r.kind, r.slots, r.status, r.healthy]), [['main', 'main', 1, 'active', true]], 'with no workers there is only the main server');
   });
@@ -250,5 +345,35 @@ describe('Workers running checks', () => {
       await screenshot(t, p, 'Founder console: runners and a new join token', { fullPage: true });
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
+  });
+
+  it('a founder removes a worker: its credentials stop working, and the console shows it as removed', async (t) => {
+    const india = await runner('worker-india');
+    const creds = workers[1].credentials();
+    assert.equal((await founder.post(`/api/admin/runners/${(await runner('main')).id}/remove`, {})).status, 400, 'the main server cannot be removed');
+    const r = await founder.post(`/api/admin/runners/${india.id}/remove`, {});
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.status, 'removed');
+    const late = await fetch(`${P.base}/api/runner/check-in`, { method: 'POST', headers: { 'content-type': TYPE, authorization: `Runner ${creds}` }, body: JSON.stringify({ running: [] }) });
+    assert.equal(late.status, 401, 'its credentials no longer work');
+    assert.equal((await runner('worker-india')).status, 'removed');
+    assert.equal((await founder.patch(`/api/admin/runners/${india.id}`, { status: 'active' })).status, 400, 'a removed runner cannot be switched back on');
+    assert.equal((await founder.post(`/api/admin/runners/${india.id}/remove`, {})).status, 400);
+    assert.match(JSON.stringify((await founder.get('/api/admin/audit')).json), /runner\.remove/, 'in the audit log');
+    const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, args: ['--no-sandbox'] });
+    try {
+      const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+      await ctx.addCookies(founder.browserCookies());
+      const p = await ctx.newPage();
+      await p.goto(`${P.base}/app#/admin/runners`);
+      await p.waitForSelector('tr[data-name="worker-india"]', { timeout: 20000 });
+      await p.evaluate(() => document.querySelectorAll('.tour,.tour-mask,.toast').forEach((x) => x.remove()));
+      assert.match(await p.locator('tr[data-name="worker-india"]').textContent(), /Removed/);
+      assert.equal(await p.locator('tr[data-name="worker-india"] button').count(), 0, 'no actions on a removed runner');
+      assert.equal(await p.locator('tr[data-name="main"] [data-remove]').count(), 0, 'no Remove on the main server');
+      assert.equal(await p.locator('tr[data-name="worker-a"] [data-remove]').count(), 1);
+      await screenshot(t, p, 'Founder console: a removed worker', { fullPage: true });
+    } finally { await browser.close(); }
+    note(t, 'worker-india removed: check-in 401, status removed, PATCH and second remove refused, audited');
   });
 });
