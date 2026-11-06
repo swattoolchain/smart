@@ -16,6 +16,14 @@
   }
   window.priceTrailHtml = priceTrailHtml;
 
+  // Quantity breaks: what the owner expects and what the cart charged, at each quantity tried.
+  function tierTableHtml(t) {
+    if (!t || !t.rows || !t.rows.length) return '';
+    const mark = { over: '<b>Higher</b>', under: '<b>Lower</b>', refused: 'Cart refused', ok: '' };
+    return `<table class="price-trail tier-table"><thead><tr><th>Quantity</th><th class="num">You expect</th><th class="num">Cart charges</th><th></th></tr></thead><tbody>${t.rows.map((r) => `<tr class="${r.state === 'over' ? 'up' : r.state === 'under' ? 'down' : ''}"><td>${esc(r.qty)}</td><td class="num">${esc(r.expect)} <span class="muted">(${esc(r.expectEach)} each)</span></td><td class="num">${r.charged == null ? '<span class="muted">–</span>' : `${esc(r.charged)} <span class="muted">(${esc(r.chargedEach)} each)</span>`}</td><td class="muted">${mark[r.state] || ''}</td></tr>`).join('')}${t.checkout ? `<tr class="${t.checkout.higher ? 'up' : ''}"><td>Checkout subtotal, ${esc(t.checkout.qty)}</td><td class="num"><span class="muted">Cart</span> ${esc(t.checkout.cart || '–')}</td><td class="num">${esc(t.checkout.money)}</td><td class="muted">${t.checkout.higher ? '<b>Higher</b>' : 'Same as the cart'}</td></tr>` : ''}</tbody></table>`;
+  }
+  window.tierTableHtml = tierTableHtml;
+
   function checkHtml(c) {
     const shot = c.evidence && c.evidence.screenshot;
     const errors = c.evidence && c.evidence.errors;
@@ -26,6 +34,7 @@
       <p class="detail">${esc(c.detail)}</p>
       ${c.fix && c.status !== 'pass' ? `<p class="fix"><b>How to fix:</b> ${esc(c.fix)}</p>` : ''}
       ${c.evidence && c.evidence.priceTrail ? priceTrailHtml(c.evidence.priceTrail) : ''}
+      ${c.evidence && c.evidence.tierTable ? tierTableHtml(c.evidence.tierTable) : ''}
       ${errors ? `<p class="fix">${errors.map((e) => `<code>${esc(e.message)}</code>`).join('<br>')}</p>` : ''}
       ${shot ? `<img class="shot" src="${esc(shot)}" alt="Screenshot when '${esc(c.title)}' was checked" loading="lazy">` : ''}
       ${visual && visual.some((v) => v.status === 'changed') ? `<p class="fix">${visual.filter((v) => v.status === 'changed').map((v) => `${esc(v.key)}: ${v.ratio}% changed`).join(' · ')}</p>` : ''}

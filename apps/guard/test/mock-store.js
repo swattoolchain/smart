@@ -4,7 +4,8 @@
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
  *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
  *   checkoutprice (checkout subtotal ₹200 more than the cart), protection (a shipping-protection app adds a
- *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price)
+ *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price),
+ *   tiers (with MOCK_EXTRA=tiers: the 10+ quantity break stopped working)
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -44,8 +45,18 @@ function cartFor(req, res) {
 // Discount codes, like Shopify's: BF20 takes 20% off; MIN5000 needs a cart of ₹5,000 or more; anything else is unknown.
 // MOCK_BREAK=discount makes BF20 stop working (e.g. it expired or a discount app broke it).
 const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
+// MOCK_EXTRA=tiers: a volume-discount app on the Organic Cotton Kurta: 10% off each from 5, 20% off from 10,
+// given as a line discount in the cart (like Shopify Functions or a volume-discount app).
+// MOCK_BREAK=tiers: the 10+ break stopped working (still 10% off at 10 and more).
+const TIERS = EXTRA.split(',').includes('tiers');
+function tierPct(i) {
+  if (!TIERS || ![101, 102, 103].includes(Number(i.id))) return 0;
+  if (i.quantity >= 10) return B.has('tiers') ? 10 : 20;
+  return i.quantity >= 5 ? 10 : 0;
+}
 function cartJson(items) {
-  const original = items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0);
+  const lines = items.map((i) => { const unit = Math.round(Number(i.price) * 100); const full = unit * i.quantity; const off = Math.round((full * tierPct(i)) / 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: Math.round((full - off) / i.quantity), line_price: full - off, original_line_price: full, final_line_price: full - off, line_level_discount_allocations: off ? [{ amount: off, discount_application: { type: 'automatic', title: 'Buy more, save more' } }] : [] }; });
+  const original = lines.reduce((s, i) => s + i.final_line_price, 0);
   const code = items.discount;
   const rule = code && !(B.has('discount') && code === 'BF20') ? CODES[code] : null;
   const applicable = !!rule && original >= rule.min;
@@ -60,7 +71,7 @@ function cartJson(items) {
     items_subtotal_price: original,
     currency: 'INR',
     // Like Shopify's cart.js: prices in paise, one entry per line.
-    items: items.map((i) => { const unit = Math.round(Number(i.price) * 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: unit, line_price: unit * i.quantity, original_line_price: unit * i.quantity, final_line_price: unit * i.quantity }; }),
+    items: lines,
   };
 }
 function layout(title, body, { noindex = false } = {}) {
