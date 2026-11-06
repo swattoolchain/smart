@@ -14,10 +14,18 @@
 
   // Guided restore (S4): the clean copy of each changed theme file, to copy or download and paste back in Shopify.
   // Read-only: Tharam never changes the theme itself.
-  async function themeRestore(el, storeId, ev) {
+  async function themeRestore(el, storeId, ev, changed = true) {
     let clean;
     try { clean = (await api(`/api/stores/${storeId}/theme/clean`)).clean; } catch { return; }
-    if (!clean) { el.innerHTML = '<p class="muted">We keep a clean copy of your theme from each check where nothing changed. There isn\'t one yet, so use the older versions in Shopify\'s code editor to undo a change.</p>'; return; }
+    if (!changed) {
+      // No change in this check, but the theme still differs from the clean copy (a change reported earlier, or a
+      // newly published theme): only the owner can make it the new clean copy.
+      if (!clean?.pending) { el.innerHTML = ''; return; }
+      el.innerHTML = `<p class="muted">Your theme is different from the clean copy we keep (“${esc(clean.themeName || 'your theme')}”, ${esc(exact(clean.savedAt))}). We never replace the clean copy on our own.</p>${confirmBox()}`;
+      wireConfirm();
+      return;
+    }
+    if (!clean) { el.innerHTML = '<p class="muted">We keep a clean copy of your theme from your first clean check. There isn\'t one yet, so use the older versions in Shopify\'s code editor to undo a change.</p>'; return; }
     const byName = new Map(clean.files.map((f) => [f.filename, f]));
     const rows = (ev?.files || []).map((f) => {
       const c = byName.get(f.filename);
@@ -28,10 +36,12 @@
       return `<li><code>${esc(f.filename)}</code><div class="tr-act">${act}</div></li>`;
     }).join('');
     el.innerHTML = `<h4>Undo a change you didn't make</h4>
-      <p class="muted">Clean copy of “${esc(clean.themeName || 'your theme')}” from ${esc(exact(clean.savedAt))}, the last check where nothing had changed.${clean.sameTheme ? '' : ' It is from a different theme than the one live now, so compare carefully before pasting.'}</p>
+      <p class="muted">Clean copy of “${esc(clean.themeName || 'your theme')}” from ${esc(exact(clean.savedAt))}${clean.confirmedBy === 'owner' ? ', the last version you confirmed' : ', your first clean check'}. It stays until you confirm a change yourself.${clean.sameTheme ? '' : ' It is from a different theme than the one live now, so compare carefully before pasting.'}</p>
       <ol class="steps"><li>In Shopify admin, open <b>Online Store → Themes</b>, then <b>⋯ → Edit code</b> on your live theme.</li><li>Open the file below, select all its code and paste the clean version over it.</li><li>Press <b>Save</b>. Then run a full check here to confirm the theme matches the clean copy again.</li><li>If you didn't make the change, also change your Shopify password and review your staff accounts and apps.</li></ol>
       <ul class="tr-files">${rows}</ul>
-      <p><button type="button" class="btn small secondary" data-clean-zip>${icon('download', 14)}Download the whole clean copy (.zip)</button></p>`;
+      <p><button type="button" class="btn small secondary" data-clean-zip>${icon('download', 14)}Download the whole clean copy (.zip)</button></p>
+      ${clean.pending ? confirmBox() : ''}`;
+    wireConfirm();
     const fileOf = async (name) => api(`/api/stores/${storeId}/theme/clean/file?name=${encodeURIComponent(name)}`);
     $$('[data-clean-copy]', el).forEach((b) => (b.onclick = async () => { try { copyText((await fileOf(b.dataset.cleanCopy)).content); } catch (e) { toast(e.message, 'error'); } }));
     $$('[data-clean-get]', el).forEach((b) => (b.onclick = async () => {
@@ -47,6 +57,22 @@
         saveBlob(await r.blob(), name);
       } catch (e) { toast(e.message, 'error'); }
     };
+    function confirmBox() {
+      return `<div class="tr-confirm"><p><b>Did you or your developer make this change?</b> Then keep the theme as it is now as your clean copy. Only do this if you know the change: if someone else made it, the clean copy would include their code.</p>
+        <button type="button" class="btn small secondary" data-clean-confirm>I made this change: keep it as the clean copy</button></div>`;
+    }
+    function wireConfirm() {
+      const b = $('[data-clean-confirm]', el);
+      if (!b) return;
+      b.onclick = async () => {
+        if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Press again to confirm: this theme becomes your clean copy'; return; }
+        try {
+          await api(`/api/stores/${storeId}/theme/clean/confirm`, { method: 'POST', body: {} });
+          b.closest('.tr-confirm').innerHTML = '<p>Done. The theme as it is now is your clean copy. The one before it is kept with your older copies.</p>';
+          toast('Clean copy updated');
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    }
   }
   function saveBlob(blob, name) {
     const a = document.createElement('a');
@@ -1689,7 +1715,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.changes?.length ? `<table class="data record-changes"><thead><tr><th>What changed</th><th>Before</th><th>Now</th></tr></thead><tbody>${x.evidence.changes.map((r) => `<tr><td>${esc(r.what)}</td><td><code>${esc(r.before)}</code></td><td><code>${esc(r.after)}</code></td></tr>`).join('')}</tbody></table>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a === 'fail' && x.evidence?.files ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.changes?.length ? `<table class="data record-changes"><thead><tr><th>What changed</th><th>Before</th><th>Now</th></tr></thead><tbody>${x.evidence.changes.map((r) => `<tr><td>${esc(r.what)}</td><td><code>${esc(r.before)}</code></td><td><code>${esc(r.after)}</code></td></tr>`).join('')}</tbody></table>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a !== 'skip' ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -1765,7 +1791,7 @@
     $('#print').onclick = () => { $$('details', ctx.main).forEach((d) => (d.open = true)); const hidden = $$('[data-pane][hidden]', ctx.main); hidden.forEach((p) => (p.hidden = false)); window.print(); hidden.forEach((p) => (p.hidden = true)); };
     $$('[data-shot]', ctx.main).forEach((x) => (x.onclick = () => lightbox(x.dataset.shot, 'Screenshot')));
     const restoreEl = $('[data-theme-restore]', ctx.main);
-    if (restoreEl) themeRestore(restoreEl, s.id, c.areas.flatMap((a) => a.checks).find((x) => x.id === 'sec.theme')?.evidence);
+    if (restoreEl) { const tc = c.areas.flatMap((a) => a.checks).find((x) => x.id === 'sec.theme'); themeRestore(restoreEl, s.id, tc?.evidence, tc?.a === 'fail' && !!tc?.evidence?.files); }
     const PAGE = { home: 'Homepage', product: 'Product page' };
     const drawDevice = (dev) => {
       const el = $('#dev-shots');

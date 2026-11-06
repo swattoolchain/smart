@@ -15,7 +15,7 @@ const STORE_ROUTES = [
   ['post', '/api/stores/:id/sale-readiness/email'], ['post', '/api/stores/:id/test-alert'],
   ['get', '/api/stores/:id/incident'], ['post', '/api/stores/:id/incident'], ['patch', '/api/stores/:id/incident'], ['post', '/api/stores/:id/incident/end'],
   ['get', '/api/stores/:id/security-checklist'], ['post', '/api/stores/:id/security-checklist/two_step'], ['patch', '/api/stores/:id/security-checklist'],
-  ['get', '/api/stores/:id/theme/clean'], ['get', '/api/stores/:id/theme/clean/file?name=layout%2Ftheme.liquid'], ['get', '/api/stores/:id/theme/clean.zip'],
+  ['get', '/api/stores/:id/theme/clean'], ['post', '/api/stores/:id/theme/clean/confirm'], ['get', '/api/stores/:id/theme/clean/file?name=layout%2Ftheme.liquid'], ['get', '/api/stores/:id/theme/clean.zip'],
   ['get', '/api/stores/:id/export/runs.csv'], ['get', '/api/stores/:id/export/checks.csv'], ['get', '/api/stores/:id/export/products.csv'],
   ['get', '/api/stores/:id/runs/1/report.html'], ['get', '/api/stores/:id/runs/1/report.pdf'],
   ['post', '/api/stores/:id/test-alert'], ['get', '/api/stores/:id/webhook-deliveries'],

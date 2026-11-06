@@ -564,6 +564,15 @@ app.get('/api/stores/:id/theme/clean/file', requireUser, requireFeature('theme_w
   res.json(f);
 });
 
+// The owner confirms a theme change they made: the theme as it is now becomes the clean copy (the old one is kept).
+app.post('/api/stores/:id/theme/clean/confirm', requireUser, requireFeature('theme_watch'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (!themeClean.cleanView(s.id)) return res.status(404).json({ error: 'There is no clean copy of your theme yet.' });
+  if (!themeClean.confirmChange(s.id)) return res.status(409).json({ error: 'Your theme already matches the clean copy. There is nothing to confirm.' });
+  res.json({ clean: themeClean.cleanView(s.id) });
+});
+
 app.get('/api/stores/:id/theme/clean.zip', requireUser, requireFeature('theme_watch'), (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
