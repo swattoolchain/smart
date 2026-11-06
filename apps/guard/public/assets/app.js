@@ -895,6 +895,13 @@
     if (tab === 'prices') {
       const limit = S.license?.limits?.priceRules ?? 10;
       const rules = s.config.priceRules?.length ? s.config.priceRules : [{ product: '', variant: '', quantity: 1, price: '' }];
+      const configs = s.config.priceConfigs?.length ? s.config.priceConfigs : [{ product: '', variant: '', options: '', price: '' }];
+      const optText = (o) => (Array.isArray(o) ? o.map((x) => `${x.name}${x.required ? '*' : ''} = ${x.value}`).join('; ') : o || '');
+      const crow = (r, i) => `<div class="code-row config-rule"><div class="field"><label for="cp${i}">Product</label><input id="cp${i}" name="product" value="${esc(r.product)}" placeholder="Product link or handle" maxlength="300" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="cv${i}">Variant</label><input id="cv${i}" name="variant" value="${esc(r.variant || '')}" placeholder="Optional" maxlength="100"></div>
+        <div class="field"><label for="co${i}">Options</label><input id="co${i}" name="options" value="${esc(optText(r.options))}" placeholder="e.g. Engraving* = Happy Diwali; Gift wrap = Yes" maxlength="400" autocomplete="off"></div>
+        <div class="field"><label for="cx${i}">Price</label><input id="cx${i}" name="price" inputmode="decimal" value="${r.price ?? ''}" placeholder="e.g. 9098"></div>
+        <button type="button" class="icon-btn" data-rm aria-label="Remove product" data-tip="Remove">${icon('trash', 16)}</button></div>`;
       const row = (r, i) => `<div class="code-row price-rule"><div class="field"><label for="pr${i}">Product</label><input id="pr${i}" name="product" value="${esc(r.product)}" placeholder="Product link or handle, e.g. cotton-kurta" maxlength="300" autocomplete="off" spellcheck="false"></div>
         <div class="field"><label for="pv${i}">Variant</label><input id="pv${i}" name="variant" value="${esc(r.variant || '')}" placeholder="Optional, e.g. Large" maxlength="100"></div>
         <div class="field"><label for="pq${i}">Quantity</label><input id="pq${i}" name="quantity" type="number" min="1" max="99" value="${r.quantity ?? 1}"></div>
@@ -905,18 +912,27 @@
           <div class="controls"><form id="prules">${rules.map(row).join('')}</form>
             <div class="inline-row"><button type="button" class="btn secondary small" id="addr">${icon('add', 15)}Add a rule</button><span class="muted" style="font-size:12.5px">Your plan includes ${plural(limit, 'rule')} per store.</span></div>
             <p class="error-msg" id="pr-err" role="alert"></p>
-            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Price rules are checked on Shopify stores for now.</p>' : ''}</div></div></div>`;
+            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Price rules are checked on Shopify stores for now.</p>' : ''}</div></div>
+        <div class="form-section"><div><h3>Product options</h3><p class="explain">Sell engraving, gift wrap or other options that change the price? Write the options a shopper fills, like “Engraving* = Happy Diwali; Gift wrap = Yes”, and the price you expect with them. A * means the option must be filled before Add to cart works. Each check fills them on the product page, adds to cart, and checks that the cart keeps every choice and the price is right. Nothing is bought, and the cart is emptied.</p></div>
+          <div class="controls"><form id="pconfigs">${configs.map(crow).join('')}</form>
+            <div class="inline-row"><button type="button" class="btn secondary small" id="addc">${icon('add', 15)}Add a product</button><span class="muted" style="font-size:12.5px">Each product counts as one rule.</span></div></div></div></div>`;
       const form = $('#prules');
+      const cform = $('#pconfigs');
+      const count = () => $$('.price-rule', form).filter((r) => r.querySelector('[name=product]').value.trim() || r.querySelector('[name=price]').value.trim()).length + $$('.config-rule', cform).length;
       const mark = savebar($('.main-inner', ctx.main), {
         onSave: async () => {
           const list = $$('.price-rule', form).map((r) => ({ product: r.querySelector('[name=product]').value.trim(), variant: r.querySelector('[name=variant]').value.trim() || null, quantity: r.querySelector('[name=quantity]').value, price: r.querySelector('[name=price]').value.trim() })).filter((x) => x.product || x.price);
-          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
+          const clist = $$('.config-rule', cform).map((r) => ({ product: r.querySelector('[name=product]').value.trim(), variant: r.querySelector('[name=variant]').value.trim() || null, options: r.querySelector('[name=options]').value.trim(), price: r.querySelector('[name=price]').value.trim() })).filter((x) => x.product || x.options || x.price);
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list, priceConfigs: clist } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
           await loadStores();
         },
         onDiscard: () => render(),
       });
       form.addEventListener('input', mark);
       form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.price-rule', form).length > 1) b.closest('.price-rule').remove(); else b.closest('.price-rule').querySelectorAll('input').forEach((i) => (i.value = i.name === 'quantity' ? '1' : '')); mark(); });
+      cform.addEventListener('input', mark);
+      cform.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.config-rule', cform).length > 1) b.closest('.config-rule').remove(); else b.closest('.config-rule').querySelectorAll('input').forEach((i) => (i.value = '')); mark(); });
+      $('#addc').onclick = () => { if (count() >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); cform.insertAdjacentHTML('beforeend', crow({ product: '', variant: '', options: '', price: '' }, Date.now())); mark(); cform.lastElementChild.querySelector('input').focus(); };
       $('#addr').onclick = () => { if ($$('.price-rule', form).length >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
       return;
     }

@@ -1,5 +1,6 @@
 import { cleanCodes } from './discount.js';
 import { cleanPriceRules } from './pricing.js';
+import { cleanPriceConfigs } from './configurator.js';
 /**
  * The test suite catalog: every check belongs to one group, and merchants switch groups on or off per store.
  * `run`: 'journeys' groups run on every scheduled journey test; 'full' groups run on the daily full check.
@@ -88,6 +89,7 @@ export function normalizeConfig(input = {}, base = {}) {
   const cfg = { ...base };
   if (input.discountCodes !== undefined) cfg.discountCodes = cleanCodes(input.discountCodes);
   if (input.priceRules !== undefined) cfg.priceRules = cleanPriceRules(input.priceRules);
+  if (input.priceConfigs !== undefined) cfg.priceConfigs = cleanPriceConfigs(input.priceConfigs);
   // Onboarding progress: the welcome flow and the first-report tour.
   if (typeof input.onboarded === 'boolean') cfg.onboarded = input.onboarded;
   if (typeof input.toured === 'boolean') cfg.toured = input.toured;

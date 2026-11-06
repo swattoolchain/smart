@@ -16,6 +16,11 @@ const DRAFT_BREAK = new Set([...BREAK, ...(process.env.MOCK_DRAFT_BREAK ?? 'them
 let B = BREAK; // the breakages for the request being handled
 let DRAFT = false;
 const carts = new Map();
+// MOCK_EXTRA=options: the Handwoven Silk Saree has a product-options app: "Engraving" (text, required) and
+// "Gift wrap" (No / Yes +₹99, added as a separate ₹99 add-on line). The page price updates with the upcharge.
+// MOCK_BREAK=upcharge (the add-on line costs ₹149, not the ₹99 shown), props (the choices are not saved on the
+// cart line), optional (Engraving is no longer required).
+const OPTIONS = (process.env.MOCK_EXTRA || '').split(',').includes('options');
 let PW_POSTS = 0; // how many times the password form was submitted
 
 const EXTRA = (process.env.MOCK_EXTRA || '');
@@ -137,7 +142,12 @@ const server = http.createServer(async (req, res) => {
     if (!prod) return send(res, 404, layout('Not found', '<h1>404</h1>'));
     const vid = Number(u.searchParams.get('variant')) || prod.variants[0].id;
     const v = prod.variants.find((x) => x.id === vid) || prod.variants[0];
-    const breakAtc = B.has('atc')
+    const opts = OPTIONS && prod.id === 2;
+    const optionsHtml = opts ? `<label for="eng">Engraving</label> <input id="eng" name="properties[Engraving]" maxlength="20" ${B.has('optional') ? '' : 'required'}>
+<label for="gw">Gift wrap</label> <select id="gw" name="properties[Gift wrap]"><option>No</option><option>Yes (+₹99)</option></select>
+<script>document.getElementById('gw').addEventListener('change',function(e){document.querySelector('.price').textContent='₹'+(${Number(v.price)}+(/^Yes/.test(e.target.value)?99:0)).toFixed(2);});</script>` : '';
+    const optionsAtc = `<script>document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();var props={};[].forEach.call(f.querySelectorAll('[name^="properties["]'),function(x){props[x.name.slice(11,-1)]=x.value;});var items=[{id:Number(f.id.value),quantity:1${B.has('props') ? '' : ',properties:props'}}];if(/^Yes/.test(props['Gift wrap']||''))items.push({id:902,quantity:1});fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:items})}).then(function(){document.getElementById('cart-count').textContent='1';});});</script>`;
+    const breakAtc = opts ? optionsAtc : B.has('atc')
       ? `<script>document.addEventListener('submit',function(e){e.preventDefault();},true);</script>`
       : `<script>document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:[{id:Number(f.id.value),quantity:1}]})}).then(function(){document.getElementById('cart-count').textContent='1';});});</script>`;
     return send(
@@ -147,7 +157,7 @@ const server = http.createServer(async (req, res) => {
         `${prod.title} – Mock Store`,
         `<h1>${prod.title}</h1>${B.has('noprice') ? '' : `<div class="price">₹${v.price}</div>`}
 <form method="post" action="/cart/add"><input type="hidden" name="id" value="${v.id}">
-<select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>
+<select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>${optionsHtml}
 <button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>${DE ? '<p class="tax-note">inkl. MwSt., zzgl. <a href="/policies/shipping-policy">Versandkosten</a></p>' : ''}
 <span id="cart-count">0</span>${breakAtc}`
       )
@@ -158,11 +168,13 @@ const server = http.createServer(async (req, res) => {
     const items = cartFor(req, res);
     const body = JSON.parse((await readBody(req)) || '{}');
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
+      // options: the gift-wrap add-on line an options app adds next to the product.
+      if (OPTIONS && Number(it.id) === 902) { items.push({ id: 902, title: 'Gift wrap', quantity: 1, price: B.has('upcharge') ? '149.00' : '99.00', handle: 'gift-wrap' }); continue; }
       const hit = byId.get(Number(it.id));
       if (!hit || !hit.v.available) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
       // pricedrift / pricelow: an app or cart script changes the price after the shopper saw it.
       const price = (Number(hit.v.price) + (B.has('pricedrift') ? 150 : B.has('pricelow') ? -100 : 0)).toFixed(2);
-      items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price, handle: hit.p.handle });
+      items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price, handle: hit.p.handle, properties: it.properties || null });
     }
     // protection: an app adds its own paid line to every cart, once.
     if (B.has('protection') && !items.some((i) => i.id === 901)) items.push({ id: 901, title: 'Shipping protection', quantity: 1, price: '99.00', handle: 'shipping-protection' });
