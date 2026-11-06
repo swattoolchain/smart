@@ -8,6 +8,7 @@ import { settleRelease } from './release.js';
 import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
+import { testsForRun } from './custom-tests.js';
 
 /** Groups switched off for this run: the store's choices, markets, and anything the owner's plan doesn't include. */
 function planDisabled(store, cfg, picked) {
@@ -101,7 +102,8 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
     }
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
-      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly }),
+      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly,
+        customTests: store && !release ? testsForRun(store.id, kind, entitlements(store.user_id)) : [] }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.

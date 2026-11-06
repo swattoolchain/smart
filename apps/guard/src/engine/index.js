@@ -14,6 +14,7 @@ import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { reviewScreens } from './visual-ai.js';
 import { aiEnabled } from '../ai.js';
+import { runCustomTests } from './custom.js';
 
 async function isLocked(ctx, origin) {
   try {
@@ -30,7 +31,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, customTests = [] }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -93,6 +94,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
+      // The owner's own tests, each in its own browser window (never on free checks or draft-theme checks).
+      if (customTests.length && on('custom') && kind !== 'free' && !preview) {
+        phase('custom');
+        await runCustomTests({ rec, tests: customTests, origin, password, info, shot });
+      }
       if (kind !== 'journeys') {
         phase('quality');
         metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;

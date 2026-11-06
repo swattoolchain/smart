@@ -18,6 +18,9 @@ let PW_POSTS = 0; // how many times the password form was submitted
 const EXTRA = (process.env.MOCK_EXTRA || '');
 const DE = EXTRA.includes('de');
 const TRACK = EXTRA.includes('track');
+// MOCK_EXTRA=pincheck: a delivery (pincode) checker on product pages, like many Indian stores have. Pincodes starting with 5 are served;
+// MOCK_BREAK=pincode makes the checker say no to every pincode (a broken delivery app).
+const PINCODE = EXTRA.includes('pincheck');
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -144,7 +147,7 @@ const server = http.createServer(async (req, res) => {
 <form method="post" action="/cart/add"><input type="hidden" name="id" value="${v.id}">
 <select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>
 <button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>${DE ? '<p class="tax-note">inkl. MwSt., zzgl. <a href="/policies/shipping-policy">Versandkosten</a></p>' : ''}
-<span id="cart-count">0</span>${breakAtc}`
+<span id="cart-count">0</span>${PINCODE ? `<div class="pin-check"><label for="pincode">Delivery pincode</label> <input id="pincode" inputmode="numeric"> <button type="button" id="pin-btn">Check</button><p class="delivery-result" aria-live="polite"></p><a id="partner-link" href="http://127.0.0.1:${PORT}/pages/about">Our delivery partner</a></div><script>document.getElementById('pin-btn').addEventListener('click',function(){var v=document.getElementById('pincode').value.trim();var ok=${B.has('pincode') ? 'false' : "/^5\\d{5}$/.test(v)"};setTimeout(function(){document.querySelector('.delivery-result').textContent=ok?'Delivery available in 2 days':'Sorry, we do not deliver to '+v;},300);});</script>` : ''}${breakAtc}`
       )
     );
   }

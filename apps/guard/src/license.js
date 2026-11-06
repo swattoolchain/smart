@@ -104,18 +104,18 @@ export function featureOfGroup(group) {
 const ALL = FEATURE_KEYS;
 const DEFAULT_PLANS = [
   { key: 'beta', name: 'Beta', tagline: 'Everything, free while we’re in beta.', kind: 'free', prices: {}, features: ALL,
-    limits: { journeyMinInterval: 60, fullMinInterval: 720, environments: 10, maxStores: 5 }, public: 1, highlight: 1, sort: 0 },
+    limits: { journeyMinInterval: 60, fullMinInterval: 720, environments: 10, maxStores: 5, customTests: 10 }, public: 1, highlight: 1, sort: 0 },
   { key: 'trial', name: 'Free trial', tagline: 'Everything in Pro for 14 days.', kind: 'trial', prices: {}, features: ALL,
-    limits: { journeyMinInterval: 60, fullMinInterval: 720, environments: 3, maxStores: 3 }, public: 0, highlight: 0, sort: 1 },
+    limits: { journeyMinInterval: 60, fullMinInterval: 720, environments: 3, maxStores: 3, customTests: 10 }, public: 0, highlight: 0, sort: 1 },
   { key: 'starter', name: 'Starter', tagline: 'Know when customers can’t buy.', kind: 'paid',
     prices: { USD: { month: 1900, year: 19000 }, EUR: { month: 1900, year: 19000 }, INR: { month: 149900, year: 1499000 } },
-    features: ['journeys', 'quality'], limits: { journeyMinInterval: 1440, fullMinInterval: 1440, environments: 0, maxStores: null }, public: 1, highlight: 0, sort: 2 },
+    features: ['journeys', 'quality'], limits: { journeyMinInterval: 1440, fullMinInterval: 1440, environments: 0, maxStores: null, customTests: 3 }, public: 1, highlight: 0, sort: 2 },
   { key: 'growth', name: 'Growth', tagline: 'Change your store without breaking it.', kind: 'paid',
     prices: { USD: { month: 4900, year: 49000 }, EUR: { month: 4500, year: 45000 }, INR: { month: 399900, year: 3999000 } },
-    features: ['journeys', 'quality', 'catalog', 'visual', 'publish', 'environments', 'regional', 'slack'], limits: { journeyMinInterval: 60, fullMinInterval: 1440, environments: 3, maxStores: null }, public: 1, highlight: 0, sort: 3 },
+    features: ['journeys', 'quality', 'catalog', 'visual', 'publish', 'environments', 'regional', 'slack'], limits: { journeyMinInterval: 60, fullMinInterval: 1440, environments: 3, maxStores: null, customTests: 10 }, public: 1, highlight: 0, sort: 3 },
   { key: 'pro', name: 'Pro', tagline: 'For busy stores and teams that ship often.', kind: 'paid',
     prices: { USD: { month: 9900, year: 99000 }, EUR: { month: 8900, year: 89000 }, INR: { month: 799900, year: 7999000 } },
-    features: ALL, limits: { journeyMinInterval: 30, fullMinInterval: 720, environments: 10, maxStores: null }, public: 1, highlight: 0, sort: 4 },
+    features: ALL, limits: { journeyMinInterval: 30, fullMinInterval: 720, environments: 10, maxStores: null, customTests: 25 }, public: 1, highlight: 0, sort: 4 },
 ];
 const DEFAULT_SETTINGS = { signup_plan: 'beta', trial_days: '14', grace_days: '7', payment_note: 'To pay or upgrade, write to hello@tharam.store. We accept bank transfer, UPI and cards, and send an invoice for every payment.' };
 
@@ -224,7 +224,9 @@ export function entitlements(userId) {
   const exp = toMs(l.expires_at);
   return {
     license: l, plan, state, usable, features, maxStores, storesUsed: storeIds.length, covered,
-    limits: { journeyMinInterval: plan.limits.journeyMinInterval || 60, fullMinInterval: plan.limits.fullMinInterval || 720, environments: plan.limits.environments ?? 0, manualRunsPerDay: plan.limits.manualRunsPerDay || 20 },
+    limits: { journeyMinInterval: plan.limits.journeyMinInterval || 60, fullMinInterval: plan.limits.fullMinInterval || 720, environments: plan.limits.environments ?? 0, manualRunsPerDay: plan.limits.manualRunsPerDay || 20,
+      // Your tests: how many per store, and steps per test (never more than 25). Plans saved before this existed get 5.
+      customTests: plan.limits.customTests ?? 5, customSteps: Math.min(plan.limits.customSteps ?? 25, 25) },
     daysLeft: exp == null ? null : Math.ceil((exp - Date.now()) / 864e5),
   };
 }
@@ -427,6 +429,8 @@ export function savePlan(actor, key, input, { create = false } = {}) {
     environments: int(L.environments, 0, 50, 'Environments') ?? 0,
     maxStores: int(L.maxStores, 1, 1000, 'Max stores'),
     manualRunsPerDay: int(L.manualRunsPerDay, 1, 500, 'Tests you can start per store per day') ?? 20,
+    customTests: int(L.customTests, 0, 100, 'Your tests per store') ?? 5,
+    customSteps: int(L.customSteps, 1, 25, 'Steps per test') ?? 25,
   };
   const bool = (v, d, label) => { if (v === undefined) return d; if (v === true || v === 1 || v === '1' || v === 'true') return true; if (v === false || v === 0 || v === '0' || v === 'false') return false; throw new Error(`${label} must be true or false`); };
   const pub = bool(input.public, cur.public, 'Public'), hl = bool(input.highlight, cur.highlight, 'Highlight'), act = bool(input.active, cur.active, 'Available');

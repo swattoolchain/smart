@@ -2,7 +2,7 @@ import { check, shortErr, plural } from './checks.js';
 import { gotoStore, settle, settleChallenge } from './browser.js';
 import { searchTermFrom } from './discover.js';
 
-const ATC_SELECTORS = [
+export const ATC_SELECTORS = [
   'form[action*="/cart/add"] button[type="submit"][name="add"]',
   'form[action*="/cart/add"] [type="submit"]',
   'button[name="add"]',

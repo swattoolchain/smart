@@ -27,6 +27,7 @@ import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
+import { customTestRoutes } from './custom-tests-routes.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -763,6 +764,9 @@ app.post('/api/stores/:id/approve-visual', requireUser, (req, res) => {
 adminRoutes(app, { requireUser, isAdmin });
 
 // ---------- Founder view ----------
+// Your tests: the store's own tests file (src/custom-tests-routes.js).
+customTestRoutes(app, { requireUser, ownStore });
+
 app.get('/api/admin/overview', requireUser, (req, res) => {
   if (!isAdmin(req.user)) return res.status(403).json({ error: 'Forbidden' });
   res.json({

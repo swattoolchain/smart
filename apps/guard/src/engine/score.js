@@ -60,7 +60,7 @@ export function summarize(checks, verdict) {
   const warns = checks.filter((c) => c.status === 'warn');
   if (verdict === 'critical') {
     const c = fails.find((f) => f.severity === 'critical');
-    return `Customers may not be able to buy: ${PROBLEM[c.id] || c.title.toLowerCase()}.`;
+    return `Customers may not be able to buy: ${PROBLEM[c.id] || (c.category === 'custom' ? `your test “${c.title}” failed` : c.title.toLowerCase())}.`;
   }
   const journeyUntested = checks.some((c) => c.id === 'fn.platform');
   const lead = journeyUntested ? 'Your store is up.' : 'Customers can buy.';

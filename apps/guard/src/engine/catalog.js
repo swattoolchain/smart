@@ -17,6 +17,8 @@ export const GROUPS = [
     description: 'The cart lists the item and checkout opens. Stops before payment, then empties the cart.', checks: ['fn.cart', 'fn.checkout'] },
   { key: 'sale.discount', label: 'Discount codes', run: 'full', area: 'Shopping journey',
     description: 'Your sale codes applied to a real cart: the price really drops, by the amount you expect. Nothing is bought; the cart is emptied. Add codes under Test suite → Discount codes.', checks: ['fn.discount.'] },
+  { key: 'custom', label: 'Your tests', run: 'journeys', area: 'Your tests',
+    description: 'Tests you wrote for your own store (for example a pincode checker or a size guide), from your tests file. Each test runs on every shopping check or on the daily full check, as you chose.', checks: ['custom.'] },
   { key: 'errors.js', label: 'JavaScript errors', run: 'journeys', area: 'Errors and links',
     description: 'Script errors that happen while shopping, usually from apps or custom code.', checks: ['nf.jserrors'] },
   { key: 'speed', label: 'Mobile speed', run: 'full', area: 'Speed',
