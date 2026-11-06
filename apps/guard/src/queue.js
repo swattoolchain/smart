@@ -1,6 +1,7 @@
 import { config } from './config.js';
 import { q } from './db.js';
 import { runScan } from './engine/index.js';
+import { assertPublicTarget } from './engine/browser.js';
 import { handleAlerts } from './alerts.js';
 import { storeConfig } from './scheduler.js';
 import { live } from './live.js';
@@ -78,6 +79,9 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
   const hardLimit = new Promise((_, rej) => (timer = setTimeout(() => { timedOut = true; controller.abort(); rej(new Error('The test took longer than 6 minutes, so we stopped it. Your store may be very slow right now.')); }, 6 * 60 * 1000)));
   try {
     // Use the store's latest settings (test suite, test product, password) at the moment the run starts.
+    // Checked again at every run: a store's address can start pointing somewhere internal after it was added.
+    // (A store that can't be found is left to the check itself, which reports it as down.)
+    await assertPublicTarget(origin).catch((e) => { if (/private network/.test(e.message)) throw e; });
     const store = storeId ? q.storeById.get(storeId) : null;
     if (storeId && !store) throw new Error('Store was removed');
     // The licence is checked again here, at the moment the run starts: every way of starting a test passes through this line.
