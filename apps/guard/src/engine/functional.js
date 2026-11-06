@@ -1,7 +1,7 @@
 import { check, shortErr, plural } from './checks.js';
 import { gotoStore, settle, settleChallenge } from './browser.js';
 import { searchTermFrom } from './discover.js';
-import { pagePrice, checkoutSubtotal, cartLine, priceCheck, toMinor } from './pricing.js';
+import { pagePrice, checkoutSubtotal, cartLine, wholeCart, priceCheck, toMinor } from './pricing.js';
 
 const ATC_SELECTORS = [
   'form[action*="/cart/add"] button[type="submit"][name="add"]',
@@ -381,6 +381,7 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
     const cart = await cartJs(page);
     trail.currency = cart.currency;
     trail.cart = cartLine(cart, trail.variantId);
+    trail.whole = wholeCart(cart, trail.variantId);
     if (trail.cart) trail.quantity = trail.cart.quantity;
     else trail = null; // the cart holds something else (a theme or app swapped the item): fn.cart reports it
   }
