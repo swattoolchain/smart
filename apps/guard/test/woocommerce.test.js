@@ -133,16 +133,26 @@ describe('WooCommerce: shopping journey', { concurrency: 1 }, () => {
     note(t, p.detail);
   });
 
+  const leftInCarts = async (mock) => (await (await fetch(`${mock.origin}/__carts`)).json()).items;
+
   it('the journey leaves the cart empty', { timeout: 180000 }, async (t) => {
     const mock = await startWooMock();
     try {
       await runScan({ runId: `woo-cart-${Date.now()}`, origin: mock.origin, kind: 'journeys' });
-      // Every session the scan used was emptied: the mock keeps carts in memory per session.
-      const ctx = await newContext();
-      const r = await ctx.request.get(`${mock.origin}/wp-json/wc/store/v1/cart`);
-      assert.equal((await r.json()).items_count, 0);
-      await ctx.close();
-      note(t, 'Store API cart is empty after the check');
+      // Every session the scan used was emptied: the mock counts items in every cart session it holds.
+      assert.equal(await leftInCarts(mock), 0);
+      note(t, 'No items left in any cart session after the check');
+    } finally { mock.stop(); }
+  });
+
+  it('the cart is emptied even when the Store API cart is blocked and Add to cart could not be confirmed', { timeout: 180000 }, async (t) => {
+    // A security plugin blocks the Store API cart: the click adds the item, but the check can't read the cart.
+    const mock = await startWooMock({ breaks: 'cartapi' });
+    try {
+      const r = await runScan({ runId: `woo-cartapi-${Date.now()}`, origin: mock.origin, kind: 'journeys' });
+      assert.notEqual(byId(r, 'fn.atc')?.status, 'pass', 'the add was not confirmed');
+      assert.equal(await leftInCarts(mock), 0, "nothing left in the store's cart: removed with the cart page's own links");
+      note(t, `fn.atc ${byId(r, 'fn.atc')?.status}; items left in carts after the check: 0 (emptied through the cart page)`);
     } finally { mock.stop(); }
   });
 });
