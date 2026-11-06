@@ -4,6 +4,7 @@
  * Most app and theme changes are harmless; a new script on the product or cart page is also how card
  * skimmers and checkout hijacks arrive, so the owner hears about each new one once.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,6 +54,15 @@ export function watchScripts(page, origin) {
   const storeHost = new URL(origin).host;
   const pages = {};
   const at = (kind) => (pages[kind] ||= { scripts: new Map(), sites: new Set() });
+  // App Health: a fingerprint of each outside script's content, so a change at the same address shows.
+  const byRequest = new WeakMap();
+  const pending = new Set();
+  page.on('response', (res) => {
+    const s = byRequest.get(res.request());
+    if (!s || s.hash || !res.ok()) return;
+    const p = res.body().then((b) => { if (!s.hash && b.length) s.hash = crypto.createHash('sha256').update(b).digest('hex').slice(0, 16); }).catch(() => {}).finally(() => pending.delete(p));
+    pending.add(p);
+  });
   page.on('request', (req) => {
     let frameUrl;
     try { frameUrl = req.frame()?.url(); } catch { frameUrl = null; }
@@ -66,12 +76,17 @@ export function watchScripts(page, origin) {
     if (req.resourceType() === 'script') {
       const key = scriptKey(req.url());
       if (!rec.scripts.has(key)) rec.scripts.set(key, { key, url: `${u.origin}${u.pathname}`, host: u.host, outside: u.host !== storeHost });
+      const s = rec.scripts.get(key);
+      if (s.outside && !s.hash) byRequest.set(req, s);
     }
   });
-  return () => ({
+  const inventory = () => ({
     storeHost,
-    pages: Object.fromEntries(Object.entries(pages).map(([k, v]) => [k, { scripts: [...v.scripts.values()], sites: [...v.sites].sort() }])),
+    pages: Object.fromEntries(Object.entries(pages).map(([k, v]) => [k, { scripts: [...v.scripts.values()].map((x) => ({ ...x })), sites: [...v.sites].sort() }])),
   });
+  /** Waits (up to 2 s) for script fingerprints still being worked out. */
+  inventory.settle = () => Promise.race([Promise.all([...pending]), new Promise((r) => setTimeout(r, 2000))]);
+  return inventory;
 }
 
 const allScripts = (inv) => {

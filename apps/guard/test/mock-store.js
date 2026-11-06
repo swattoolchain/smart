@@ -14,6 +14,8 @@
  * skimmer, formreader (form-field readers, see FORM_EXTRAS below).
  * Hijack extras (env MOCK_EXTRA or live via /__extra): redirect, phoneredirect, hiddenframe, badframe, miner (see HIJACK below).
  * Script extras (env MOCK_EXTRA): newscript, badscript, atcscript (see LIVE_EXTRA below).
+ * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below);
+ * apps, appsbug, appsupdate, appsnowidget, appscode (App Health: two outside apps, see APP_SCRIPTS below).
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -39,6 +41,11 @@ const US = EXTRA.split(',').includes('us'); // US privacy: the "Your privacy cho
 // Script watch: newscript adds an app script from another site to every page; badscript adds one from a
 // site on the known-bad list (tests add evil-cdn.localhost to BAD_DOMAINS). *.localhost always reaches this machine.
 // Both can also be switched on and off while the store runs: GET /__extra?newscript=1&badscript=0.
+// App Health (APP_SCRIPTS): apps adds a reviews app (reviews-app.localhost, every page, ~60 KB, draws a widget) and a
+// chat app (chat-app.localhost, home page only, pings chat-api.localhost); appsbug makes the reviews script throw;
+// appsupdate gives the reviews app a second script; appsnowidget: the reviews script loads but draws nothing;
+// appscode: new content in reviews.js at the same address. Tests name them with APP_NAMES and APP_WIDGETS.
+// appsupdate gives the reviews app a second script. Tests name them with APP_NAMES.
 // atcscript: an outside "upsell pop-up" script (127.0.0.1) that stops Add to cart from working.
 // FORM_EXTRAS: both add an email sign-up box to every page, read by the store's own script (never reported).
 //   skimmer     an outside script (127.0.0.1) that listens to the email box and sends what was typed to /collect
@@ -50,11 +57,12 @@ const FORM_EXTRAS = ['skimmer', 'formreader'];
 //   hiddenframe    product and cart pages load an invisible 1×1 page from stat-counter.localhost
 //   badframe       the same from evil-cdn.localhost (on the known-bad list in tests)
 //   miner          the home page loads /assets/perf.js, CoinHive-style mining code that opens a pool connection
-const LIVE_KEYS = ['newscript', 'badscript', 'redirect', 'phoneredirect', 'hiddenframe', 'badframe', 'miner', ...FORM_EXTRAS, 'atcscript'];
-const LIVE_EXTRA = new Set(LIVE_KEYS.filter((k) => EXTRA.split(',').includes(k) || (['newscript', 'badscript', 'atcscript', ...FORM_EXTRAS].includes(k) && EXTRA.includes(k))));
+const LIVE_KEYS = ['newscript', 'badscript', 'redirect', 'phoneredirect', 'hiddenframe', 'badframe', 'miner', ...FORM_EXTRAS, 'atcscript', 'apps', 'appsbug', 'appsupdate', 'newscript', 'badscript', 'apps', 'appsbug', 'appsupdate', 'appsnowidget', 'appscode'];
+const LIVE_EXTRA = new Set(LIVE_KEYS.filter((k) => EXTRA.split(',').includes(k) || (['newscript', 'badscript', 'newscript', 'badscript', 'apps', 'appsbug', 'appsupdate', 'appsnowidget', 'appscode', 'apps', 'appsbug', 'appsupdate', 'atcscript', ...FORM_EXTRAS].includes(k) && EXTRA.includes(k))));
 let PATH = '/'; // the page being served
 const COLLECTED = []; // what the skimmer sent, for tests: GET /__collected
 const formBox = () => (FORM_EXTRAS.some((k) => LIVE_EXTRA.has(k)) ? '<form class="newsletter" onsubmit="return false"><label for="NewsletterEmail">Email</label> <input type="email" id="NewsletterEmail" name="contact[email]" autocomplete="email"></form>' : '');
+let REQ_PATH = '/';
 const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127.0.0.1:${PORT}/apps/review-widget.js?v=${Date.now()}"></script>` : '')
   + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '')
   + (PATH === '/' && LIVE_EXTRA.has('redirect') ? `<script>setTimeout(function(){location.href='http://prize-win.localhost:${PORT}/claim?ref=store'},300);</script>` : '')
@@ -63,7 +71,11 @@ const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127
   + (FORM_EXTRAS.some((k) => LIVE_EXTRA.has(k)) ? '<script src="/assets/newsletter.js"></script>' : '')
   + (LIVE_EXTRA.has('skimmer') ? `<script src="http://127.0.0.1:${PORT}/apps/pixel-helper.js"></script>` : '')
   + (LIVE_EXTRA.has('formreader') ? `<script src="http://127.0.0.1:${PORT}/apps/chat-widget.js"></script>` : '')
-  + (LIVE_EXTRA.has('atcscript') ? `<script src="http://127.0.0.1:${PORT}/apps/upsell-popup.js"></script>` : '');
+  + (LIVE_EXTRA.has('atcscript') ? `<script src="http://127.0.0.1:${PORT}/apps/upsell-popup.js"></script>` : '')
+  + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '')
+  + (LIVE_EXTRA.has('apps') ? `<script src="http://reviews-app.localhost:${PORT}/apps/reviews.js?shop=mock"></script>` : '')
+  + (LIVE_EXTRA.has('apps') && LIVE_EXTRA.has('appsupdate') ? `<script src="http://reviews-app.localhost:${PORT}/apps/reviews-photos.js"></script>` : '')
+  + (LIVE_EXTRA.has('apps') && REQ_PATH === '/' ? `<script src="http://chat-app.localhost:${PORT}/apps/chat.js" async></script>` : '');
 const frameTags = () => (/^\/(products\/|cart$)/.test(PATH) ? (LIVE_EXTRA.has('hiddenframe') ? `<iframe src="http://stat-counter.localhost:${PORT}/f.html?id=7" width="1" height="1" style="position:absolute;left:-3000px;border:0"></iframe>` : '')
   + (LIVE_EXTRA.has('badframe') ? `<iframe src="http://evil-cdn.localhost:${PORT}/f.html" style="display:none"></iframe>` : '') : '');
 const MINER_JS = "window.CoinHive={Anonymous:function(k,o){this.start=function(){try{new WebSocket('ws://pool.minexmr.localhost:" + PORT + "/proxy');}catch(e){}};}};var miner=new CoinHive.Anonymous('SITE_KEY',{throttle:0.3});miner.start();";
@@ -75,6 +87,13 @@ const FORM_JS = {
 document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('input[type=email]').forEach(function(i){i.addEventListener('change',grab);});});})();`,
   // A chat widget that pre-fills its own form from the sign-up box: reads it, sends nothing.
   '/apps/chat-widget.js': "document.addEventListener('DOMContentLoaded',function(){var i=document.getElementById('NewsletterEmail');if(!i)return;i.addEventListener('input',function(){window.__chatEmail=i.value;});});",
+};
+const APP_SCRIPTS = {
+  '/apps/reviews.js': () => `/* reviews app${LIVE_EXTRA.has('appscode') ? ' 2.0' : ''} */${'/*' + 'x'.repeat(60000) + '*/'}`
+    + (LIVE_EXTRA.has('appsnowidget') ? 'window.__reviewsOff=true;' : `document.addEventListener('DOMContentLoaded',function(){var d=document.createElement('div');d.className='reviews-widget';d.textContent='★★★★★ 128 reviews';(document.querySelector('main')||document.body).appendChild(d);});`)
+    + (LIVE_EXTRA.has('appsbug') ? 'setTimeout(function reviewsInit(){ window.reviewsConfig.load(); }, 10);' : ''),
+  '/apps/reviews-photos.js': () => 'window.__reviewPhotos=true;',
+  '/apps/chat.js': () => `new Image().src='http://chat-api.localhost:${PORT}/ping.gif';window.__chat=true;`,
 };
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
@@ -155,6 +174,7 @@ const server = http.createServer(async (req, res) => {
   if (previewId) res.setHeader('Set-Cookie', `preview_theme=${previewId}; Path=/`);
   DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
   B = DRAFT ? DRAFT_BREAK : BREAK;
+  REQ_PATH = u.pathname;
   if (B.has('cloudflare')) {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
     return res.end('<!doctype html><html><head><title>Just a moment...</title></head><body><div id="challenge-form">Verify you are human</div><script>window._cf_chl_opt={}</script></body></html>');
@@ -285,6 +305,8 @@ const server = http.createServer(async (req, res) => {
   }
   // Swallows every form submit before the theme sees it, so Add to cart does nothing.
   if (p === '/apps/upsell-popup.js') return send(res, 200, "document.addEventListener('submit',function(e){e.preventDefault();e.stopImmediatePropagation();},true);", 'application/javascript');
+  if (APP_SCRIPTS[p] && /^(reviews|chat)-app\.localhost/.test(req.headers.host || '')) return send(res, 200, APP_SCRIPTS[p](), 'application/javascript');
+  if (p === '/ping.gif') { res.writeHead(204); return res.end(); }
   if (p === '/assets/theme.js' || p.startsWith('/apps/') || p.startsWith('/lib/')) return send(res, 200, 'window.__loaded=(window.__loaded||0)+1;', 'application/javascript');
   if (p.startsWith('/img/')) {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
