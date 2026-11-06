@@ -8,6 +8,7 @@
  * It runs on demand and once a day until the sale starts. Works for any sale day (Black Friday, Diwali,
  * 11.11, end of season sales, Boxing Day, ...).
  */
+import { storePassword } from './secret.js';
 import { db, q } from './db.js';
 import { config } from './config.js';
 import { MARKETS } from './engine/catalog.js';
@@ -283,7 +284,7 @@ async function rehearse(store, plan, { trigger, rehearsalId }) {
       if (themeOk && plan.banner) {
         const page = await ctx.newPage();
         try {
-          const nav = await gotoStore(page, preview, { password: store.storefront_password });
+          const nav = await gotoStore(page, preview, { password: storePassword(store) });
           const text = nav.locked ? '' : await page.evaluate(() => document.body?.innerText || '').catch(() => '');
           const want = plan.banner.toLowerCase().replace(/\s+/g, ' ');
           if (nav.locked) add('banner', 'warn', 'We couldn’t open the sale theme', 'The store asked for a password.', 'Add the storefront password in Store settings.');

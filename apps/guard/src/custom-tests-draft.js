@@ -4,6 +4,7 @@
  * the AI for steps in the same file format as an uploaded test. The draft is checked with the same rules as a
  * file and handed to the editor; nothing is saved until the owner saves it.
  */
+import { storePassword } from './secret.js';
 import { newContext, gotoStore, settle } from './engine/browser.js';
 import { validate } from './engine/custom.js';
 import { draftTest } from './ai.js';
@@ -68,7 +69,7 @@ export async function draftFromWords({ store, testProduct, description, start, l
     }
     const url = new URL(path, origin);
     if (url.origin !== origin) throw Object.assign(new Error('The page must be on your store.'), { status: 400 });
-    const g = await gotoStore(page, url.href, { password: store.storefront_password });
+    const g = await gotoStore(page, url.href, { password: storePassword(store) });
     if (g.locked) throw Object.assign(new Error('Your store is password protected and we could not open it. Check the storefront password in Store settings.'), { status: 400 });
     await settle(page, 800);
     const outline = await pageOutline(page);

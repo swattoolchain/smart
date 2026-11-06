@@ -12,6 +12,7 @@
  * normal, codes stopped, banner gone, sale theme no longer live. The owner gets "ended cleanly" or what is still
  * on; if something is still on, it is checked again every 2 hours (3 times at most).
  */
+import { storePassword } from './secret.js';
 import { db, q } from './db.js';
 import { config } from './config.js';
 import { newContext, gotoStore, settle, themeOf } from './engine/browser.js';
@@ -135,7 +136,7 @@ async function checkLive(store, plan, { trigger }) {
     const page = await ctx.newPage();
     let homeText = '', theme = null, locked = false;
     try {
-      const nav = await gotoStore(page, store.url, { password: store.storefront_password });
+      const nav = await gotoStore(page, store.url, { password: storePassword(store) });
       locked = !!nav.locked;
       if (!locked) {
         await settle(page, 500);
@@ -217,9 +218,9 @@ async function checkLive(store, plan, { trigger }) {
       const rec = { step() {}, add(c) { out.push(c); } };
       const tryPage = await ctx.newPage();
       try {
-        await gotoStore(tryPage, store.url, { password: store.storefront_password });
+        await gotoStore(tryPage, store.url, { password: storePassword(store) });
         const list = (await storeProducts(ctx.request, store.url)).slice(0, 6).map((p) => ({ handle: p.handle }));
-        await runDiscounts({ page: tryPage, rec, origin: new URL(tryPage.url()).origin, info: { isShopify, products: list }, password: store.storefront_password, codes: plan.codes.slice(0, 5), shot: async () => null });
+        await runDiscounts({ page: tryPage, rec, origin: new URL(tryPage.url()).origin, info: { isShopify, products: list }, password: storePassword(store), codes: plan.codes.slice(0, 5), shot: async () => null });
       } catch { /* each code is reported below */ }
       finally { await tryPage.close().catch(() => {}); }
       for (const c of plan.codes.slice(0, 5)) {
@@ -234,10 +235,11 @@ async function checkLive(store, plan, { trigger }) {
         else add(key, 'codes', r.status === 'warn' ? 'warn' : 'fail', r.status === 'warn' ? `Discount code ${c.code} needs a bigger cart` : `Discount code ${c.code} doesn’t work`, r.detail, r.fix || null);
       }
       // Each code in each market of the plan, in that market's currency (Shopify Markets, via the country picker).
-      if (isShopify && plan.markets.length) {
+      // Only while the sale runs: after it ends, the codes are expected to stop (checked above).
+      if (isShopify && plan.markets.length && !end) {
         const mPage = await ctx.newPage();
         try {
-          await gotoStore(mPage, store.url, { password: store.storefront_password });
+          await gotoStore(mPage, store.url, { password: storePassword(store) });
           const list = (await storeProducts(ctx.request, store.url)).slice(0, 6).map((p) => ({ handle: p.handle }));
           byMarket = await codesByMarket({ page: mPage, origin: new URL(mPage.url()).origin, products: list, codes: plan.codes, markets: plan.markets });
         } catch { byMarket = null; }
@@ -254,7 +256,7 @@ async function checkLive(store, plan, { trigger }) {
       if (!mk.length) mk = ['US'];
       const sPage = await ctx.newPage();
       try {
-        await gotoStore(sPage, store.url, { password: store.storefront_password });
+        await gotoStore(sPage, store.url, { password: storePassword(store) });
         const products = await storeProducts(ctx.request, store.url);
         shipping = await freeShippingByMarket({ page: sPage, origin: new URL(sPage.url()).origin, products, amount: plan.freeShipping, markets: mk });
       } catch { shipping = { error: true, markets: [] }; }
@@ -274,7 +276,7 @@ async function checkLive(store, plan, { trigger }) {
   let runId = null;
   if (!q.activeRunForStore.get(store.id)) {
     const { startRun } = await import('./scheduler.js');
-    runId = startRun({ storeId: store.id, origin: store.url, kind: 'journeys', password: store.storefront_password, trigger: 'sale' });
+    runId = startRun({ storeId: store.id, origin: store.url, kind: 'journeys', password: storePassword(store), trigger: 'sale' });
   }
 
   const counts = { fail: findings.filter((f) => f.level === 'fail').length, warn: findings.filter((f) => f.level === 'warn').length, pass: findings.filter((f) => f.level === 'pass').length };
