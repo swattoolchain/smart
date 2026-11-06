@@ -16,6 +16,15 @@
   }
   window.priceTrailHtml = priceTrailHtml;
 
+  // Prices by country: what a shopper in each country saw on the product page, in the cart and at checkout.
+  function marketTableHtml(t) {
+    if (!t || !t.rows || !t.rows.length) return '';
+    const dash = '<span class="muted">–</span>';
+    const mark = { fail: '<b>Problem</b>', warn: '<b>Check</b>', switch: 'Not checked', ok: '' };
+    return `<table class="price-trail market-table"><thead><tr><th>Country</th><th class="num">Product page</th><th class="num">Cart</th><th class="num">Checkout</th><th class="num">Your price converted</th><th></th></tr></thead><tbody>${t.rows.map((r) => `<tr class="${r.state === 'fail' ? 'up' : r.state === 'warn' ? 'down' : ''}"><td>${esc(r.country)}${r.currency ? ` <span class="muted">${esc(r.currency)}</span>` : ''}</td><td class="num">${r.page ? esc(r.page) : dash}</td><td class="num">${r.cart ? esc(r.cart) : dash}</td><td class="num">${r.checkout ? esc(r.checkout) : dash}</td><td class="num">${r.converted ? esc(r.converted) : dash}</td><td class="muted">${mark[r.state] || ''}${r.notes ? `<div class="cell-sub">${esc(r.notes)}</div>` : ''}</td></tr>`).join('')}</tbody></table>`;
+  }
+  window.marketTableHtml = marketTableHtml;
+
   function checkHtml(c) {
     const shot = c.evidence && c.evidence.screenshot;
     const errors = c.evidence && c.evidence.errors;
@@ -26,6 +35,7 @@
       <p class="detail">${esc(c.detail)}</p>
       ${c.fix && c.status !== 'pass' ? `<p class="fix"><b>How to fix:</b> ${esc(c.fix)}</p>` : ''}
       ${c.evidence && c.evidence.priceTrail ? priceTrailHtml(c.evidence.priceTrail) : ''}
+      ${c.evidence && c.evidence.marketTable ? marketTableHtml(c.evidence.marketTable) : ''}
       ${errors ? `<p class="fix">${errors.map((e) => `<code>${esc(e.message)}</code>`).join('<br>')}</p>` : ''}
       ${shot ? `<img class="shot" src="${esc(shot)}" alt="Screenshot when '${esc(c.title)}' was checked" loading="lazy">` : ''}
       ${visual && visual.some((v) => v.status === 'changed') ? `<p class="fix">${visual.filter((v) => v.status === 'changed').map((v) => `${esc(v.key)}: ${v.ratio}% changed`).join(' · ')}</p>` : ''}

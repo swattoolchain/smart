@@ -895,6 +895,7 @@
     if (tab === 'prices') {
       const limit = S.license?.limits?.priceRules ?? 10;
       const rules = s.config.priceRules?.length ? s.config.priceRules : [{ product: '', variant: '', quantity: 1, price: '' }];
+      const mp = s.config.marketPrices || { enabled: false, product: '', variant: '', rounding: 'none', tolerance: 10 };
       const row = (r, i) => `<div class="code-row price-rule"><div class="field"><label for="pr${i}">Product</label><input id="pr${i}" name="product" value="${esc(r.product)}" placeholder="Product link or handle, e.g. cotton-kurta" maxlength="300" autocomplete="off" spellcheck="false"></div>
         <div class="field"><label for="pv${i}">Variant</label><input id="pv${i}" name="variant" value="${esc(r.variant || '')}" placeholder="Optional, e.g. Large" maxlength="100"></div>
         <div class="field"><label for="pq${i}">Quantity</label><input id="pq${i}" name="quantity" type="number" min="1" max="99" value="${r.quantity ?? 1}"></div>
@@ -905,17 +906,31 @@
           <div class="controls"><form id="prules">${rules.map(row).join('')}</form>
             <div class="inline-row"><button type="button" class="btn secondary small" id="addr">${icon('add', 15)}Add a rule</button><span class="muted" style="font-size:12.5px">Your plan includes ${plural(limit, 'rule')} per store.</span></div>
             <p class="error-msg" id="pr-err" role="alert"></p>
-            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Price rules are checked on Shopify stores for now.</p>' : ''}</div></div></div>`;
+            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Price rules are checked on Shopify stores for now.</p>' : ''}</div></div>
+        <div class="form-section"><div><h3>Prices by country</h3><p class="explain">Selling in other countries or currencies? Each full check switches your store to every country you sell in (as a shopper does with the country picker) and checks that the product page, cart and checkout show the same currency and price, that the price follows your rounding, and that it isn't far from your own price converted.</p></div>
+          <div class="controls"><form id="pmarkets">
+            <label class="check-row"><input type="checkbox" name="enabled" ${mp.enabled ? 'checked' : ''}> Check prices in each country I sell in</label>
+            <div class="code-row market-rule"><div class="field"><label for="mpp">Product</label><input id="mpp" name="product" value="${esc(mp.product || '')}" placeholder="Optional: your test product" maxlength="300" autocomplete="off" spellcheck="false"></div>
+              <div class="field"><label for="mpv">Variant</label><input id="mpv" name="variant" value="${esc(mp.variant || '')}" placeholder="Optional" maxlength="100"></div>
+              <div class="field"><label for="mpr">Prices end in</label><select id="mpr" name="rounding">${[['none', 'Any amount'], ['99', '.99'], ['95', '.95'], ['00', '.00 (whole)']].map(([v, l]) => `<option value="${v}" ${mp.rounding === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+              <div class="field"><label for="mpt">Allowed difference</label><input id="mpt" name="tolerance" type="number" min="0" max="50" value="${mp.tolerance ?? 10}" aria-describedby="mpt-h"></div></div>
+            <p class="muted" id="mpt-h" style="font-size:12.5px">${(s.config.markets || []).length ? `Countries: ${esc(marketNames(s.config.markets).join(', '))}.` : `<a href="#/s/${s.id}/settings">Add where you sell</a> first.`} Allowed difference: how far (in %) a country's price may be from your own price converted. 0 skips it.</p>
+          </form></div></div></div>`;
       const form = $('#prules');
+      const mform = $('#pmarkets');
       const mark = savebar($('.main-inner', ctx.main), {
         onSave: async () => {
           const list = $$('.price-rule', form).map((r) => ({ product: r.querySelector('[name=product]').value.trim(), variant: r.querySelector('[name=variant]').value.trim() || null, quantity: r.querySelector('[name=quantity]').value, price: r.querySelector('[name=price]').value.trim() })).filter((x) => x.product || x.price);
-          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
+          const f = mform.elements;
+          const marketPrices = { enabled: f.enabled.checked, product: f.product.value.trim(), variant: f.variant.value.trim() || null, rounding: f.rounding.value, tolerance: f.tolerance.value };
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list, marketPrices } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
           await loadStores();
         },
         onDiscard: () => render(),
       });
       form.addEventListener('input', mark);
+      mform.addEventListener('input', mark);
+      mform.addEventListener('change', mark);
       form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.price-rule', form).length > 1) b.closest('.price-rule').remove(); else b.closest('.price-rule').querySelectorAll('input').forEach((i) => (i.value = i.name === 'quantity' ? '1' : '')); mark(); });
       $('#addr').onclick = () => { if ($$('.price-rule', form).length >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
       return;
@@ -1288,7 +1303,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.evidence?.marketTable ? window.marketTableHtml(x.evidence.marketTable) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>

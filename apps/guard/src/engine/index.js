@@ -13,6 +13,7 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { runPriceRules } from './pricing.js';
+import { runMarketPrices } from './market-prices.js';
 import { reviewScreens } from './visual-ai.js';
 import { aiEnabled } from '../ai.js';
 
@@ -31,7 +32,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], priceRules = [], signal, progress, preview = null, captureOnly = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], priceRules = [], markets = [], marketPrices = null, signal, progress, preview = null, captureOnly = false }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -112,6 +113,10 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on });
         // The full catalog checks supersede the quick sample check; reporting both double-counts one mistake.
         if (catalog?.count) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
+      }
+      // Prices by country switch the storefront's country, so they run after the other page checks.
+      if (kind === 'full' && on('pricing.journey') && marketPrices?.enabled && markets.length && info.isShopify) {
+        await runMarketPrices({ page, rec, origin, markets, settings: marketPrices, product: info.products[0]?.handle });
       }
       if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
         phase('ai');

@@ -4,7 +4,10 @@
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
  *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
  *   checkoutprice (checkout subtotal ₹200 more than the cart), protection (a shipping-protection app adds a
- *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price)
+ *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price),
+ *   with MOCK_EXTRA=markets: fx (the cart in euro markets charges €3 more than the page), fxcheckout (checkout
+ *   shows rupees in other countries), fxround (converted prices are not rounded to .99), fxfar (the UK price is
+ *   60% above the converted price), fxblock (the cart refuses the product in the United States)
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -21,6 +24,20 @@ let PW_POSTS = 0; // how many times the password form was submitted
 const EXTRA = (process.env.MOCK_EXTRA || '');
 const DE = EXTRA.includes('de');
 const TRACK = EXTRA.includes('track');
+// MOCK_EXTRA=markets: Shopify Markets. The country picker (POST /localization) switches the shopper to the US
+// (USD), Germany, Austria or France (EUR) or the UK (GBP); other countries stay on India (INR, the store's own).
+// Converted prices are rounded up to .99, like Shopify's price rounding.
+const MARKETS = EXTRA.split(',').includes('markets');
+const FX = { IN: ['INR', 1], US: ['USD', 0.012], DE: ['EUR', 0.011], AT: ['EUR', 0.011], FR: ['EUR', 0.011], GB: ['GBP', 0.0095] };
+let CC = 'IN'; // the shopper's country for the request being handled
+const curOf = () => FX[CC][0];
+function conv(inrMinor) {
+  const [cur, rate] = FX[CC];
+  if (cur === 'INR') return inrMinor;
+  let raw = inrMinor * rate * (CC === 'GB' && B.has('fxfar') ? 1.6 : 1);
+  return B.has('fxround') ? Math.round(raw) : Math.ceil(raw / 100) * 100 - 1;
+}
+const fmt = (minor, cur = curOf()) => (cur === 'INR' ? '₹' + (minor / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : new Intl.NumberFormat('en', { style: 'currency', currency: cur }).format(minor / 100));
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -45,7 +62,9 @@ function cartFor(req, res) {
 // MOCK_BREAK=discount makes BF20 stop working (e.g. it expired or a discount app broke it).
 const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
 function cartJson(items) {
-  const original = items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0);
+  // In another market the cart charges in that currency (fx: €3 more than the page in euro markets).
+  const unitOf = (i) => { const u = conv(Math.round(Number(i.price) * 100)); return u + (B.has('fx') && curOf() === 'EUR' ? 300 : 0); };
+  const original = items.reduce((s, i) => s + i.quantity * unitOf(i), 0);
   const code = items.discount;
   const rule = code && !(B.has('discount') && code === 'BF20') ? CODES[code] : null;
   const applicable = !!rule && original >= rule.min;
@@ -58,9 +77,9 @@ function cartJson(items) {
     discount_codes: code ? [{ code, applicable }] : [],
     cart_level_discount_applications: off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : [],
     items_subtotal_price: original,
-    currency: 'INR',
+    currency: curOf(),
     // Like Shopify's cart.js: prices in paise, one entry per line.
-    items: items.map((i) => { const unit = Math.round(Number(i.price) * 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: unit, line_price: unit * i.quantity, original_line_price: unit * i.quantity, final_line_price: unit * i.quantity }; }),
+    items: items.map((i) => { const unit = unitOf(i); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: unit, line_price: unit * i.quantity, original_line_price: unit * i.quantity, final_line_price: unit * i.quantity }; }),
   };
 }
 function layout(title, body, { noindex = false } = {}) {
@@ -69,7 +88,7 @@ function layout(title, body, { noindex = false } = {}) {
 ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta name="description" content="Handmade Indian clothing and decor from small artisans.">
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
-<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
+<script>window.Shopify={shop:'mock.myshopify.com',${MARKETS ? `country:'${CC}',currency:{active:'${curOf()}',rate:'${FX[CC][1]}'},` : ''}theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
 <main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
@@ -93,6 +112,14 @@ const server = http.createServer(async (req, res) => {
   const previewId = u.searchParams.get('preview_theme_id');
   if (previewId) res.setHeader('Set-Cookie', `preview_theme=${previewId}; Path=/`);
   DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
+  CC = (MARKETS && /localization=([A-Z]{2})/.exec(req.headers.cookie || '')?.[1]) || 'IN';
+  if (MARKETS && p === '/localization' && req.method === 'POST') {
+    const f = new URLSearchParams(await readBody(req));
+    const cc = String(f.get('country_code') || '').toUpperCase();
+    // Countries without a market stay on the store's own (like Shopify, which falls back to the primary market).
+    res.writeHead(302, { Location: f.get('return_to') || '/', ...(FX[cc] ? { 'Set-Cookie': `localization=${cc}; Path=/` } : {}) });
+    return res.end();
+  }
   B = DRAFT ? DRAFT_BREAK : BREAK;
   if (B.has('cloudflare')) {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });
@@ -131,7 +158,7 @@ const server = http.createServer(async (req, res) => {
   }
   // Shopify's product JSON (prices in cents), used by themes and by our checks.
   { const m = /^\/products\/([\w-]+)\.js$/.exec(p); if (m) { const pr = products.find((x) => x.handle === m[1]); if (!pr) return send(res, 404, { status: 404 }, 'application/json');
-    return send(res, 200, { id: pr.id, title: pr.title, handle: pr.handle, variants: pr.variants.map((v) => ({ id: v.id, title: v.title, available: v.available, price: Math.round(Number(v.price) * 100) })) }, 'application/json'); } }
+    return send(res, 200, { id: pr.id, title: pr.title, handle: pr.handle, variants: pr.variants.map((v) => ({ id: v.id, title: v.title, available: v.available, price: conv(Math.round(Number(v.price) * 100)) })) }, 'application/json'); } }
   if (p.startsWith('/products/')) {
     const prod = products.find((x) => x.handle === p.split('/')[2]);
     if (!prod) return send(res, 404, layout('Not found', '<h1>404</h1>'));
@@ -145,7 +172,7 @@ const server = http.createServer(async (req, res) => {
       200,
       layout(
         `${prod.title} – Mock Store`,
-        `<h1>${prod.title}</h1>${B.has('noprice') ? '' : `<div class="price">₹${v.price}</div>`}
+        `<h1>${prod.title}</h1>${B.has('noprice') ? '' : `<div class="price">${MARKETS && CC !== 'IN' ? fmt(conv(Math.round(Number(v.price) * 100))) : `₹${v.price}`}</div>`}
 <form method="post" action="/cart/add"><input type="hidden" name="id" value="${v.id}">
 <select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>
 <button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>${DE ? '<p class="tax-note">inkl. MwSt., zzgl. <a href="/policies/shipping-policy">Versandkosten</a></p>' : ''}
@@ -159,7 +186,7 @@ const server = http.createServer(async (req, res) => {
     const body = JSON.parse((await readBody(req)) || '{}');
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
       const hit = byId.get(Number(it.id));
-      if (!hit || !hit.v.available) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
+      if (!hit || !hit.v.available || (MARKETS && CC === 'US' && B.has('fxblock'))) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
       // pricedrift / pricelow: an app or cart script changes the price after the shopper saw it.
       const price = (Number(hit.v.price) + (B.has('pricedrift') ? 150 : B.has('pricelow') ? -100 : 0)).toFixed(2);
       items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price, handle: hit.p.handle });
@@ -201,7 +228,7 @@ const server = http.createServer(async (req, res) => {
     // Order summary like Shopify's checkout: lines and a subtotal, before any payment details.
     const c = cartJson(cartFor(req, res));
     const sub = c.items_subtotal_price + (B.has('checkoutprice') ? 20000 : 0);
-    const inr = (m) => '₹' + (m / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+    const inr = (m) => (B.has('fxcheckout') ? '₹' + (m / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : fmt(m));
     return send(res, 200, layout('Checkout', `<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>
 <aside class="order-summary"><h2>Order summary</h2>${c.items.map((i) => `<div class="line"><span>${i.title} × ${i.quantity}</span> <span>${inr(i.final_line_price)}</span></div>`).join('')}
 <div class="row"><span>Subtotal · ${c.item_count} ${c.item_count === 1 ? 'item' : 'items'}</span> <span>${inr(sub)}</span></div><div class="row"><span>Shipping</span> <span>Enter shipping address</span></div></aside>`));

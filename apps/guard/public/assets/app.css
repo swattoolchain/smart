@@ -987,3 +987,6 @@ ui-nav-menu { display: none !important; }
 .price-trail tr.down td { color: #9a6700; }
 .code-row.price-rule { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 80px 110px auto; }
 @media (max-width: 640px) { .code-row.price-rule { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; } .code-row.price-rule .field:first-child { grid-column: 1 / -1; } }
+.code-row.market-rule { grid-template-columns: minmax(0, 1.5fr) minmax(0, .8fr) minmax(0, 1fr) 120px; }
+@media (max-width: 640px) { .code-row.market-rule { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+#pmarkets .check-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; font-size: 14px; }
