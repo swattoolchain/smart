@@ -15,6 +15,7 @@ import { runDiscounts } from './discount.js';
 import { runVariantSweep } from './variants.js';
 import { runTraffic } from './traffic.js';
 import { runPriceRules } from './pricing.js';
+import { runAbTests } from './abtest.js';
 import { reviewScreens } from './visual-ai.js';
 import { watchScripts, scriptChecks, pageKind } from './scripts.js';
 import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js';
@@ -41,7 +42,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], abVariants = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -181,6 +182,10 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (on('pricing.journey') && priceRules.length && info.isShopify) await runPriceRules({ page, rec, origin, rules: priceRules });
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
+      if (kind === 'full' && info.isShopify && on('sale.abtest')) {
+        phase('abtest');
+        await runAbTests({ page, rec, origin, info, password, variants: abVariants, shot }).catch((e) => rec.add(check('ab.tools', 'functional', 'A/B tests on your store', 'skip', { severity: 'minor', detail: `The A/B test check could not finish: ${shortErr(e)}` })));
+      }
       if (kind !== 'journeys') {
         phase('quality');
         // App Health: what each app's files cost on the phone while the speed check loads the pages.

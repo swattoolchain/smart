@@ -650,6 +650,7 @@
   const PHASES = [
     { key: 'open', label: 'Open your store', sub: 'On a desktop and a phone-sized screen' },
     { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'pricing.journey', 'errors.js', 'sale.discount'] },
+    { key: 'abtest', label: 'Shop every A/B test version', groups: ['sale.abtest'], full: true },
     { key: 'quality', label: 'Measure speed, SEO and accessibility', groups: ['speed', 'seo', 'a11y', 'links', 'policies'], full: true },
     { key: 'regional', label: 'Check the laws where you sell', groups: ['law.de', 'law.cookies', 'access.law', 'law.us'], full: true },
     { key: 'visual', label: 'Compare screenshots with the approved look', groups: ['visual'], full: true },
@@ -657,7 +658,7 @@
     { key: 'domain', label: 'Check your domain, certificate and email records', groups: ['security.domain'], full: true },
     { key: 'ai', label: 'AI review of how pages look', groups: ['ai.visual'], full: true },
   ];
-  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'pricing.journey': 3, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1, 'security.domain': 3 };
+  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'pricing.journey': 3, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1, 'security.domain': 3, 'sale.abtest': 6 };
   const estimate = (keys) => {
     const sec = 8 + keys.reduce((n, k) => n + (EST[k] || 5), 0);
     return sec < 60 ? 'under a minute' : `about ${Math.ceil(sec / 60)} minutes`;
@@ -1036,10 +1037,10 @@
   STORE_PAGES.suite = async (ctx, s) => {
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (!ctx.alive()) return;
-    const tab = ['product', 'codes', ...(feat('price_checks') ? ['prices'] : [])].includes(ctx.r.a) ? ctx.r.a : null;
+    const tab = ['product', 'codes', ...(feat('price_checks') ? ['prices'] : []), ...(feat('ab_tests') ? ['abtests'] : [])].includes(ctx.r.a) ? ctx.r.a : null;
     const base = `#/s/${s.id}/suite`;
     const shopify = !s.platform || /shopify/i.test(s.platform);
-    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes'], ...(feat('price_checks') ? [['prices', 'Price rules']] : [])], tab);
+    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes'], ...(feat('price_checks') ? [['prices', 'Price rules']] : []), ...(feat('ab_tests') ? [['abtests', 'A/B tests']] : [])], tab);
     if (!tab) {
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id, saleTraffic: !!s.config.saleTraffic })}</form></div>`;
       const form = $('#suite');
@@ -1076,6 +1077,35 @@
       form.addEventListener('input', mark);
       form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.price-rule', form).length > 1) b.closest('.price-rule').remove(); else b.closest('.price-rule').querySelectorAll('input').forEach((i) => (i.value = i.name === 'quantity' ? '1' : '')); mark(); });
       $('#addr').onclick = () => { if ($$('.price-rule', form).length >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
+      return;
+    }
+    if (tab === 'abtests') {
+      const list = (s.config.abVariants || []).length ? s.config.abVariants : [{ name: '', kind: 'param', value: '' }];
+      const row = (v, i) => `<div class="code-row ab-row"><div class="field"><label for="abn${i}">Version name</label><input id="abn${i}" name="name" value="${esc(v.name)}" placeholder="e.g. New price" maxlength="40" autocomplete="off"></div>
+        <div class="field"><label for="abk${i}">Set by</label><select id="abk${i}" name="kind"><option value="param"${v.kind !== 'cookie' ? ' selected' : ''}>Link</option><option value="cookie"${v.kind === 'cookie' ? ' selected' : ''}>Cookie</option></select></div>
+        <div class="field"><label for="abv${i}">Setting</label><input id="abv${i}" name="value" value="${esc(v.value)}" placeholder="e.g. ab_variant=b" maxlength="260" autocomplete="off" spellcheck="false"></div>
+        <button type="button" class="icon-btn" data-rm aria-label="Remove version" data-tip="Remove">${icon('trash', 16)}</button></div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
+        <div class="form-section" style="border-top:0;padding-top:0"><div><h3>A/B and price tests</h3><p class="explain">If you test prices or a new theme with an A/B app, some shoppers see a different version of your store. Each full check shops once in every version you list here: the page loads, Add to cart works, the cart charges the price shown, and checkout opens on your store. Nothing is bought, and your test settings are never changed.</p>
+          <p class="explain">Find the setting in your A/B app’s preview link for each version, for example <code>?ab_variant=b</code>, and enter it as <code>ab_variant=b</code>.</p>
+          <p class="explain" id="ab-auto">Using Convert or Optimizely? You don’t need to list anything: we find their running test versions on our own and shop each one.</p></div>
+          <div class="controls"><form id="abv">${list.map(row).join('')}</form>
+            <div class="inline-row"><button type="button" class="btn secondary small" id="adda">${icon('add', 15)}Add a version</button><span class="muted" style="font-size:12.5px">Up to 4 versions.</span></div>
+            <p class="error-msg" id="ab-err" role="alert"></p>
+            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">A/B test versions are checked on Shopify stores for now.</p>' : ''}</div></div></div>`;
+      const form = $('#abv');
+      const mark = savebar($('.main-inner', ctx.main), {
+        onSave: async () => {
+          const next = $$('.ab-row', form).map((r) => ({ name: r.querySelector('[name=name]').value.trim(), kind: r.querySelector('[name=kind]').value, value: r.querySelector('[name=value]').value.trim() })).filter((x) => x.name || x.value);
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { abVariants: next } } }); $('#ab-err').textContent = ''; } catch (ex) { $('#ab-err').textContent = ex.message; throw ex; }
+          await loadStores();
+        },
+        onDiscard: () => render(),
+      });
+      form.addEventListener('input', mark);
+      form.addEventListener('change', mark);
+      form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.ab-row', form).length > 1) b.closest('.ab-row').remove(); else b.closest('.ab-row').querySelectorAll('input').forEach((i) => (i.value = '')); mark(); });
+      $('#adda').onclick = () => { if ($$('.ab-row', form).length >= 4) return toast('Up to 4 versions', 'error'); form.insertAdjacentHTML('beforeend', row({ name: '', kind: 'param', value: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
       return;
     }
     if (tab === 'codes') {

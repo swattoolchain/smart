@@ -202,6 +202,8 @@ async function prepare(job) {
     previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
     testProduct: cfg.testProduct || null, discountCodes: codes, shopifyCodes, preview: preview || null, captureOnly: !!captureOnly,
     // Price rules the owner set, as many as the plan allows.
+    // A/B test versions the owner listed (Test suite → A/B tests).
+    abVariants: isOn('ab_tests') ? cfg.abVariants || [] : [],
     priceRules: store && isOn('price_checks') ? (cfg.priceRules || []).slice(0, entitlements(store.user_id).limits.priceRules) : [],
     release: !!release,
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).

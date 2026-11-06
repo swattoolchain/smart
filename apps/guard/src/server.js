@@ -459,7 +459,7 @@ function storeView(s) {
   return {
     ...publicStore(s),
     blocked: blockReason(ent, s.id),
-    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], priceRules: cfg.priceRules || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
+    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], priceRules: cfg.priceRules || [], abVariants: cfg.abVariants || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
