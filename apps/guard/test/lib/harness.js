@@ -209,12 +209,13 @@ export class Session {
   }
 }
 
-/** Creates a website account and returns its signed-in session. */
-export async function signup(product, email = `owner-${crypto.randomUUID().slice(0, 8)}@shop.test`, password = 'correct horse battery') {
+/** Creates a website account, confirms its email (unless `confirm: false`) and returns its signed-in session. */
+export async function signup(product, email = `owner-${crypto.randomUUID().slice(0, 8)}@shop.test`, password = 'correct horse battery', { confirm = true } = {}) {
   const s = product.session();
   const r = await s.post('/api/auth/signup', { email, password, name: 'Test Owner' });
   if (r.status !== 200) throw new Error(`signup failed ${r.status} ${r.text}`);
   s.email = email; s.password = password;
+  if (confirm) await confirmEmail(product, s);
   return s;
 }
 
@@ -230,6 +231,23 @@ export async function founderSession(product, password = 'founder-test-password'
   if (l.status !== 200) throw new Error(`founder login failed ${l.status} ${l.text}`);
   s.email = FOUNDER;
   return s;
+}
+
+/** Opens the confirmation link a website sign-up was emailed (from the server's mail log), in this session. */
+export async function confirmEmail(product, s, email = s.email) {
+  let token = confirmToken(product, email);
+  for (let i = 0; i < 40 && !token; i++) { await new Promise((r) => setTimeout(r, 50)); token = confirmToken(product, email); }
+  if (!token) throw new Error(`no confirmation email for ${email}`);
+  const v = await s.post('/api/auth/link/verify', { token });
+  if (v.status !== 200) throw new Error(`confirm failed ${v.status} ${v.text}`);
+  return v.json;
+}
+
+/** The latest confirmation link token sent to an address. */
+export function confirmToken(product, email) {
+  const blocks = product.log().split('[mail skipped] ').filter((b) => b.startsWith(`to=${email} `) && /Confirm your email/.test(b));
+  const m = blocks.length ? /#\/signin\/([\w-]+)/.exec(blocks.at(-1)) : null;
+  return m ? m[1] : null;
 }
 
 /** Opens the embedded Shopify app for a shop (installs it on first open) and returns its session. */
