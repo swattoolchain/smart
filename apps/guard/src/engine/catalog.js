@@ -30,6 +30,9 @@ export const GROUPS = [
     description: 'Script errors that happen while shopping, usually from apps or custom code.', checks: ['nf.jserrors'] },
   { key: 'speed', label: 'Mobile speed', run: 'full', area: 'Speed',
     description: 'Load time, layout shifts, page weight, slow third-party apps and insecure content on mobile.', checks: ['nf.speed.', 'nf.cls.', 'nf.weight.', 'nf.mixed.'] },
+  { key: 'sale.traffic', label: 'Sale traffic readiness', run: 'full', area: 'Speed', optIn: true,
+    description: 'A few shoppers (up to 5) shop at the same time: product page, add to cart, cart and checkout, compared with one shopper alone. Shows whether your store slows down or breaks when a sale starts. Never a load test: each shopper goes through once, stops before entering any details, and the test runs at most every 6 hours. Only runs after you switch it on in Store settings.',
+    checks: ['perf.traffic'] },
   { key: 'seo', label: 'SEO basics', run: 'full', area: 'SEO and accessibility',
     description: 'Titles, descriptions, headings, canonical links, share images, and pages hidden from Google.', checks: ['nf.seo.'] },
   { key: 'a11y', label: 'Accessibility', run: 'full', area: 'SEO and accessibility',
@@ -41,9 +44,15 @@ export const GROUPS = [
   { key: 'catalog', label: 'Catalog checks', run: 'full', area: 'Catalog and products',
     description: 'Every product checked for pricing mistakes, fake discounts, placeholder or duplicate text, missing images, duplicate SKUs, and whether product counts add up. Also logs what changed since the last check.',
     checks: ['nf.catalog', 'cat.pricing', 'cat.content', 'cat.media', 'cat.data', 'cat.counts', 'cat.changes'] },
+  { key: 'catalog.variants', label: 'Every variant can be added to the cart', run: 'full', area: 'Catalog and products',
+    description: 'Each size, colour and option you sell is added to a cart once, then the cart is emptied. Finds variants shown as in stock that the cart refuses, and products the cart can no longer find. Nothing is bought. Big catalogs are covered over several checks (up to 100 variants each time).',
+    checks: ['fn.variants'] },
   { key: 'ai.visual', label: 'AI visual review', run: 'full', area: 'AI review', ai: true,
     description: 'An AI reviewer looks at your pages on desktop and mobile like a shopper would, catching overlapping or cut-off text, broken images, popups covering the buy button, and layout problems.',
     checks: ['ai.visual'] },
+  { key: 'ai.shopper', label: 'AI shopper', run: 'full', area: 'AI review', ai: true,
+    description: 'An AI shopper starts on your homepage with no instructions about your theme, finds a product, adds it to the cart and goes to checkout, noting anything that gets in the way. It only clicks and chooses options, never types or pays, and stops when checkout opens.',
+    checks: ['ai.shopper'] },
   { key: 'ai.copy', label: 'AI copy review', run: 'full', area: 'AI review', ai: true,
     description: 'An AI editor checks product titles and descriptions for spelling, grammar and contradictions (for example a silk product described as cotton). Only new or edited products are reviewed, to keep it fast.',
     checks: ['ai.copy'] },
@@ -78,7 +87,7 @@ export const MARKETS = [
 export function effectiveDisabled(cfg = {}, picked = null) {
   if (picked) return picked;
   const markets = cfg.markets || [];
-  const off = GROUPS.filter((g) => g.markets && !g.markets.some((m) => markets.includes(m))).map((g) => g.key);
+  const off = GROUPS.filter((g) => (g.markets && !g.markets.some((m) => markets.includes(m))) || (g.optIn && !cfg.saleTraffic)).map((g) => g.key);
   return [...new Set([...(cfg.disabled || []), ...off])];
 }
 
@@ -96,6 +105,11 @@ export function normalizeConfig(input = {}, base = {}) {
   // Onboarding progress: the welcome flow and the first-report tour.
   if (typeof input.onboarded === 'boolean') cfg.onboarded = input.onboarded;
   if (typeof input.toured === 'boolean') cfg.toured = input.toured;
+  // Video replay of failed shopping journeys (kept 7 days).
+  if (typeof input.failureVideo === 'boolean') cfg.failureVideo = input.failureVideo;
+  // Sale traffic readiness is opt-in; the number of shoppers is capped at 5 in the engine as well.
+  if (typeof input.saleTraffic === 'boolean') cfg.saleTraffic = input.saleTraffic;
+  if (input.saleTrafficShoppers !== undefined) { const n = Math.round(Number(input.saleTrafficShoppers)); if (n >= 2 && n <= 5) cfg.saleTrafficShoppers = n; }
   if (Array.isArray(input.disabled)) cfg.disabled = input.disabled.filter((k) => GROUPS.some((g) => g.key === k && !g.locked));
   if (input.testProduct !== undefined) cfg.testProduct = input.testProduct ? String(input.testProduct).slice(0, 200) : null;
   if (input.journeyIntervalMin !== undefined && INTERVALS.includes(Number(input.journeyIntervalMin))) cfg.journeyIntervalMin = Number(input.journeyIntervalMin);

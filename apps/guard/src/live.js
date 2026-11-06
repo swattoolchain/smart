@@ -9,10 +9,13 @@ export const PHASES = [
   { key: 'open', label: 'Opening your store', run: ['journeys', 'full'] },
   { key: 'journey', label: 'Shopping like a customer', run: ['journeys', 'full'] },
   { key: 'quality', label: 'Speed, SEO, accessibility and links', run: ['full'], groups: ['speed', 'seo', 'a11y', 'links', 'policies'] },
+  { key: 'traffic', label: 'Several shoppers at once', run: ['full'], groups: ['sale.traffic'] },
   { key: 'regional', label: 'Laws where you sell', run: ['full'], groups: ['law.de', 'law.cookies', 'access.law', 'law.us'] },
   { key: 'visual', label: 'Comparing screenshots', run: ['full'], groups: ['visual'] },
   { key: 'catalog', label: 'Checking every product', run: ['full'], groups: ['catalog'] },
+  { key: 'variants', label: 'Adding every variant to the cart', run: ['full'], groups: ['catalog.variants'] },
   { key: 'ai', label: 'AI review', run: ['full'], groups: ['ai.visual'] },
+  { key: 'shopper', label: 'AI shopper', run: ['full'], groups: ['ai.shopper'] },
 ];
 
 export function liveView(runId) {

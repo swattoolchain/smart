@@ -1026,3 +1026,25 @@ ui-nav-menu { display: none !important; }
 #rjoin.inline-form .field { margin: 0; min-width: 120px; }
 #rjoin-token { white-space: pre-wrap; word-break: break-all; padding: 10px 12px; border-radius: 8px; background: var(--bg-soft, rgba(127,127,127,.08)); font-size: 13px; }
 #runners td.actions { white-space: nowrap; text-align: right; }
+/* Video replay of a failed shopping journey */
+.video-replay { margin-top: 8px; }
+.video-replay summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--ink, inherit); }
+.video-replay video { display: block; width: 100%; max-width: 640px; margin: 8px 0 4px; border-radius: 8px; background: #000; }
+/* Sale traffic readiness: step times alone vs several shoppers */
+.traffic-table { border-collapse: collapse; margin: 10px 0 4px; font-size: 13px; width: 100%; max-width: 560px; }
+.traffic-table th, .traffic-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line, #e5e7eb); }
+.traffic-table th { font-weight: 600; color: var(--muted, #6b7280); }
+/* Team workspaces */
+.member-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 24px; background: var(--paper, #f3f4f6); border-bottom: 1px solid var(--line, #e5e7eb); font-size: 13.5px; }
+.ws-list .ws-head { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted, #6b7280); padding: 6px 12px 2px; }
+.ws-item { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; }
+.ws-item span { display: flex; flex-direction: column; } .ws-item small { color: var(--muted, #6b7280); font-size: 12px; }
+.ws-item.on b { color: var(--accent, inherit); }
+.team-table select { padding: 4px 8px; }
+/* AI shopper steps */
+.agent-steps { margin-top: 8px; font-size: 13px; }
+.agent-steps summary { cursor: pointer; font-weight: 600; }
+.agent-steps ol { margin: 8px 0 0; padding-left: 22px; display: grid; gap: 4px; }
+
+.pub-shopper h3 { display: flex; align-items: center; gap: 8px; font-size: 15px; margin: 0 0 8px; }
+.agent-steps-list { margin: 0; padding-left: 22px; display: grid; gap: 6px; font-size: 13px; }

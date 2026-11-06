@@ -50,10 +50,11 @@ async function emptyCollections(request, origin, collections) {
 }
 
 /** Full-catalog checks for monitored stores: snapshot, change log, validations, counts and AI copy review. */
-export async function runCatalog({ request, origin, storeId, runId, rec, info, on }) {
+export async function runCatalog({ request, origin, storeId, runId, rec, info, on, keep = null }) {
   const out = { count: 0 };
   try {
     const snap = await fetchCatalog(request, origin);
+    if (keep) keep.snap = snap; // shared with the variant sweep, so the catalog is read once
     if (!snap.count) return out;
     const prev = previousSnapshot(storeId, runId);
     fs.mkdirSync(dirFor(storeId), { recursive: true });

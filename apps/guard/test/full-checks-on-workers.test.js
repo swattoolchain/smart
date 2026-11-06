@@ -36,7 +36,8 @@ describe('Full checks on workers: rules and files', () => {
     assert.equal(r.canRun(M, { kind: 'full', storeId: 3, needsAi: true }), true);
     assert.equal(r.usesAi('full', [], true), true);
     assert.equal(r.usesAi('full', ['ai.visual'], true), true, 'AI copy review still on');
-    assert.equal(r.usesAi('full', ['ai.visual', 'ai.copy'], true), false, 'both AI groups off (e.g. not in the plan)');
+    assert.equal(r.usesAi('full', ['ai.visual', 'ai.copy'], true), true, 'AI shopper still on');
+    assert.equal(r.usesAi('full', ['ai.visual', 'ai.copy', 'ai.shopper'], true), false, 'all AI groups off (e.g. not in the plan)');
     assert.equal(r.usesAi('full', [], false), false, 'no AI key');
     assert.equal(r.usesAi('journeys', [], true), false);
   });
