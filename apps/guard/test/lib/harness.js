@@ -113,6 +113,10 @@ export async function startProduct({ env = {}, mock: mockOpts = {} } = {}) {
     RAZORPAY_KEY_SECRET: RZP.keySecret,
     RAZORPAY_WEBHOOK_SECRET: RZP.webhookSecret,
     RAZORPAY_API_BASE: `${fake.base}/rzp`,
+    // Most tests create many accounts from one address; the abuse limits have their own test.
+    SIGNUPS_PER_IP_PER_HOUR: '10000',
+    LEADS_PER_IP_PER_HOUR: '10000',
+    TEST_ALERTS_PER_STORE_PER_HOUR: '10000',
     AI_API_KEY: '',
     ANTHROPIC_API_KEY: '',
     // Tests see every feature; test/features.test.js checks the real defaults.
