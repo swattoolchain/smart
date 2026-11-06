@@ -4,7 +4,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chromium } from 'playwright';
-import { startProduct, FOUNDER, ROOT } from './lib/harness.js';
+import { startProduct, FOUNDER, ROOT, confirmEmail } from './lib/harness.js';
 import { note, screenshot } from './lib/evidence.js';
 
 const DESKTOP = { width: 1360, height: 900 };
@@ -247,8 +247,12 @@ describe('Public website', () => {
     assert.equal(lead.run_id, db.prepare('SELECT id FROM runs WHERE public_id = ?').get(runId).id);
     const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
     assert.ok(user, 'account created');
-    const store = db.prepare('SELECT url FROM stores WHERE user_id = ?').get(user.id);
-    assert.equal(store?.url, P.mock.origin, 'the scanned store is now monitored');
+    // Website sign-ups confirm their email first (T103); the scanned store is added once they do.
+    assert.equal(db.prepare('SELECT url FROM stores WHERE user_id = ?').get(user.id), undefined, 'no store before the email is confirmed');
+    await confirmEmail(P, P.session(), email);
+    let store;
+    for (let i = 0; i < 40 && !store; i++) { store = db.prepare('SELECT url FROM stores WHERE user_id = ?').get(user.id); if (!store) await new Promise((r) => setTimeout(r, 100)); }
+    assert.equal(store?.url, P.mock.origin, 'the scanned store is monitored once the email is confirmed');
     note(t, `Signing up from the report saved lead ${lead.id} (source report, run ${runId}) and added ${store.url}`);
     await p.context().close();
   });

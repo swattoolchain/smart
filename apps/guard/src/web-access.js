@@ -12,7 +12,7 @@
  */
 import crypto from 'node:crypto';
 import { config } from './config.js';
-import { db, q } from './db.js';
+import { db, q, ensureColumn } from './db.js';
 import { sendMail } from './alerts.js';
 import { shopForUser } from './shopify.js';
 
@@ -26,16 +26,21 @@ CREATE TABLE IF NOT EXISTS login_links (
   used_at INTEGER
 );`);
 
+// A sign-up's confirmation link carries the password chosen in that sign-up; it is set only when the link is opened.
+ensureColumn('login_links', 'password_hash', 'TEXT');
+
 const LINK_TTL = 30 * 60e3;
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 const S = {
   byLogin: db.prepare('SELECT * FROM users WHERE login_email = ?'),
   byEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
-  user: db.prepare('SELECT id, email, login_email, session_epoch FROM users WHERE id = ?'),
+  user: db.prepare('SELECT id, email, login_email, session_epoch, email_confirmed, pending_store_url FROM users WHERE id = ?'),
+  confirmUser: db.prepare('UPDATE users SET email_confirmed = 1, password_hash = COALESCE(?, password_hash), pending_store_url = NULL WHERE id = ?'),
+  lastVerify: db.prepare("SELECT password_hash FROM login_links WHERE user_id = ? AND purpose = 'verify' AND used_at IS NULL AND password_hash IS NOT NULL ORDER BY expires_at DESC LIMIT 1"),
   setLogin: db.prepare('UPDATE users SET login_email = ? WHERE id = ?'),
   bump: db.prepare('UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?'),
   everLinked: db.prepare('SELECT 1 FROM shopify_shops WHERE user_id = ? LIMIT 1'),
-  addLink: db.prepare('INSERT INTO login_links (token_hash, user_id, email, purpose, expires_at) VALUES (?, ?, ?, ?, ?)'),
+  addLink: db.prepare('INSERT INTO login_links (token_hash, user_id, email, purpose, expires_at, password_hash) VALUES (?, ?, ?, ?, ?, ?)'),
   link: db.prepare('SELECT * FROM login_links WHERE token_hash = ?'),
   useLink: db.prepare('UPDATE login_links SET used_at = ? WHERE token_hash = ? AND used_at IS NULL'),
   dropLinks: db.prepare('DELETE FROM login_links WHERE user_id = ? AND used_at IS NULL'),
@@ -72,11 +77,26 @@ function allowed(key, max = 5, windowMs = 15 * 60e3) {
   return true;
 }
 
-function issue(userId, email, purpose) {
+function issue(userId, email, purpose, passwordHash = null) {
   S.prune.run(Date.now() - 24 * 3600e3);
   const token = crypto.randomBytes(32).toString('base64url');
-  S.addLink.run(sha(token), userId, email, purpose, Date.now() + LINK_TTL);
+  S.addLink.run(sha(token), userId, email, purpose, Date.now() + LINK_TTL, passwordHash);
   return `${config.baseUrl}/app#/signin/${token}`;
+}
+
+/**
+ * Website sign-up: emails a link that confirms the address. Until it is opened the account can't be used,
+ * so nobody can claim someone else's email. Returns false when too many links went to the address.
+ */
+export function sendSignupConfirm(userId, email, passwordHash) {
+  if (!allowed(`v${email}`, 3)) return false;
+  const link = issue(userId, email, 'verify', passwordHash);
+  sendMail({
+    to: email,
+    subject: 'Confirm your email to start using Tharam',
+    text: `Hi,\n\nConfirm your email to finish creating your Tharam account:\n\n${link}\n\nThe link works once, for 30 minutes. If it expires, sign up again or use "Email me a sign-in link" at ${config.baseUrl}/app.\n\nIf you didn't sign up for Tharam, ignore this email and nothing happens.\n\nTharam`,
+  }).catch((e) => console.error('confirm mail failed', e.message));
+  return true;
 }
 
 function shopName(userId) {
@@ -84,7 +104,15 @@ function shopName(userId) {
   return s ? s.shop : null;
 }
 
-export function webAccessRoutes(app, { requireUser, isEmail, admins }) {
+export function webAccessRoutes(app, { requireUser, isEmail, admins, onConfirmed = () => {} }) {
+  // Not confirmed yet: send the confirmation link again (keeps the password chosen at sign-up).
+  app.post('/api/account/confirm/resend', requireUser, (req, res) => {
+    const u = S.user.get(req.user.id);
+    if (u.email_confirmed) return res.json({ ok: true, confirmed: true });
+    if (!allowed(`u${u.id}`, 5) || !sendSignupConfirm(u.id, u.email, S.lastVerify.get(u.id)?.password_hash || null)) return res.status(429).json({ error: 'Too many emails sent. Try again in 15 minutes.' });
+    res.json({ ok: true, sentTo: u.email });
+  });
+
   // Inside Shopify: what browser access looks like for this account.
   app.get('/api/account/web-access', requireUser, (req, res) => {
     const u = S.user.get(req.user.id);
@@ -125,7 +153,8 @@ export function webAccessRoutes(app, { requireUser, isEmail, admins }) {
     if (!allowed(ipKey, 10) || !allowed(`s${email}`, 3)) return res.status(429).json({ error: 'Too many links sent. Try again in 15 minutes.' });
     const u = S.byLogin.get(email) || S.byEmail.get(email);
     if (u && !(S.everLinked.get(u.id) && !shopForUser(u.id))) {
-      const link = issue(u.id, email, 'signin');
+      // An account that was never confirmed: opening this link proves the address and confirms it.
+      const link = issue(u.id, email, u.email_confirmed ? 'signin' : 'verify');
       sendMail({
         to: email,
         subject: 'Your Tharam sign-in link',
@@ -143,6 +172,19 @@ export function webAccessRoutes(app, { requireUser, isEmail, admins }) {
     const u = S.user.get(row.user_id);
     if (!u) return res.status(400).json({ error: 'This sign-in link is no longer valid.' });
     if (S.everLinked.get(u.id) && !shopForUser(u.id)) return res.status(400).json({ error: 'Tharam is no longer installed on your Shopify store. Install it again from the Shopify App Store to sign in.' });
+    if (row.purpose === 'verify') {
+      if (row.email !== u.email) return res.status(400).json({ error: 'This sign-in link is no longer valid.' });
+      if (u.email_confirmed) return res.status(400).json({ error: 'Your email is already confirmed. Log in, or ask for a sign-in link below.' });
+      if (S.useLink.run(Date.now(), row.token_hash).changes !== 1) return res.status(400).json({ error: 'This sign-in link was already used.' });
+      // The mailbox owner wins: their password applies and every other session on this account ends.
+      S.confirmUser.run(row.password_hash || null, u.id);
+      S.dropLinks.run(u.id);
+      S.bump.run(u.id);
+      req.session.uid = u.id;
+      req.session.ep = sessionEpoch(u.id);
+      try { onConfirmed(u.id, { email: u.email, storeUrl: u.pending_store_url }); } catch (e) { console.error('after confirm', e.message); }
+      return res.json({ ok: true, verified: true });
+    }
     if (row.purpose === 'confirm') {
       if (admins.has(row.email) || emailTaken(row.email, u.id)) return res.status(409).json({ error: 'This email is now used by another Tharam account.' });
     } else if (row.email !== u.login_email && row.email !== u.email) {
