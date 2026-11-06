@@ -35,7 +35,7 @@ import { saleReadiness, emailSaleReadiness, saleRecipients, saleGroups } from '.
 import { appHealth } from './app-health.js';
 import { runnerRoutes } from './runner-routes.js';
 import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportName } from './export.js';
-import { teamRoutes, membership, memberMay, teamAllowed } from './team.js';
+import { teamRoutes, membership, memberMay, teamAllowed, redactForViewer } from './team.js';
 import * as themeClean from './theme-clean.js';
 import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
 import { recoveryPacket } from './recovery-packet.js';
@@ -121,6 +121,8 @@ function requireUser(req, res, next) {
     if (!memberMay(m.role, req.method, req.path)) return res.status(403).json({ error: m.role === 'viewer' ? 'You can view this workspace but not change it. Ask the account owner for admin access.' : 'Only the account owner can do this.', role: m.role });
     req.member = { user: u, role: m.role, accountId: acc.id };
     req.user = acc;
+    // Viewers see reports, never credentials: gate keys, the Slack webhook address, signing secrets.
+    if (m.role === 'viewer') { const json = res.json.bind(res); res.json = (body) => json(redactForViewer(body)); }
   }
   next();
 }

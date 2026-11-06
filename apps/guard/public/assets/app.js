@@ -2010,6 +2010,7 @@
   }
 
   function pipelineDialog(s, e) {
+    if (!e.token) { formDialog({ title: 'Check from your deploy pipeline', body: `<p>Only the account owner and admins can see the key for <b>${esc(e.name)}</b>. Ask the account owner if you need it.</p>`, cancel: 'Done' }); return; }
     const base = location.origin;
     const curl = `curl -X POST ${base}/api/gate \\\n  -H "Authorization: Bearer ${e.token}"`;
     const yaml = `- name: Tharam publish check
