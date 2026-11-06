@@ -246,6 +246,25 @@
     $('#email').focus();
   }
 
+  // A new website account: nothing works until the emailed link is opened (so nobody can claim someone else's email).
+  function confirmView(notice) {
+    authView('login');
+    const card = $('.auth-card');
+    card.innerHTML = `<h1>Confirm your email</h1>
+      <p class="sub">We sent a link to <b>${esc(S.me.email)}</b>. Open it to finish creating your account. It works once, for 30 minutes.</p>
+      <p class="hint">No email after a few minutes? Check your spam folder, or send it again.</p>
+      <div class="inline-row" style="margin-top:14px"><button type="button" class="btn" id="resend">Send the link again</button></div>
+      <p class="error-msg" id="auth-err" role="alert">${esc(notice || '')}</p>
+      <p class="switch-mode"><button type="button" id="other">Use a different email</button></p>`;
+    $('#resend').onclick = async (e) => {
+      const done = busy(e.target, 'Sending');
+      try { await api('/api/account/confirm/resend', { method: 'POST', body: {} }); $('#auth-err').textContent = ''; toast('Link sent. Check your email.'); }
+      catch (ex) { $('#auth-err').textContent = ex.message; }
+      done();
+    };
+    $('#other').onclick = async () => { await api('/api/auth/logout', { method: 'POST', body: {} }).catch(() => {}); S.me = null; authView('signup'); };
+  }
+
   // ---------- Shell ----------
   function initials(u) {
     const src = (u.name || u.email || '?').trim();
@@ -2489,10 +2508,12 @@
       try {
         const r = await api('/api/auth/link/verify', { method: 'POST', body: { token: link[1] } });
         if (r.confirmed) S.flash = 'Your email is confirmed. You can now sign in to Tharam in any browser.';
+        if (r.verified) S.flash = 'Your email is confirmed. Welcome to Tharam.';
       } catch (ex) { return authView('link', ex.message); }
     }
     try { const r = await api('/api/me'); S.me = r.user; S.admin = r.admin; }
     catch { return authView(location.hash === '#signup' ? 'signup' : 'login'); }
+    if (S.me && S.me.email_confirmed === 0) return confirmView();
     shell();
     if (location.hash === '#signup') location.replace('#/');
     render();
