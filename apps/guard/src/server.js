@@ -25,6 +25,7 @@ import { webAccessRoutes, sessionValid, sessionEpoch, bumpSessionEpoch, emailTak
 import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './release.js';
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
+import { pluginRoutes } from './wp-plugin.js';
 import { approveBaseline } from './engine/visual.js';
 import { seal, storePassword } from './secret.js';
 import { sendMail, sendSlack } from './alerts.js';
@@ -1135,6 +1136,7 @@ const html = (render) => (req, res) => {
   res.set('Cache-Control', 'public, max-age=300').type('html').send(out);
 };
 const old = (file, opts) => html(() => site.legacy(config.publicDir, file, opts));
+pluginRoutes(app);
 app.get('/', html(() => site.home()));
 app.get('/de', html(() => site.deHome()));
 app.get('/fr', html(() => site.frHome()));
