@@ -1163,3 +1163,50 @@ ui-nav-menu { display: none !important; }
 .sale-day-form label.check { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; font-size: 13.5px; margin: 0; }
 #sale-cal td.go { white-space: nowrap; text-align: right; }
 @media (max-width: 640px) { .sale-suggest { flex-direction: column; align-items: flex-start; } }
+/* Your tests: list, file editor, step builder, Try it now trail */
+.notice.fail-n { background: var(--fail-bg); color: #7a1c1c; border-color: #f0c2c2; display: block; }
+.yt-problems { margin: 0; padding-left: 18px; }
+.yt-problems li { margin: 2px 0; }
+.yt-code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; overflow: auto; tab-size: 2; }
+textarea.yt-code { min-height: 360px; resize: vertical; margin: 10px 0 12px; }
+pre.yt-code { background: #f6f7fa; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px; margin: 10px 0 0; max-height: 420px; }
+.yt-file-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.yt-list tr.off .cell-main { color: var(--muted); }
+.yt-list .row-actions, .data .row-actions { white-space: nowrap; text-align: right; }
+.row-actions > * { vertical-align: middle; margin-left: 4px; }
+.yt-try-row td { background: #fafbfc; }
+.yt-try { padding: 4px 0; }
+.yt-try-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 10px; }
+.yt-shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.yt-shots figure { margin: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--white); padding: 8px; font-size: 12.5px; }
+.yt-shots figure.fail { border-color: #f0c2c2; background: var(--fail-bg); }
+.yt-shots figcaption { margin-bottom: 6px; }
+.yt-shots img { width: 100%; display: block; border-radius: 4px; border: 1px solid var(--line); cursor: zoom-in; }
+.t-fail { color: var(--fail); }
+.yt-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
+.yt-steps { list-style: none; margin: 0 0 12px; padding: 0; }
+.yt-step { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px; margin-bottom: 8px; background: var(--white); }
+.yt-step.dragging { opacity: 0.5; }
+.yt-step.drop { border-color: var(--action); box-shadow: 0 0 0 2px rgba(60, 80, 220, 0.15); }
+.yt-grip { cursor: grab; color: var(--muted); padding-top: 8px; letter-spacing: -2px; user-select: none; }
+.yt-n { flex: none; width: 22px; height: 22px; border-radius: 50%; background: #eef0f5; font-size: 12px; font-weight: 600; display: grid; place-items: center; margin-top: 7px; }
+.yt-step-body { flex: 1; min-width: 0; }
+.yt-step-body > select { margin-bottom: 8px; }
+.yt-fields { display: flex; flex-wrap: wrap; gap: 0 10px; }
+.yt-fields .field { flex: 1 1 200px; margin-bottom: 4px; }
+.yt-fields .field.yt-num { flex: 0 1 110px; }
+.yt-fields label { font-size: 12px; font-weight: 500; color: var(--muted); }
+.yt-step-acts { display: flex; gap: 2px; flex: none; }
+.yt-actions { margin: 4px 0 18px; }
+.yt-ex-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.yt-ex-steps { margin: 8px 0; padding-left: 20px; }
+.yt-how { padding-left: 20px; }
+.yt-how li { margin-bottom: 8px; }
+@media (max-width: 720px) {
+  .yt-grid { grid-template-columns: 1fr; }
+  .yt-step { flex-wrap: wrap; }
+  .yt-list .row-actions { white-space: normal; }
+}
+.yt-ai textarea { width: 100%; resize: vertical; font: inherit; }
+.yt-ai .tag.ai { vertical-align: middle; margin-left: 6px; }
+.yt-ai #yt-ai-out .notice { margin-top: 10px; }

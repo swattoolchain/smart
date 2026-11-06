@@ -69,7 +69,7 @@ export function summarize(checks, verdict) {
     const hijack = fails.find((f) => f.id === 'fn.checkout' && f.evidence?.offsite);
     if (hijack) return `Urgent: checkout is sending shoppers to another website (${hijack.evidence.offsite}). Their card details may be stolen.`;
     const c = fails.find((f) => f.severity === 'critical');
-    return `Customers may not be able to buy: ${PROBLEM[c.id] || c.title.toLowerCase()}.`;
+    return `Customers may not be able to buy: ${PROBLEM[c.id] || (c.category === 'custom' ? `your test “${c.title}” failed` : c.title.toLowerCase())}.`;
   }
   const journeyUntested = checks.some((c) => c.id === 'fn.platform');
   const lead = journeyUntested ? 'Your store is up.' : 'Customers can buy.';

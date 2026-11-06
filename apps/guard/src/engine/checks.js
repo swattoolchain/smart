@@ -7,6 +7,8 @@ export const CATEGORIES = {
   accessibility: { label: 'Accessibility', weight: 10 },
   reliability: { label: 'Errors & visuals', weight: 12 },
   trust: { label: 'Catalog & products', weight: 10 },
+  // The owner's own store-specific tests (src/custom-tests.js).
+  custom: { label: 'Your tests', weight: 10 },
   // Shown as "rules met", not as a score: legal rules don't change whether customers can buy.
   compliance: { label: 'Legal and compliance', weight: 0, rules: true },
   // Security watch: shown on its own, never part of the health score.

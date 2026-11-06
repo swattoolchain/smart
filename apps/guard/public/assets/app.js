@@ -97,7 +97,7 @@
     const j = await r.json().catch(() => ({}));
     if (r.status === 401 && EMB) throw Object.assign(new Error(j.error || 'Reload the page to continue.'), { status: 401 });
     if (r.status === 401 && !path.startsWith('/api/auth')) { S.me = null; authView('login'); throw new Error('Please log in'); }
-    if (!r.ok) throw Object.assign(new Error(j.error || 'Something went wrong. Try again.'), { status: r.status });
+    if (!r.ok) throw Object.assign(new Error(j.error || 'Something went wrong. Try again.'), { status: r.status, problems: j.problems });
     return j;
   }
   // Downloads and printing go through fetch, so they work with a session cookie and inside Shopify admin alike.
@@ -487,6 +487,7 @@
       ${feat('incident_mode') ? item(`${base}/incident`, 'lock', 'Incident mode', at('incident'), cur.incident ? '<span class="badge" aria-label="Incident mode is on">On</span>' : '') : ''}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
+      ${feat('custom_tests') ? item(`${base}/tests`, 'code', 'Your tests', at('tests')) : ''}
       ${item(`${base}/monitoring`, 'monitoring', 'Monitoring', at('monitoring'))}
       ${item(`${base}/settings`, 'settings', 'Store settings', at('settings'))}` : ''}
       <div class="rail-label">Workspace</div>
@@ -567,7 +568,7 @@
       if (!silent) { main.innerHTML = skeleton(); window.scrollTo(0, 0); }
       const ctx = { alive, main, r };
       // Pages of features that are switched off open the overview instead.
-      const PAGE_FEATURE = { sale: 'sale_report', apps: 'app_health', security: 'security_checklist', incident: 'incident_mode', sales: 'sale_plans' };
+      const PAGE_FEATURE = { sale: 'sale_report', apps: 'app_health', security: 'security_checklist', incident: 'incident_mode', sales: 'sale_plans', tests: 'custom_tests' };
       if (r.store) await ((!PAGE_FEATURE[r.module] || feat(PAGE_FEATURE[r.module])) && STORE_PAGES[r.module] || STORE_PAGES.overview)(ctx, S.stores.find((s) => s.id === r.store));
       else await PAGES[r.page](ctx);
       if (!silent && alive()) { const h1 = main.querySelector('h1'); document.title = `${h1 ? h1.textContent + ' – ' : ''}Tharam`; }
@@ -653,6 +654,7 @@
     { key: 'open', label: 'Open your store', sub: 'On a desktop and a phone-sized screen' },
     { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'pricing.journey', 'errors.js', 'sale.discount'] },
     { key: 'abtest', label: 'Shop every A/B test version', groups: ['sale.abtest'], full: true },
+    { key: 'custom', label: 'Run your own tests', groups: ['custom'] },
     { key: 'quality', label: 'Measure speed, SEO and accessibility', groups: ['speed', 'seo', 'a11y', 'links', 'policies'], full: true },
     { key: 'regional', label: 'Check the laws where you sell', groups: ['law.de', 'law.cookies', 'access.law', 'law.us'], full: true },
     { key: 'visual', label: 'Compare screenshots with the approved look', groups: ['visual'], full: true },
@@ -660,7 +662,7 @@
     { key: 'domain', label: 'Check your domain, certificate and email records', groups: ['security.domain'], full: true },
     { key: 'ai', label: 'AI review of how pages look', groups: ['ai.visual'], full: true },
   ];
-  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'pricing.journey': 3, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1, 'security.domain': 3, 'sale.abtest': 6 };
+  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'pricing.journey': 3, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1, 'security.domain': 3, 'sale.abtest': 6, custom: 10 };
   const estimate = (keys) => {
     const sec = 8 + keys.reduce((n, k) => n + (EST[k] || 5), 0);
     return sec < 60 ? 'under a minute' : `about ${Math.ceil(sec / 60)} minutes`;
@@ -1167,6 +1169,390 @@
       } catch (ex) { toast(ex.message, 'error'); } finally { done(); }
     };
   };
+
+  // ---------- Your tests: the store's own tests, built in a form or written as a file (src/custom-tests-routes.js) ----------
+  const YT_STEPS = {
+    open: { label: 'Open a page', ph: '/pages/contact or {product}', argLabel: 'Page' },
+    click: { label: 'Click', ph: 'text=Check, #button or role=button:Check', argLabel: 'What to click' },
+    fill: { label: 'Type into a field', ph: '#pincode', argLabel: 'Field' },
+    choose: { label: 'Choose an option', ph: '#size or text=Size', argLabel: 'Drop-down or button' },
+    quantity: { label: 'Set quantity', ph: '2', argLabel: 'Quantity' },
+    add_to_cart: { label: 'Add to cart' },
+    open_cart: { label: 'Open the cart' },
+    checkout: { label: 'Go to checkout (stops before payment)' },
+    wait_for: { label: 'Wait for something to show', ph: '.delivery-result', argLabel: 'What to wait for' },
+    expect_visible: { label: 'Check something is showing', ph: '.size-guide', argLabel: 'What should show' },
+    expect_hidden: { label: 'Check something is not showing', ph: '.error', argLabel: 'What should not show' },
+    expect_text: { label: 'Check the text', ph: '.delivery-result', argLabel: 'Where' },
+    expect_price: { label: 'Check a price', ph: '.price', argLabel: 'Where the price is' },
+    expect_count: { label: 'Count things on the page', ph: '.product-card', argLabel: 'What to count' },
+    expect_url: { label: 'Check the page address', ph: '/cart', argLabel: 'The address contains' },
+    expect_cart_total: { label: 'Check the cart total' },
+    expect_cart_items: { label: 'Check the number of items in the cart' },
+    expect_no_errors: { label: 'Check there were no script errors' },
+  };
+  const YT_EXTRA = { value: 'Text to type', option: 'Option to choose', contains: 'Should contain', timeout: 'Wait up to (seconds)' };
+  const YT_EXAMPLES = [
+    { title: 'Delivery checker (pincode)', why: 'Your product page has a box where shoppers check if you deliver to them. This test types a pincode and checks the answer.',
+      test: { name: 'Delivery checker works', severity: 'major', runs: 'full', device: 'mobile', steps: [{ open: '{product}' }, { fill: '#pincode', value: '560001' }, { click: 'text=Check' }, { expect_text: '.delivery-result', contains: 'Delivery available' }] } },
+    { title: 'Size guide opens', why: 'Shoppers who can’t see the size guide buy the wrong size, or don’t buy. This test opens it on a phone.',
+      test: { name: 'Size guide opens', severity: 'minor', runs: 'full', device: 'mobile', steps: [{ open: '{product}' }, { click: 'text=Size guide' }, { expect_visible: '.size-guide' }] } },
+    { title: 'Two in the cart, right total', why: 'Checks that adding two of your test product gives two items in the cart and a total of at least twice the price.',
+      test: { name: 'Two items and the right total', severity: 'critical', runs: 'journeys', device: 'desktop', steps: [{ open: '{product}' }, { quantity: 2 }, { add_to_cart: true }, { expect_cart_items: 2 }, { open_cart: true }, { expect_no_errors: true }] } },
+  ];
+  // A target as the owner writes it: "#id", "text=Check" or "role=button:Check".
+  const ytTarget = (t) => (!t || typeof t !== 'object' ? (t ?? '') : t.text ? `text=${t.text}` : t.role ? `role=${t.role}${t.name ? `:${t.name}` : ''}` : t.css || '');
+  const ytKind = (st) => Object.keys(YT_STEPS).find((k) => k in st) || 'open';
+  const ytSay = (st) => {
+    const k = ytKind(st), v = st[k];
+    const tail = typeof v === 'object' && v && !('css' in v || 'text' in v || 'role' in v) ? Object.entries(v).map(([a, b]) => `${a} ${b}`).join(', ') : v === true ? '' : ytTarget(v);
+    const more = ['value', 'option', 'contains', 'equals', 'min', 'max'].filter((x) => st[x] != null).map((x) => `${x} ${st[x]}`).join(', ');
+    return `${YT_STEPS[k].label}${tail !== '' ? `: ${tail}` : ''}${more ? ` (${more})` : ''}`;
+  };
+  // The editor's tests use the written forms, so a test saved from the form reads like the file.
+  const ytPlain = ({ id, ...t }) => ({ ...t, steps: t.steps.map((st) => Object.fromEntries(Object.entries(st).map(([k, v]) => [k, v && typeof v === 'object' && ('css' in v || 'text' in v || 'role' in v) ? (/^(text|role)=/i.test(v.css || '') ? v : ytTarget(v)) : v]))) });
+  async function ytRaw(path, { method = 'GET', text, type = 'text/plain' } = {}) {
+    const headers = {};
+    if (text != null) headers['Content-Type'] = type;
+    if (EMB) headers.Authorization = `Bearer ${await window.shopify.idToken()}`;
+    const r = await fetch(path, { method, headers, credentials: 'same-origin', body: text });
+    if (!r.ok) { const j = await r.json().catch(() => ({})); throw Object.assign(new Error(j.error || 'Something went wrong. Try again.'), { status: r.status, problems: j.problems }); }
+    return r;
+  }
+  // Downloads work inside Shopify admin too: the file is fetched with the session, then saved from the page.
+  async function ytDownload(s, version) {
+    const r = await ytRaw(`/api/stores/${s.id}/custom-tests?download=1${version ? `&version=${version}` : ''}`);
+    const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || 'tharam-tests.yaml';
+    const url = URL.createObjectURL(await r.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  const ytProblems = (ex) => (ex.problems?.length > 1 ? `<ul class="yt-problems">${ex.problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : `<p>${esc(ex.problems?.[0] || ex.message)}</p>`);
+  function ytTrail(r) {
+    return `<div class="yt-try ${r.status === 'pass' ? 'ok' : 'bad'}" role="status"><p class="yt-try-head"><span class="pill ${r.status === 'pass' ? 'healthy' : 'critical'}">${r.status === 'pass' ? 'Worked' : 'Failed'}</span> ${esc(r.message)} <span class="muted">${(r.ms / 1000).toFixed(1)} s</span></p>
+      <div class="yt-shots">${r.steps.map((st) => `<figure class="${st.status === 'fail' ? 'fail' : ''}"><figcaption><b>${st.n}.</b> ${esc(st.text)}${st.status === 'fail' ? ` <b class="t-fail">failed</b>${st.error ? `: ${esc(st.error)}` : ''}` : ''}</figcaption>${st.image ? `<img src="${esc(st.image)}" alt="Step ${st.n}: ${esc(st.text)}" loading="lazy">` : ''}</figure>`).join('')}</div></div>`;
+  }
+
+  STORE_PAGES.tests = async (ctx, s) => {
+    const d = await api(`/api/stores/${s.id}/custom-tests`);
+    if (!ctx.alive()) return;
+    const base = `#/s/${s.id}/tests`;
+    const tab = ['file', 'history', 'help', 'edit'].includes(ctx.r.a) ? ctx.r.a : null;
+    const tests = (d.file?.tests || []).map(ytPlain);
+    const ids = (d.file?.tests || []).map((t) => t.id);
+    const format = d.file?.format || 'yaml';
+    const used = `${tests.length} of ${d.limits.tests} test${d.limits.tests === 1 ? '' : 's'} on your plan`;
+    const actions = `<button type="button" class="btn secondary" id="yt-upload">${icon('arrow', 16)}Upload file</button>${d.file ? `<button type="button" class="btn secondary" id="yt-download">Download file</button>` : ''}${tests.length < d.limits.tests ? `<a class="btn" href="${base}/edit/new">${icon('add', 16)}New test</a>` : ''}<input type="file" id="yt-file" accept=".yaml,.yml,.json,.txt,application/json,text/yaml" hidden>`;
+    const head = storeHead(s, 'Your tests', { actions, meta: esc(used) }) + `<p class="lede-sm">Add tests for things only your store has, like a delivery checker or a size guide. We run them like a shopper, on your store only, and stop before payment.</p>`
+      + tabs(base, [[null, 'Tests', tests.length], ['file', 'File'], ['history', 'History', d.history.length], ['help', 'Help and examples']], tab === 'edit' ? null : tab);
+    // Every change is saved as a new version of the file; nothing is ever lost.
+    const saveList = async (list, msg) => {
+      await api(`/api/stores/${s.id}/custom-tests`, { method: 'PUT', body: { tests: list, format } });
+      toast(msg);
+      render({ silent: true });
+    };
+    const bindHead = () => {
+      $('#yt-upload').onclick = () => $('#yt-file').click();
+      $('#yt-file').onchange = async (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        if (f.size > 100 * 1024) return toast('That file is larger than 100 KB.', 'error');
+        try {
+          const text = await f.text();
+          await ytRaw(`/api/stores/${s.id}/custom-tests`, { method: 'PUT', text, type: /\.json$/i.test(f.name) ? 'application/json' : 'text/yaml' });
+          toast('File uploaded. Your tests are saved.');
+          location.hash = base;
+          render({ silent: true });
+        } catch (ex) {
+          formDialog({ title: 'This file has mistakes', body: `<p class="muted">Nothing was saved. Fix these and upload it again:</p>${ytProblems(ex)}`, cancel: 'Close', onSubmit: async () => null });
+        } finally { e.target.value = ''; }
+      };
+      const dl = $('#yt-download');
+      if (dl) dl.onclick = async () => { const done = busy(dl, 'Downloading'); try { await ytDownload(s); } catch (ex) { toast(ex.message, 'error'); } finally { done(); } };
+    };
+
+    if (tab === 'edit') return ytEditor(ctx, s, d, tests, format, base);
+
+    if (tab === 'file') {
+      const text = d.file?.text ?? d.example;
+      ctx.main.innerHTML = `<div class="main-inner">${head}
+        <section class="panel"><div class="yt-file-head"><p class="sub" style="margin:0">${d.file ? `Version ${d.file.version}, ${esc(format.toUpperCase())}. Edit and save: we check the file first and keep the old version.` : 'No tests yet. Here is an example to start from.'}</p>
+          <span class="muted">YAML or JSON · up to ${d.maxSteps} steps a test</span></div>
+          <label class="sr-only" for="yt-text">Your tests file</label>
+          <textarea id="yt-text" class="yt-code" rows="22" spellcheck="false">${esc(text)}</textarea>
+          <div class="yt-err" id="yt-err" role="alert"></div>
+          <div class="inline-row"><button type="button" class="btn" id="yt-save">Save file</button><span class="muted" style="font-size:12.5px">Mistakes are shown here, line by line, and nothing is saved until they’re fixed.</span></div></section></div>`;
+      bindHead();
+      const ta = $('#yt-text');
+      ta.addEventListener('input', () => { S.dirty = true; });
+      $('#yt-save').onclick = async (e) => {
+        const done = busy(e.currentTarget, 'Checking and saving');
+        try {
+          const r = await ytRaw(`/api/stores/${s.id}/custom-tests`, { method: 'PUT', text: ta.value, type: /^\s*[[{]/.test(ta.value) ? 'application/json' : 'text/yaml' });
+          const j = await r.json();
+          S.dirty = false;
+          $('#yt-err').innerHTML = '';
+          toast(j.unchanged ? 'No changes to save' : `Saved as version ${j.file.version}`);
+          render({ silent: true });
+        } catch (ex) { $('#yt-err').innerHTML = `<div class="notice fail-n">${ytProblems(ex)}</div>`; } finally { done(); }
+      };
+      return;
+    }
+
+    if (tab === 'history') {
+      ctx.main.innerHTML = `<div class="main-inner" id="yt-root">${head}
+        ${d.history.length ? `<section class="panel flush"><div class="table-wrap flat"><table class="data"><thead><tr><th>Version</th><th>Saved</th><th>Tests</th><th></th></tr></thead><tbody>
+          ${d.history.map((h, i) => `<tr data-v="${h.version}"><td><span class="cell-main">Version ${h.version}</span>${i === 0 ? ' <span class="pill healthy">In use</span>' : ''}<div class="cell-sub">${esc(h.format.toUpperCase())}</div></td><td>${time(h.savedAt)}</td><td>${h.tests}</td>
+            <td class="row-actions"><button type="button" class="btn small ghost" data-view="${h.version}">View</button><button type="button" class="btn small ghost" data-dl="${h.version}">Download</button>${i === 0 ? '' : `<button type="button" class="btn small secondary" data-restore="${h.version}">Restore</button>`}</td></tr>`).join('')}
+          </tbody></table></div></section>
+          <p class="hint">Every save is kept. Restoring an older version saves it again as the newest one, so you can always go back.</p>` : `<div class="empty panel"><h2>No versions yet</h2><p>Each time you save your tests, the version is kept here.</p></div>`}
+        <div id="yt-view"></div></div>`;
+      bindHead();
+      $('#yt-root').addEventListener('click', async (e) => {
+        const v = e.target.closest('[data-view]'), dl = e.target.closest('[data-dl]'), rs = e.target.closest('[data-restore]');
+        if (v) {
+          const f = await api(`/api/stores/${s.id}/custom-tests?version=${v.dataset.view}`);
+          $('#yt-view').innerHTML = `<section class="panel"><h2>Version ${f.file.version}</h2><p class="sub">${esc(exact(f.file.savedAt))} · ${plural(f.file.tests.length, 'test')}: ${esc(f.file.tests.map((t) => t.name).join(', '))}</p><pre class="yt-code">${esc(f.file.text)}</pre></section>`;
+          $('#yt-view').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else if (dl) {
+          try { await ytDownload(s, dl.dataset.dl); } catch (ex) { toast(ex.message, 'error'); }
+        } else if (rs) {
+          const n = rs.dataset.restore;
+          if (!(await confirmDialog({ title: `Restore version ${n}?`, body: `Your tests go back to how they were in version ${n}. It is saved as a new version, so the current one stays in the history.`, confirm: 'Restore' }))) return;
+          try { const r = await api(`/api/stores/${s.id}/custom-tests/restore`, { method: 'POST', body: { version: Number(n) } }); toast(r.unchanged ? 'That version is already in use' : `Version ${n} restored as version ${r.file.version}`); render({ silent: true }); }
+          catch (ex) { toast(ex.message, 'error'); }
+        }
+      });
+      return;
+    }
+
+    if (tab === 'help') {
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
+        <section class="panel"><h2>How your tests work</h2>
+          <ol class="yt-how"><li><b>A test is a list of steps</b>, the way you’d check something by hand: open a page, click, type, then check what you see.</li>
+          <li><b>Checks are the steps that start with “Check”.</b> If what you expect isn’t there, the test fails at that step and we keep a screenshot.</li>
+          <li><b>Choose when it runs:</b> with every shopping check, or once a day with the full check. A failure sends an alert like our own checks, with the severity you pick.</li>
+          <li><b>Point at things on the page</b> by their visible text (<code>text=Check</code>), a button’s name (<code>role=button:Check</code>), or, if you know it, a CSS selector (<code>#pincode</code>).</li>
+          <li><b>Use your store’s values:</b> <code>{product}</code> is your test product’s page; <code>{product_title}</code>, <code>{price}</code> and <code>{variant}</code> work in any text.</li>
+          <li><b>Try it now</b> runs one test straight away and shows a screenshot of every step, so you can see what we see.</li></ol>
+          <p class="muted">Tests stay on your store, never pay, and empty the cart afterwards. Up to ${d.maxSteps} steps and 60 seconds a test.</p></section>
+        ${YT_EXAMPLES.map((x, i) => `<section class="panel yt-example"><div class="yt-ex-head"><div><h2>Example ${i + 1}: ${esc(x.title)}</h2><p class="sub">${esc(x.why)}</p></div>
+          <button type="button" class="btn secondary small" data-ex="${i}" ${tests.some((t) => t.name === x.test.name) || tests.length >= d.limits.tests ? 'disabled' : ''}>${tests.some((t) => t.name === x.test.name) ? 'Added' : 'Add to my tests'}</button></div>
+          <ol class="yt-ex-steps">${x.test.steps.map((st) => `<li>${esc(ytSay(st))}</li>`).join('')}</ol>
+          <details><summary>As a file</summary><pre class="yt-code">${esc(`tests:\n  - name: ${x.test.name}\n    severity: ${x.test.severity}\n    runs: ${x.test.runs}\n    device: ${x.test.device}\n    steps:\n${x.test.steps.map((st) => Object.entries(st).map(([k, v], j) => `${j ? '        ' : '      - '}${k}: ${typeof v === 'string' ? JSON.stringify(v) : v}`).join('\n')).join('\n')}`)}</pre></details></section>`).join('')}
+      </div>`;
+      bindHead();
+      $$('[data-ex]', ctx.main).forEach((b) => (b.onclick = async () => {
+        const x = YT_EXAMPLES[Number(b.dataset.ex)];
+        const done = busy(b, 'Adding');
+        try { await saveList([...tests, x.test], `“${x.test.name}” added. Change the targets to match your store, then try it.`); location.hash = `${base}/edit/${tests.length}`; }
+        catch (ex) { done(); toast(ex.message, 'error'); }
+      }));
+      return;
+    }
+
+    // Tests list
+    const res = d.results || {};
+    const resultCell = (t) => {
+      const r = res[ids[tests.indexOf(t)]];
+      if (!r) return '<span class="muted">Not run yet</span>';
+      return `<span class="pill ${r.status === 'pass' ? 'healthy' : r.status === 'fail' ? 'critical' : 'warning'}">${r.status === 'pass' ? 'Passed' : r.status === 'fail' ? 'Failed' : 'To check'}</span><div class="cell-sub">${time(r.at)}${r.ms ? ` · took ${(r.ms / 1000).toFixed(1)} s` : ''} · <a href="#/s/${s.id}/runs/${r.runId}">see run</a></div>`;
+    };
+    ctx.main.innerHTML = `<div class="main-inner" id="yt-root">${head}
+      ${tests.length ? `<section class="panel flush"><div class="table-wrap flat"><table class="data yt-list"><thead><tr><th style="width:60px">On</th><th>Test</th><th style="width:210px">Last result</th><th></th></tr></thead><tbody>
+        ${tests.map((t, i) => `<tr data-i="${i}" class="${t.enabled === false ? 'off' : ''}"><td><label class="switch" title="${t.enabled === false ? 'Off: not run' : 'On'}"><input type="checkbox" data-toggle="${i}" ${t.enabled === false ? '' : 'checked'} aria-label="Run “${esc(t.name)}”"><span></span></label></td>
+          <td><a class="cell-main" href="${base}/edit/${i}">${esc(t.name)}</a><div class="cell-sub">${esc({ critical: 'Critical', major: 'Major', minor: 'Minor' }[t.severity])} · ${t.runs === 'journeys' ? 'every shopping check' : 'daily full check'} · ${esc(t.device)} · ${plural(t.steps.length, 'step')}</div></td>
+          <td>${resultCell(t)}</td>
+          <td class="row-actions"><button type="button" class="btn small secondary" data-try="${i}">${icon('play', 14)}Try it now</button><a class="icon-btn" href="${base}/edit/${i}" aria-label="Edit “${esc(t.name)}”" data-tip="Edit">${icon('edit', 16)}</a><button type="button" class="icon-btn" data-dup="${i}" aria-label="Duplicate “${esc(t.name)}”" data-tip="Duplicate">${icon('copy', 16)}</button><button type="button" class="icon-btn" data-del="${i}" aria-label="Delete “${esc(t.name)}”" data-tip="Delete">${icon('trash', 16)}</button></td></tr>
+          <tr class="yt-try-row" id="yt-try-${i}" hidden><td colspan="4"></td></tr>`).join('')}
+        </tbody></table></div></section>`
+      : `<div class="empty panel"><h2>No tests of your own yet</h2><p>Build one step by step, start from an example, or upload a file.</p><div class="inline-row" style="justify-content:center"><a class="btn" href="${base}/edit/new">${icon('add', 16)}New test</a><a class="btn secondary" href="${base}/help">See examples</a></div></div>`}
+      </div>`;
+    bindHead();
+    const root = $('#yt-root');
+    root.addEventListener('change', async (e) => {
+      const tg = e.target.closest('[data-toggle]');
+      if (!tg) return;
+      const i = Number(tg.dataset.toggle);
+      const list = tests.map((t, j) => (j === i ? { ...t, enabled: tg.checked } : t));
+      try { await saveList(list, tg.checked ? `“${tests[i].name}” is on` : `“${tests[i].name}” is off. It stays in your file but won’t run.`); } catch (ex) { tg.checked = !tg.checked; toast(ex.message, 'error'); }
+    });
+    root.addEventListener('click', async (e) => {
+      const dup = e.target.closest('[data-dup]'), del = e.target.closest('[data-del]'), tr = e.target.closest('[data-try]');
+      if (dup) {
+        const t = tests[Number(dup.dataset.dup)];
+        if (tests.length >= d.limits.tests) return toast(`Your plan allows ${d.limits.tests} tests per store.`, 'error');
+        let name = `${t.name} (copy)`, n = 2;
+        while (tests.some((x) => x.name.toLowerCase() === name.toLowerCase())) name = `${t.name} (copy ${n++})`;
+        try { await saveList([...tests, { ...t, name: name.slice(0, 80) }], `Copied as “${name}”`); } catch (ex) { toast(ex.message, 'error'); }
+      } else if (del) {
+        const i = Number(del.dataset.del);
+        if (tests.length === 1) return toast('This is your only test. Turn it off instead, or upload a new file.', 'error');
+        if (!(await confirmDialog({ title: `Delete “${tests[i].name}”?`, body: 'It stops running. Earlier versions of your file keep it, so you can restore it from History.', confirm: 'Delete test', danger: true }))) return;
+        try { await saveList(tests.filter((_, j) => j !== i), `“${tests[i].name}” deleted`); } catch (ex) { toast(ex.message, 'error'); }
+      } else if (tr) {
+        const i = Number(tr.dataset.try);
+        const row = $(`#yt-try-${i}`);
+        row.hidden = false;
+        row.firstElementChild.innerHTML = '<p class="muted"><span class="spinner"></span> Running this test on your store. It takes up to a minute…</p>';
+        const done = busy(tr, 'Running');
+        try {
+          const r = await api(`/api/stores/${s.id}/custom-tests/${encodeURIComponent(tests[i].name)}/try`, { method: 'POST' });
+          row.firstElementChild.innerHTML = ytTrail(r);
+          $$('.yt-shots img', row).forEach((im) => (im.onclick = () => lightbox(im.src, im.alt)));
+        } catch (ex) { row.firstElementChild.innerHTML = `<div class="notice fail-n"><p>${esc(ex.message)}</p></div>`; } finally { done(); }
+      }
+    });
+  };
+
+  // The step builder: one test, edited as a form.
+  function ytEditor(ctx, s, d, tests, format, base) {
+    const isNew = ctx.r.b === 'new';
+    const idx = isNew ? tests.length : Number(ctx.r.b);
+    if (!isNew && !tests[idx]) { location.replace(base); return; }
+    if (isNew && tests.length >= d.limits.tests) { toast(`Your plan allows ${d.limits.tests} tests per store.`, 'error'); location.replace(base); return; }
+    const head = storeHead(s, isNew ? 'New test' : 'Edit test', { crumb: `<a href="#/s/${s.id}">${esc(s.name || host(s.url))}</a> › <a href="${base}">Your tests</a>` });
+    const t = isNew ? { name: '', severity: 'major', runs: 'full', device: 'desktop', enabled: true, fix: '', steps: [{ open: '{product}' }] } : JSON.parse(JSON.stringify(tests[idx]));
+    const lib = Object.fromEntries(d.library.map((x) => [x.key, x]));
+    // Describe it in words: AI drafts the steps into this form; nothing is saved until the owner saves.
+    const ai = isNew && d.ai?.available ? { desc: '', page: '', note: '', left: d.ai.left } : null;
+    const aiPanel = () => (ai ? `<section class="panel yt-ai"><h2>Describe it in words <span class="tag ai">AI</span></h2><p class="sub">Say what a shopper does and what should happen. We open the page, and AI drafts the steps below for you to try and save.</p>
+            <div class="field"><label for="yt-desc">What should the test do?</label><textarea id="yt-desc" rows="3" maxlength="600" placeholder="e.g. Enter pincode 560001 on a product page, press Check and make sure it says delivery is available">${esc(ai.desc)}</textarea></div>
+            <div class="inline-row"><div class="field" style="flex:1;margin:0"><label for="yt-page">Page to start on <span class="muted" style="font-weight:400">(optional)</span></label><input id="yt-page" maxlength="300" value="${esc(ai.page)}" placeholder="Your test product, or a page like /pages/contact" spellcheck="false"></div>
+              <button type="button" class="btn secondary" id="yt-draft" ${ai.left ? '' : 'disabled'} style="align-self:flex-end">Draft the steps</button></div>
+            <p class="muted" style="font-size:12.5px;margin:8px 0 0">${ai.left ? `${ai.left} AI ${ai.left === 1 ? 'draft' : 'drafts'} left today.` : 'You’ve used today’s AI drafts. Build the test with the steps below.'}</p>
+            <div id="yt-ai-out" role="status">${ai.note ? `<div class="notice ok-n"><p>${esc(ai.note)}</p></div>` : ''}</div></section>` : '');
+    const opt = (v, label, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(label)}</option>`;
+    const stepRow = (st, i) => {
+      const k = ytKind(st), def = lib[k], meta = YT_STEPS[k];
+      const v = st[k];
+      const range = def.arg === 'range' ? (typeof v === 'number' ? { equals: v } : v || {}) : st;
+      let fields = '';
+      if (['target', 'path', 'text', 'number'].includes(def.arg)) fields += `<div class="field"><label>${esc(meta.argLabel)}</label><input data-f="arg" ${def.arg === 'number' ? 'type="number" min="1" max="999"' : ''} value="${esc(def.arg === 'target' ? ytTarget(v) : v ?? '')}" placeholder="${esc(meta.ph)}" spellcheck="false"></div>`;
+      for (const x of [...def.need, ...def.opt]) fields += `<div class="field"><label>${esc(YT_EXTRA[x])}${def.opt.includes(x) ? ' <span class="muted" style="font-weight:400">(optional)</span>' : ''}</label><input data-f="${x}" ${x === 'timeout' ? 'type="number" min="1" max="30"' : ''} value="${esc(st[x] ?? '')}" spellcheck="false"></div>`;
+      if (def.range || def.arg === 'range') fields += ['equals', 'min', 'max'].map((x) => `<div class="field yt-num"><label>${{ equals: 'Exactly', min: 'At least', max: 'At most' }[x]}</label><input data-f="${x}" type="number" step="any" value="${esc(range[x] ?? '')}"></div>`).join('');
+      return `<li class="yt-step" draggable="true" data-i="${i}"><span class="yt-grip" aria-hidden="true" title="Drag to move">⋮⋮</span><span class="yt-n">${i + 1}</span>
+        <div class="yt-step-body"><select data-f="kind" aria-label="Step ${i + 1}">${Object.entries(YT_STEPS).map(([key, m]) => opt(key, m.label, k)).join('')}</select><div class="yt-fields">${fields}</div></div>
+        <div class="yt-step-acts"><button type="button" class="icon-btn" data-up="${i}" aria-label="Move step ${i + 1} up" ${i ? '' : 'disabled'}>↑</button><button type="button" class="icon-btn" data-down="${i}" aria-label="Move step ${i + 1} down" ${i < t.steps.length - 1 ? '' : 'disabled'}>↓</button><button type="button" class="icon-btn" data-rm="${i}" aria-label="Remove step ${i + 1}">${icon('trash', 15)}</button></div></li>`;
+    };
+    // Reads the form back into the test (blank optional fields are left out).
+    const read = () => {
+      const f = $('#yt-form');
+      t.name = f.name.value.trim(); t.severity = f.severity.value; t.runs = f.runs.value; t.device = f.device.value; t.enabled = f.enabled.checked; t.fix = f.fix.value.trim();
+      t.steps = $$('.yt-step', f).map((li) => {
+        const k = $('[data-f=kind]', li).value, def = lib[k];
+        const val = (x) => $(`[data-f="${x}"]`, li)?.value.trim() ?? '';
+        const num = (x) => (val(x) === '' ? undefined : Number(val(x)));
+        const st = {};
+        if (def.arg === 'flag') st[k] = true;
+        else if (def.arg === 'number') st[k] = num('arg');
+        else if (def.arg === 'range') st[k] = Object.fromEntries(['equals', 'min', 'max'].filter((x) => num(x) != null).map((x) => [x, num(x)]));
+        else st[k] = val('arg');
+        for (const x of def.need) st[x] = val(x);
+        for (const x of def.opt) if (val(x) !== '') st[x] = x === 'timeout' ? num(x) : val(x);
+        if (def.range) for (const x of ['equals', 'min', 'max']) if (num(x) != null) st[x] = num(x);
+        return st;
+      });
+      if (!t.fix) delete t.fix;
+      return t;
+    };
+    const draw = () => {
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
+        <form id="yt-form" novalidate>
+          ${aiPanel()}
+          <section class="panel">
+            <div class="field"><label for="yt-name">Name</label><input id="yt-name" name="name" maxlength="80" value="${esc(t.name)}" placeholder="e.g. Delivery checker works"><p class="hint">Shown in reports and alerts.</p></div>
+            <div class="yt-grid">
+              <div class="field"><label for="yt-sev">If it fails</label><select id="yt-sev" name="severity">${opt('critical', 'Critical: customers can’t buy', t.severity)}${opt('major', 'Major: something important is broken', t.severity)}${opt('minor', 'Minor: worth fixing', t.severity)}</select></div>
+              <div class="field"><label for="yt-runs">When it runs</label><select id="yt-runs" name="runs">${opt('journeys', 'Every shopping check', t.runs)}${opt('full', 'Once a day, with the full check', t.runs)}</select></div>
+              <div class="field"><label for="yt-dev">Device</label><select id="yt-dev" name="device">${opt('desktop', 'Computer', t.device)}${opt('mobile', 'Phone', t.device)}</select></div>
+            </div>
+            <div class="field"><label for="yt-fix">What to do when it fails <span class="muted" style="font-weight:400">(optional)</span></label><input id="yt-fix" name="fix" maxlength="300" value="${esc(t.fix || '')}" placeholder="e.g. Check the delivery app’s pincode list."></div>
+            <label class="toggle-line"><span class="switch"><input type="checkbox" name="enabled" ${t.enabled === false ? '' : 'checked'}><span></span></span><span class="tl-text"><b>Run this test</b><span>Off keeps it in your file without running it.</span></span></label>
+          </section>
+          <section class="panel"><h2>Steps</h2><p class="sub">In order, like a shopper. Point at things by their text (<code>text=Check</code>), a button’s name (<code>role=button:Check</code>) or a CSS selector. Drag a step, or use the arrows, to move it.</p>
+            <ol class="yt-steps" id="yt-steps">${t.steps.map(stepRow).join('')}</ol>
+            <div class="inline-row"><button type="button" class="btn secondary small" id="yt-add" ${t.steps.length >= d.limits.steps ? 'disabled' : ''}>${icon('add', 15)}Add a step</button><span class="muted" style="font-size:12.5px">${t.steps.length} of ${d.limits.steps} steps</span></div>
+          </section>
+          <div class="yt-err" id="yt-err" role="alert"></div>
+          <div class="inline-row yt-actions"><button type="submit" class="btn" id="yt-save">Save test</button><button type="button" class="btn secondary" id="yt-try">${icon('play', 15)}Try it now</button><a class="btn ghost" href="${base}">Cancel</a></div>
+          <div id="yt-try-out"></div>
+        </form></div>`;
+      const form = $('#yt-form');
+      form.addEventListener('input', () => { S.dirty = true; });
+      form.addEventListener('change', (e) => { if (e.target.dataset.f === 'kind') { read(); const i = Number(e.target.closest('.yt-step').dataset.i); t.steps[i] = { [e.target.value]: lib[e.target.value].arg === 'flag' ? true : lib[e.target.value].arg === 'range' ? {} : '' }; S.dirty = true; draw(); $(`.yt-step[data-i="${i}"] [data-f=arg], .yt-step[data-i="${i}"] select`)?.focus(); } });
+      const move = (from, to) => { read(); if (to < 0 || to >= t.steps.length) return; const [x] = t.steps.splice(from, 1); t.steps.splice(to, 0, x); S.dirty = true; draw(); $(`.yt-step[data-i="${to}"] select`)?.focus(); };
+      form.addEventListener('click', (e) => {
+        const up = e.target.closest('[data-up]'), down = e.target.closest('[data-down]'), rm = e.target.closest('[data-rm]');
+        if (up) move(Number(up.dataset.up), Number(up.dataset.up) - 1);
+        else if (down) move(Number(down.dataset.down), Number(down.dataset.down) + 1);
+        else if (rm) { read(); if (t.steps.length === 1) return toast('A test needs at least one step.', 'error'); t.steps.splice(Number(rm.dataset.rm), 1); S.dirty = true; draw(); }
+      });
+      let dragFrom = null;
+      $$('.yt-step', form).forEach((li) => {
+        li.addEventListener('dragstart', (e) => { dragFrom = Number(li.dataset.i); li.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
+        li.addEventListener('dragend', () => li.classList.remove('dragging'));
+        li.addEventListener('dragover', (e) => { e.preventDefault(); li.classList.add('drop'); });
+        li.addEventListener('dragleave', () => li.classList.remove('drop'));
+        li.addEventListener('drop', (e) => { e.preventDefault(); li.classList.remove('drop'); if (dragFrom != null && dragFrom !== Number(li.dataset.i)) move(dragFrom, Number(li.dataset.i)); dragFrom = null; });
+        // Typing in a field must not start a drag.
+        $$('input, select', li).forEach((x) => { x.addEventListener('mousedown', () => (li.draggable = false)); x.addEventListener('blur', () => (li.draggable = true)); });
+      });
+      $('#yt-add').onclick = () => { read(); t.steps.push({ click: '' }); S.dirty = true; draw(); $$('.yt-step select').at(-1)?.focus(); };
+      if (ai) {
+        $('#yt-draft').onclick = async (e) => {
+          ai.desc = $('#yt-desc').value; ai.page = $('#yt-page').value;
+          const done = busy(e.currentTarget, 'Drafting');
+          $('#yt-ai-out').innerHTML = '<p class="muted"><span class="spinner"></span> Opening your store and drafting the steps…</p>';
+          try {
+            const r = await api(`/api/stores/${s.id}/custom-tests/draft`, { method: 'POST', body: { description: ai.desc, page: ai.page } });
+            const keep = { enabled: t.enabled, fix: t.fix };
+            Object.assign(t, r.test, keep, { runs: t.runs });
+            ai.left = r.left;
+            ai.note = `Draft ready: ${r.test.steps.length} steps. Check them, press Try it now, then save.${r.note ? ` ${r.note}` : ''}`;
+            S.dirty = true;
+            draw();
+            $('#yt-steps')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } catch (ex) {
+            done();
+            if (ex.status === 429) ai.left = 0;
+            $('#yt-ai-out').innerHTML = `<div class="notice fail-n"><p>${esc(ex.message)}</p></div>`;
+          }
+        };
+      }
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        read();
+        const btn = $('#yt-save');
+        const done = busy(btn, 'Saving');
+        const list = tests.slice();
+        list[idx] = t;
+        try {
+          await api(`/api/stores/${s.id}/custom-tests`, { method: 'PUT', body: { tests: list, format } });
+          S.dirty = false;
+          toast(`“${t.name}” saved`);
+          location.hash = base;
+        } catch (ex) { done(); $('#yt-err').innerHTML = `<div class="notice fail-n">${ytProblems(ex)}</div>`; }
+      };
+      $('#yt-try').onclick = async (e) => {
+        read();
+        const out = $('#yt-try-out');
+        if (!t.name) { $('#yt-err').innerHTML = '<div class="notice fail-n"><p>Give the test a name first.</p></div>'; return; }
+        const done = busy(e.currentTarget, 'Running');
+        $('#yt-err').innerHTML = '';
+        out.innerHTML = '<p class="muted"><span class="spinner"></span> Running this test on your store. It takes up to a minute…</p>';
+        try {
+          // Tried as it is in the form, before saving.
+          const r = await ytRaw(`/api/stores/${s.id}/custom-tests/${encodeURIComponent(t.name)}/try`, { method: 'POST', text: JSON.stringify({ tests: [t] }) });
+          out.innerHTML = ytTrail(await r.json());
+          $$('.yt-shots img', out).forEach((im) => (im.onclick = () => lightbox(im.src, im.alt)));
+          out.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (ex) { out.innerHTML = `<div class="notice fail-n">${ytProblems(ex)}</div>`; } finally { done(); }
+      };
+    };
+    draw();
+  }
 
   // Runs
   STORE_PAGES.runs = async (ctx, s) => {
@@ -1767,7 +2153,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.changes?.length ? `<table class="data record-changes"><thead><tr><th>What changed</th><th>Before</th><th>Now</th></tr></thead><tbody>${x.evidence.changes.map((r) => `<tr><td>${esc(r.what)}</td><td><code>${esc(r.before)}</code></td><td><code>${esc(r.after)}</code></td></tr>`).join('')}</tbody></table>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a !== 'skip' ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.changes?.length ? `<table class="data record-changes"><thead><tr><th>What changed</th><th>Before</th><th>Now</th></tr></thead><tbody>${x.evidence.changes.map((r) => `<tr><td>${esc(r.what)}</td><td><code>${esc(r.before)}</code></td><td><code>${esc(r.after)}</code></td></tr>`).join('')}</tbody></table>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${x.evidence?.steps ? `<ol class="trail" style="margin:6px 0 0 18px;font-size:.88rem">${x.evidence.steps.map((st) => `<li class="${st.status === 'fail' ? 't-fail' : ''}">${esc(st.text)}${st.status === 'fail' ? ` · <b>failed</b>${st.error ? `: ${esc(st.error)}` : ''}` : ''}</li>`).join('')}</ol>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a !== 'skip' ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -3521,7 +3907,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false; S.features = new Set(me.features || []);
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', sales: '/sales', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', security: '/security', incident: '/incident', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', sales: '/sales', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', security: '/security', incident: '/incident', suite: '/suite', tests: '/tests', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {

@@ -25,6 +25,7 @@ const STORE_ROUTES = [
   ['get', '/api/stores/:id/sale-plans/1/rehearsals/1'],
   ['get', '/api/stores/:id/sale-plans/1/live'], ['post', '/api/stores/:id/sale-plans/1/live-check'], ['get', '/api/stores/:id/sale-plans/1/live-checks/1'],
   ['get', '/api/stores/:id/sale-calendar'], ['post', '/api/stores/:id/sale-calendar'], ['delete', '/api/stores/:id/sale-calendar/1'],
+  ['get', '/api/stores/:id/custom-tests'], ['put', '/api/stores/:id/custom-tests'], ['post', '/api/stores/:id/custom-tests/delivery/try'], ['post', '/api/stores/:id/custom-tests/restore'], ['post', '/api/stores/:id/custom-tests/draft'],
 ];
 
 describe('Data isolation', () => {

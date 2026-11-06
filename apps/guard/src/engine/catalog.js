@@ -33,6 +33,8 @@ export const GROUPS = [
   { key: 'sale.abtest', label: 'A/B test versions', run: 'full', area: 'Shopping journey',
     description: 'Finds A/B and price-test apps on your store, and shops once in every test version you list (Test suite → A/B tests): the page loads, Add to cart works, the cart charges the price shown, and checkout opens on your store. Your test settings are never changed.',
     checks: ['ab.'] },
+  { key: 'custom', label: 'Your tests', run: 'journeys', area: 'Your tests',
+    description: 'Tests you wrote for your own store (for example a pincode checker or a size guide), from your tests file. Each test runs on every shopping check or on the daily full check, as you chose.', checks: ['custom.'] },
   { key: 'errors.js', label: 'JavaScript errors', run: 'journeys', area: 'Errors and links',
     description: 'Script errors that happen while shopping, usually from apps or custom code.', checks: ['nf.jserrors'] },
   { key: 'speed', label: 'Mobile speed', run: 'full', area: 'Speed',

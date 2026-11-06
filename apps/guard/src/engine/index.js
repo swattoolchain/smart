@@ -26,6 +26,7 @@ import { runSpam } from './spam.js';
 import { runDomain } from './domain.js';
 import { aiEnabled } from '../ai.js';
 import { VIDEO_FILE, VIDEO_DAYS } from '../video.js';
+import { runCustomTests } from './custom.js';
 
 async function isLocked(ctx, origin) {
   try {
@@ -42,7 +43,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], abVariants = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], abVariants = [], customTests = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -185,6 +186,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind === 'full' && info.isShopify && on('sale.abtest')) {
         phase('abtest');
         await runAbTests({ page, rec, origin, info, password, variants: abVariants, shot }).catch((e) => rec.add(check('ab.tools', 'functional', 'A/B tests on your store', 'skip', { severity: 'minor', detail: `The A/B test check could not finish: ${shortErr(e)}` })));
+      }
+      // The owner's own tests, each in its own browser window (never on free checks or draft-theme checks).
+      if (customTests.length && on('custom') && kind !== 'free' && !preview) {
+        phase('custom');
+        await runCustomTests({ rec, tests: customTests, origin, password, info, shot });
       }
       if (kind !== 'journeys') {
         phase('quality');

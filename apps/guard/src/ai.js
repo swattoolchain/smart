@@ -172,3 +172,34 @@ export async function shopperStep({ goal, observation, history }) {
     usage,
   };
 }
+
+const DRAFT_SYSTEM = `You turn a store owner's description of a test into steps for Tharam's test runner. Tharam shops an online store like a customer, in a real browser, and never pays.
+You get the description and an outline of one page of the store (its address, headings, form fields, buttons and links, with their CSS ids, names and visible text).
+Write ONE test using ONLY these steps (each step is an object with exactly one step key, plus the extra fields listed):
+- {"open": "/path"} a page of the store; "{product}" is the test product's page
+- {"click": TARGET}
+- {"fill": TARGET, "value": "text to type"}
+- {"choose": TARGET, "option": "visible option text"}
+- {"quantity": 2}
+- {"add_to_cart": true}, {"open_cart": true}, {"checkout": true} (stops before payment)
+- {"wait_for": TARGET, "timeout": seconds up to 30}
+- {"expect_visible": TARGET}, {"expect_hidden": TARGET}
+- {"expect_text": TARGET, "contains": "text"}
+- {"expect_price": TARGET, "min": n, "max": n} or "equals": n
+- {"expect_count": TARGET, "min": n} or "equals"/"max"
+- {"expect_url": "text in the address"}
+- {"expect_cart_total": {"min": n, "max": n}}, {"expect_cart_items": {"min": 1}}
+- {"expect_no_errors": true}
+TARGET is a CSS selector from the outline ("#pincode"), visible text ("text=Check") or a role and name ("role=button:Check"). Prefer ids and names from the outline; never invent selectors that are not in the outline.
+Start with an "open" step. End with at least one expect_ step that proves the feature worked. At most 15 steps. Never sign in, enter payment details or submit real orders, reviews or messages.
+Answer with JSON only: {"name": "short test name, max 60 characters", "severity": "critical|major|minor", "device": "desktop|mobile", "steps": [ ... ], "note": "one plain sentence for the owner about anything to check in the draft"}.
+If the description can't be done with these steps on this store, answer {"name": "", "steps": [], "note": "why, in one plain sentence"}.`;
+
+/** Drafts one test (Your tests) from the owner's words and an outline of a store page. Cached by its inputs. */
+export async function draftTest({ description, outline }) {
+  const key = 'draft-' + sha(`${config.ai.textModel}|${description}|${outline}`);
+  return cached(key, async () => {
+    const { json, usage } = await call({ system: DRAFT_SYSTEM, text: `The owner's description:\n${description}\n\nThe page outline:\n${outline}`, model: config.ai.textModel, maxTokens: 2000 });
+    return { draft: json && typeof json === 'object' ? json : {}, usage, model: config.ai.textModel };
+  });
+}
