@@ -367,6 +367,43 @@ export function compareTiers(tiers, baseMinor, rows) {
   return { rows: out, over: out.filter((r) => r.state === 'over'), under: out.filter((r) => r.state === 'under'), refused: out.filter((r) => r.state === 'refused') };
 }
 
+/**
+ * Puts one variant in fresh carts at each break and one below it, then opens checkout at the biggest quantity the
+ * cart accepted. Returns { rows: [{ qty, charged }], checkout: { qty, minor, cart } | null, currency }.
+ */
+export async function cartAtQuantities({ page, origin, variantId, tiers }) {
+  const rows = [];
+  let currency = null;
+  let lastCart = null;
+  for (const qty of tierQuantities(tiers)) {
+    await api(page, '/cart/clear.js', {});
+    const added = await api(page, '/cart/add.js', { items: [{ id: variantId, quantity: qty }] });
+    if (added.status >= 400) { rows.push({ qty, charged: null }); continue; }
+    const cart = (await api(page, '/cart.js')).json;
+    currency = cart?.currency || currency;
+    const line = cartLine(cart, variantId);
+    rows.push({ qty, charged: line && line.quantity === qty ? line.charged : null });
+    lastCart = line && line.quantity === qty ? { qty, cart } : lastCart;
+  }
+  // The checkout at the biggest break the cart accepted: its subtotal must match the cart.
+  let checkout = null;
+  if (lastCart) {
+    await api(page, '/cart/clear.js', {});
+    await api(page, '/cart/add.js', { items: [{ id: variantId, quantity: lastCart.qty }] });
+    const cartNow = (await api(page, '/cart.js')).json;
+    await page.goto(origin + '/checkout', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+    if (/\/checkouts?\//.test(page.url())) {
+      const sub = await checkoutSubtotal(page);
+      const cartTotal = Number(cartNow?.items_subtotal_price ?? cartNow?.total_price);
+      checkout = { qty: lastCart.qty, minor: sub?.minor ?? null, cart: Number.isFinite(cartTotal) ? cartTotal : null };
+    }
+    await page.goto(origin + '/cart', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  }
+  await api(page, '/cart/clear.js', {});
+  return { rows, checkout, currency };
+}
+
 /** The quantity breaks, each product in fresh carts at every break. Runs with the price rules. */
 export async function runPriceTiers({ page, rec, origin, sets }) {
   if (!sets?.length) return;
@@ -389,34 +426,8 @@ export async function runPriceTiers({ page, rec, origin, sets }) {
         continue;
       }
       const base = toMinor(v.price, true);
-      const rows = [];
-      let cur = null;
-      let lastCart = null;
-      for (const qty of tierQuantities(set.tiers)) {
-        await api(page, '/cart/clear.js', {});
-        const added = await api(page, '/cart/add.js', { items: [{ id: v.id, quantity: qty }] });
-        if (added.status >= 400) { rows.push({ qty, charged: null }); continue; }
-        const cart = (await api(page, '/cart.js')).json;
-        cur = cart?.currency || cur;
-        const line = cartLine(cart, v.id);
-        rows.push({ qty, charged: line && line.quantity === qty ? line.charged : null });
-        lastCart = line && line.quantity === qty ? { qty, cart } : lastCart;
-      }
-      // The checkout at the biggest break the cart accepted: its subtotal must match the cart.
-      let checkout = null;
-      if (lastCart) {
-        await api(page, '/cart/clear.js', {});
-        await api(page, '/cart/add.js', { items: [{ id: v.id, quantity: lastCart.qty }] });
-        const cartNow = (await api(page, '/cart.js')).json;
-        await page.goto(origin + '/checkout', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-        await page.waitForTimeout(1200);
-        if (/\/checkouts?\//.test(page.url())) {
-          const sub = await checkoutSubtotal(page);
-          const cartTotal = Number(cartNow?.items_subtotal_price ?? cartNow?.total_price);
-          checkout = { qty: lastCart.qty, minor: sub?.minor ?? null, cart: Number.isFinite(cartTotal) ? cartTotal : null };
-        }
-        await page.goto(origin + '/cart', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-      }
+      const { rows, checkout, currency } = await cartAtQuantities({ page, origin, variantId: v.id, tiers: set.tiers });
+      const cur = currency;
       const r = compareTiers(set.tiers, base, rows);
       const m = (x) => money(x, cur);
       const tierTable = {

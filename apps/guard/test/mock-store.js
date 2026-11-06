@@ -49,6 +49,10 @@ const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
 // given as a line discount in the cart (like Shopify Functions or a volume-discount app).
 // MOCK_BREAK=tiers: the 10+ break stopped working (still 10% off at 10 and more).
 const TIERS = EXTRA.split(',').includes('tiers');
+// MOCK_EXTRA=tiertable: the volume-discount app also shows its breaks on the kurta's product page, as a table near
+// Add to cart ("Buy 5+ · 10% off", "Buy 10+ · 20% off"). MOCK_BREAK=tierpage: the table says 25% at 10 (out of date).
+const TIER_TABLE = EXTRA.split(',').includes('tiertable');
+const tierTableHtml = () => `<table class="qty-breaks"><caption>Buy more, save more</caption><tr><th>Quantity</th><th>Discount</th></tr><tr><td>Buy 5+</td><td>10% off</td></tr><tr><td>Buy 10+</td><td>${B.has('tierpage') ? 25 : 20}% off</td></tr></table>`;
 function tierPct(i) {
   if (!TIERS || ![101, 102, 103].includes(Number(i.id))) return 0;
   if (i.quantity >= 10) return B.has('tiers') ? 10 : 20;
@@ -160,7 +164,7 @@ const server = http.createServer(async (req, res) => {
 <form method="post" action="/cart/add"><input type="hidden" name="id" value="${v.id}">
 <select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>
 <button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>${DE ? '<p class="tax-note">inkl. MwSt., zzgl. <a href="/policies/shipping-policy">Versandkosten</a></p>' : ''}
-<span id="cart-count">0</span>${breakAtc}`
+<span id="cart-count">0</span>${TIER_TABLE && prod.handle === 'cotton-kurta' ? tierTableHtml() : ''}${breakAtc}`
       )
     );
   }

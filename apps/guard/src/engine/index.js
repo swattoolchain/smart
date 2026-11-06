@@ -13,6 +13,7 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { runPriceRules, runPriceTiers } from './pricing.js';
+import { runPageTiers } from './page-tiers.js';
 import { reviewScreens } from './visual-ai.js';
 import { aiEnabled } from '../ai.js';
 
@@ -95,6 +96,8 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (on('pricing.journey') && priceRules.length && info.isShopify) await runPriceRules({ page, rec, origin, rules: priceRules });
       if (on('pricing.journey') && priceTiers.length && info.isShopify) await runPriceTiers({ page, rec, origin, sets: priceTiers });
+      // Breaks the product page itself promises (volume-discount app tables), checked in the cart without any setup.
+      if (on('pricing.journey') && info.isShopify && info.products[0]?.handle) await runPageTiers({ page, rec, origin, product: info.products[0].handle, listed: priceTiers.map((t) => t.product) });
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
       if (kind !== 'journeys') {
         phase('quality');
