@@ -89,7 +89,8 @@ describe('Runner routing and join tokens', () => {
   it('pausing or draining the main server never strands checks only it can run', () => {
     for (const status of ['paused', 'draining']) {
       const main = { ...MAIN, status };
-      for (const job of [{ kind: 'full', storeId: 5 }, { kind: 'journeys', storeId: 5, release: 3 }, { kind: 'free' }, { kind: 'journeys', storeId: 5, preview: { url: 'x' } }]) {
+      // Full checks run on workers too since #34; a full check with the AI shopper stays on the main server.
+      for (const job of [{ kind: 'full', storeId: 5, needsAi: true }, { kind: 'journeys', storeId: 5, release: 3 }, { kind: 'free' }, { kind: 'journeys', storeId: 5, preview: { url: 'x' } }]) {
         assert.equal(r.chooseRunner(job, [main, R(2)])?.id, 1, `${status} main still takes ${JSON.stringify(job)}`);
       }
       assert.equal(r.chooseRunner(JOURNEY, [main, R(2)]).id, 2, `${status} main: journey checks go to the worker`);
