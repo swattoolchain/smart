@@ -27,7 +27,7 @@ import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
-import { teamRoutes, membership, memberMay, teamAllowed } from './team.js';
+import { teamRoutes, membership, memberMay, teamAllowed, redactForViewer } from './team.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -89,6 +89,8 @@ function requireUser(req, res, next) {
     if (!memberMay(m.role, req.method, req.path)) return res.status(403).json({ error: m.role === 'viewer' ? 'You can view this workspace but not change it. Ask the account owner for admin access.' : 'Only the account owner can do this.', role: m.role });
     req.member = { user: u, role: m.role, accountId: acc.id };
     req.user = acc;
+    // Viewers see reports, never credentials: gate keys, the Slack webhook address, signing secrets.
+    if (m.role === 'viewer') { const json = res.json.bind(res); res.json = (body) => json(redactForViewer(body)); }
   }
   next();
 }

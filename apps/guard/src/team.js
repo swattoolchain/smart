@@ -45,6 +45,30 @@ CREATE INDEX IF NOT EXISTS team_members_user ON team_members(user_id);
 `);
 
 export const ROLES = ['admin', 'viewer'];
+
+/**
+ * Credentials a viewer never sees: release-gate keys (`token`), the Slack webhook address and any signing
+ * secret (`secret`, e.g. the store's webhook secret). They are set to null in every JSON answer to a viewer.
+ */
+const VIEWER_HIDDEN = new Set(['token', 'slack_webhook', 'secret']);
+export function redactForViewer(value) {
+  if (Array.isArray(value)) return value.map(redactForViewer);
+  if (!value || typeof value !== 'object' || value instanceof Date || Buffer.isBuffer(value)) return value;
+  const out = {};
+  for (const [k, v] of Object.entries(value)) out[k] = VIEWER_HIDDEN.has(k) ? (v == null ? v : null) : redactForViewer(v);
+  return out;
+}
+
+/**
+ * New release-gate keys for every environment of the account's stores. Run when someone leaves the team or
+ * becomes a viewer, so a key they copied stops working.
+ */
+export function rotateGateKeys(accountId) {
+  const envs = db.prepare('SELECT e.id FROM environments e JOIN stores s ON s.id = e.store_id WHERE s.user_id = ?').all(accountId);
+  const set = db.prepare('UPDATE environments SET token = ? WHERE id = ?');
+  db.transaction(() => { for (const e of envs) set.run('tg_' + crypto.randomBytes(18).toString('base64url'), e.id); })();
+  return envs.length;
+}
 export const TEAM_LIMIT = 10; // members plus open invites per account
 const INVITE_DAYS = 7;
 const hash = (t) => crypto.createHash('sha256').update(String(t)).digest('hex');
@@ -137,7 +161,8 @@ export function teamRoutes(app, { requireUser }) {
     const m = T.memberById.get(Number(req.params.memberId), req.user.id);
     if (!m) return res.status(404).json({ error: 'Team member not found' });
     T.setRole.run(role, m.id, req.user.id);
-    audit(req.user.id, 'team.role', { member: m.user_id, from: m.role, to: role });
+    const rotated = m.role === 'admin' && role === 'viewer' ? rotateGateKeys(req.user.id) : 0;
+    audit(req.user.id, 'team.role', { member: m.user_id, from: m.role, to: role, rotatedKeys: rotated });
     res.json({ ok: true });
   });
 
@@ -146,8 +171,9 @@ export function teamRoutes(app, { requireUser }) {
     const m = T.memberById.get(Number(req.params.memberId), req.user.id);
     if (!m) return res.status(404).json({ error: 'Team member not found' });
     T.removeMember.run(m.id, req.user.id);
-    audit(req.user.id, 'team.remove', { member: m.user_id });
-    res.json({ ok: true });
+    const rotated = rotateGateKeys(req.user.id);
+    audit(req.user.id, 'team.remove', { member: m.user_id, rotatedKeys: rotated });
+    res.json({ ok: true, rotatedKeys: rotated });
   });
 
   // ----- As a member -----
@@ -191,7 +217,8 @@ export function teamRoutes(app, { requireUser }) {
     const from = Number(req.body?.accountId);
     if (!T.leave.run(from, me.id).changes) return res.status(404).json({ error: 'Workspace not found' });
     if (req.session.acct === from) delete req.session.acct;
-    audit(from, 'team.leave', { member: me.id });
+    const rotated = rotateGateKeys(from);
+    audit(from, 'team.leave', { member: me.id, rotatedKeys: rotated });
     res.json({ ok: true });
   });
 }
