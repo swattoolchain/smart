@@ -1217,3 +1217,5 @@ pre.yt-code { background: #f6f7fa; border: 1px solid var(--line); border-radius:
 .yt-tpl-fields .check-row { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; font-size: 14px; }
 .code-row.tier-rule { grid-template-columns: minmax(0, 1.4fr) minmax(0, .8fr) minmax(0, 1.4fr) auto; }
 @media (max-width: 640px) { .code-row.tier-rule { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; } .code-row.tier-rule .field:first-child { grid-column: 1 / -1; } }
+.code-row.config-rule { grid-template-columns: minmax(0, 1fr) minmax(0, .6fr) minmax(0, 2.2fr) 90px auto; }
+@media (max-width: 640px) { .code-row.config-rule { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; } .code-row.config-rule .field:nth-child(1), .code-row.config-rule .field:nth-child(3) { grid-column: 1 / -1; } }

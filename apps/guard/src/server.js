@@ -463,7 +463,7 @@ function storeView(s) {
   return {
     ...publicStore(s),
     blocked: blockReason(ent, s.id),
-    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], priceRules: cfg.priceRules || [], priceTiers: cfg.priceTiers || [], abVariants: cfg.abVariants || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
+    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], priceRules: cfg.priceRules || [], priceTiers: cfg.priceTiers || [], priceConfigs: cfg.priceConfigs || [], abVariants: cfg.abVariants || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
@@ -501,7 +501,7 @@ app.post('/api/stores', requireUser, async (req, res) => {
   if (mine.some((s) => s.url === origin)) return res.status(409).json({ error: 'This store is already in your account.' });
   if (alertEmail && !isEmail(alertEmail)) return res.status(400).json({ error: 'Alert email is not valid' });
   if (slack && !/^https:\/\/hooks\.slack\.com\//.test(slack)) return res.status(400).json({ error: 'Slack webhook must start with https://hooks.slack.com/' });
-  if ((Array.isArray(req.body?.config?.priceRules) ? req.body.config.priceRules.length : 0) + (Array.isArray(req.body?.config?.priceTiers) ? req.body.config.priceTiers.length : 0) > ent.limits.priceRules) return refuse(res, `Your plan includes ${ent.limits.priceRules} price rules per store.`);
+  if ((Array.isArray(req.body?.config?.priceRules) ? req.body.config.priceRules.length : 0) + (Array.isArray(req.body?.config?.priceTiers) ? req.body.config.priceTiers.length : 0) + (Array.isArray(req.body?.config?.priceConfigs) ? req.body.config.priceConfigs.length : 0) > ent.limits.priceRules) return refuse(res, `Your plan includes ${ent.limits.priceRules} price rules per store.`);
   let cfg;
   try { cfg = normalizeConfig(req.body?.config || {}); } catch (e) { return res.status(400).json({ error: e.message }); }
   const info = q.insertStore.run(
@@ -575,9 +575,9 @@ app.patch('/api/stores/:id', requireUser, async (req, res) => {
   if (b.slack && b.slack !== s.slack_webhook && !has(ent, 'slack')) return refuse(res, notIncluded('slack', 'Slack alerts'));
   if (b.config?.journeyIntervalMin && Number(b.config.journeyIntervalMin) < ent.limits.journeyMinInterval) return refuse(res, 'Your plan doesn\'t include checks this often. Choose a longer interval or upgrade.');
   if (b.config?.fullIntervalMin && Number(b.config.fullIntervalMin) < ent.limits.fullMinInterval) return refuse(res, 'Your plan doesn\'t include full checks this often.');
-  // Price rules and quantity breaks share the plan's "price rules per store" limit.
-  const ruleCount = (list, cur) => (Array.isArray(list) ? list.filter((r) => r && (r.product || r.price || r.tiers)).length : (cur || []).length);
-  if ((Array.isArray(b.config?.priceRules) || Array.isArray(b.config?.priceTiers)) && ruleCount(b.config.priceRules, storeConfig(s).priceRules) + ruleCount(b.config.priceTiers, storeConfig(s).priceTiers) > ent.limits.priceRules) return refuse(res, `Your plan includes ${ent.limits.priceRules} price rule${ent.limits.priceRules === 1 ? '' : 's'} per store. Remove one, or upgrade to add more.`);
+  // Price rules, quantity breaks and product options share the plan's "price rules per store" limit.
+  const ruleCount = (list, cur) => (Array.isArray(list) ? list.filter((r) => r && (r.product || r.price || r.tiers || r.options)).length : (cur || []).length);
+  if ((Array.isArray(b.config?.priceRules) || Array.isArray(b.config?.priceTiers) || Array.isArray(b.config?.priceConfigs)) && ruleCount(b.config.priceRules, storeConfig(s).priceRules) + ruleCount(b.config.priceTiers, storeConfig(s).priceTiers) + ruleCount(b.config.priceConfigs, storeConfig(s).priceConfigs) > ent.limits.priceRules) return refuse(res, `Your plan includes ${ent.limits.priceRules} price rule${ent.limits.priceRules === 1 ? '' : 's'} per store. Remove one, or upgrade to add more.`);
   q.updateStoreSettings.run(
     b.name === undefined ? s.name : String(b.name).trim().slice(0, 80),
     b.password === undefined ? s.storefront_password : seal(b.password || null),

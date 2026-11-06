@@ -1072,6 +1072,13 @@
         <div class="field"><label for="tv${i}">Variant</label><input id="tv${i}" name="variant" value="${esc(r.variant || '')}" placeholder="Optional" maxlength="100"></div>
         <div class="field"><label for="tt${i}">Breaks</label><input id="tt${i}" name="tiers" value="${esc(tierText(r.tiers))}" placeholder="e.g. 5+ 10%, 10+ 20%" maxlength="120" autocomplete="off"></div>
         <button type="button" class="icon-btn" data-rm aria-label="Remove product" data-tip="Remove">${icon('trash', 16)}</button></div>`;
+      const configs = s.config.priceConfigs?.length ? s.config.priceConfigs : [{ product: '', variant: '', options: '', price: '' }];
+      const optText = (o) => (Array.isArray(o) ? o.map((x) => `${x.name}${x.required ? '*' : ''} = ${x.value}`).join('; ') : o || '');
+      const crow = (r, i) => `<div class="code-row config-rule"><div class="field"><label for="cp${i}">Product</label><input id="cp${i}" name="product" value="${esc(r.product)}" placeholder="Product link or handle" maxlength="300" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="cv${i}">Variant</label><input id="cv${i}" name="variant" value="${esc(r.variant || '')}" placeholder="Optional" maxlength="100"></div>
+        <div class="field"><label for="co${i}">Options</label><input id="co${i}" name="options" value="${esc(optText(r.options))}" placeholder="e.g. Engraving* = Happy Diwali; Gift wrap = Yes" maxlength="400" autocomplete="off"></div>
+        <div class="field"><label for="cx${i}">Price</label><input id="cx${i}" name="price" inputmode="decimal" value="${r.price ?? ''}" placeholder="e.g. 9098"></div>
+        <button type="button" class="icon-btn" data-rm aria-label="Remove product" data-tip="Remove">${icon('trash', 16)}</button></div>`;
       const row = (r, i) => `<div class="code-row price-rule"><div class="field"><label for="pr${i}">Product</label><input id="pr${i}" name="product" value="${esc(r.product)}" placeholder="Product link or handle, e.g. cotton-kurta" maxlength="300" autocomplete="off" spellcheck="false"></div>
         <div class="field"><label for="pv${i}">Variant</label><input id="pv${i}" name="variant" value="${esc(r.variant || '')}" placeholder="Optional, e.g. Large" maxlength="100"></div>
         <div class="field"><label for="pq${i}">Quantity</label><input id="pq${i}" name="quantity" type="number" min="1" max="99" value="${r.quantity ?? 1}"></div>
@@ -1085,15 +1092,20 @@
             ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Price rules are checked on Shopify stores for now.</p>' : ''}</div></div>
         <div class="form-section"><div><h3>Quantity breaks</h3><p class="explain">Selling for less when customers buy more? Write the breaks for a product, like “5+ 10%, 10+ 20%” (10% off from 5, 20% off from 10) or “5+ 450, 10+ 400” (price each). Each check puts the product in a fresh cart at every break and one below it, and checks the price each and the total. Nothing is bought, and the cart is emptied.</p></div>
           <div class="controls"><form id="ptiers">${tiers.map(trow).join('')}</form>
-            <div class="inline-row"><button type="button" class="btn secondary small" id="addt">${icon('add', 15)}Add a product</button><span class="muted" style="font-size:12.5px">Each product counts as one rule.</span></div></div></div></div>`;
+            <div class="inline-row"><button type="button" class="btn secondary small" id="addt">${icon('add', 15)}Add a product</button><span class="muted" style="font-size:12.5px">Each product counts as one rule.</span></div></div></div>
+        <div class="form-section"><div><h3>Product options</h3><p class="explain">Sell engraving, gift wrap or other options that change the price? Write the options a shopper fills, like “Engraving* = Happy Diwali; Gift wrap = Yes”, and the price you expect with them. A * means the option must be filled before Add to cart works. Each check fills them on the product page, adds to cart, and checks that the cart keeps every choice and the price is right. Nothing is bought, and the cart is emptied.</p></div>
+          <div class="controls"><form id="pconfigs">${configs.map(crow).join('')}</form>
+            <div class="inline-row"><button type="button" class="btn secondary small" id="addc">${icon('add', 15)}Add a product</button><span class="muted" style="font-size:12.5px">Each product counts as one rule.</span></div></div></div></div>`;
       const form = $('#prules');
       const tform = $('#ptiers');
-      const count = () => $$('.price-rule', form).filter((r) => r.querySelector('[name=product]').value.trim() || r.querySelector('[name=price]').value.trim()).length + $$('.tier-rule', tform).length;
+      const cform = $('#pconfigs');
+      const count = () => $$('.price-rule', form).filter((r) => r.querySelector('[name=product]').value.trim() || r.querySelector('[name=price]').value.trim()).length + $$('.tier-rule', tform).length + $$('.config-rule', cform).length;
       const mark = savebar($('.main-inner', ctx.main), {
         onSave: async () => {
           const list = $$('.price-rule', form).map((r) => ({ product: r.querySelector('[name=product]').value.trim(), variant: r.querySelector('[name=variant]').value.trim() || null, quantity: r.querySelector('[name=quantity]').value, price: r.querySelector('[name=price]').value.trim() })).filter((x) => x.product || x.price);
           const tlist = $$('.tier-rule', tform).map((r) => ({ product: r.querySelector('[name=product]').value.trim(), variant: r.querySelector('[name=variant]').value.trim() || null, tiers: r.querySelector('[name=tiers]').value.trim() })).filter((x) => x.product || x.tiers);
-          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list, priceTiers: tlist } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
+          const clist = $$('.config-rule', cform).map((r) => ({ product: r.querySelector('[name=product]').value.trim(), variant: r.querySelector('[name=variant]').value.trim() || null, options: r.querySelector('[name=options]').value.trim(), price: r.querySelector('[name=price]').value.trim() })).filter((x) => x.product || x.options || x.price);
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list, priceTiers: tlist, priceConfigs: clist } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
           await loadStores();
         },
         onDiscard: () => render(),
@@ -1103,6 +1115,9 @@
       tform.addEventListener('input', mark);
       tform.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.tier-rule', tform).length > 1) b.closest('.tier-rule').remove(); else b.closest('.tier-rule').querySelectorAll('input').forEach((i) => (i.value = '')); mark(); });
       $('#addt').onclick = () => { if (count() >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); tform.insertAdjacentHTML('beforeend', trow({ product: '', variant: '', tiers: '' }, Date.now())); mark(); tform.lastElementChild.querySelector('input').focus(); };
+      cform.addEventListener('input', mark);
+      cform.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.config-rule', cform).length > 1) b.closest('.config-rule').remove(); else b.closest('.config-rule').querySelectorAll('input').forEach((i) => (i.value = '')); mark(); });
+      $('#addc').onclick = () => { if (count() >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); cform.insertAdjacentHTML('beforeend', crow({ product: '', variant: '', options: '', price: '' }, Date.now())); mark(); cform.lastElementChild.querySelector('input').focus(); };
       $('#addr').onclick = () => { if ($$('.price-rule', form).length >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
       return;
     }
