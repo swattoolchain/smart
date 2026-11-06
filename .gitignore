@@ -5,3 +5,4 @@ data/
 verify-report.json
 .DS_Store
 test-results/
+node_modules
