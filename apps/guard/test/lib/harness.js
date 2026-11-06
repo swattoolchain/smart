@@ -121,6 +121,7 @@ export async function startProduct({ env = {}, mock: mockOpts = {} } = {}) {
     ANTHROPIC_API_KEY: '',
     // Tests see every feature; test/features.test.js checks the real defaults.
     FEATURES_DEFAULT: 'on',
+    CSP_MODE: 'enforce',
     ...env,
   });
   try { await waitFor(`${base}/healthz`); } catch (e) { mock.stop(); fake.stop(); server.stop(); throw new Error(`${e.message}\n${server.log()}`); }

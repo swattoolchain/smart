@@ -571,7 +571,8 @@
       if (!silent && alive()) { const h1 = main.querySelector('h1'); document.title = `${h1 ? h1.textContent + ' – ' : ''}Tharam`; }
     } catch (e) {
       if (!alive() || !S.me) return;
-      $('#main').innerHTML = `<div class="main-inner"><div class="empty panel"><h2>This page didn't load</h2><p>${esc(e.message)}</p><button class="btn" onclick="location.reload()">Reload</button></div></div>`;
+      $('#main').innerHTML = `<div class="main-inner"><div class="empty panel"><h2>This page didn't load</h2><p>${esc(e.message)}</p><button class="btn" type="button" data-reload>Reload</button></div></div>`;
+      $('#main [data-reload]')?.addEventListener('click', () => location.reload());
     }
   }
   function skeleton() {
@@ -3169,7 +3170,8 @@
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {
-      $('#emb-loading').innerHTML = `<p><b>We couldn’t open Tharam.</b></p><p class="muted">${esc(e.message)}</p><button class="btn" onclick="location.reload()">Try again</button>`;
+      $('#emb-loading').innerHTML = `<p><b>We couldn’t open Tharam.</b></p><p class="muted">${esc(e.message)}</p><button class="btn" type="button" data-reload>Try again</button>`;
+      $('#emb-loading [data-reload]')?.addEventListener('click', () => location.reload());
       return;
     }
     $('#emb-loading')?.remove();
