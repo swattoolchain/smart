@@ -4,6 +4,13 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = window.escHtml;
+  // Theme code changes (sec.theme): the files that changed and their changed lines.
+  function themeDiff(ev) {
+    if (!ev || !Array.isArray(ev.files) || !ev.files.length) return '';
+    const label = { changed: 'changed', added: 'new file', removed: 'deleted' };
+    return `<div class="theme-diff">${ev.files.map((f, i) => `<details${i < 3 ? ' open' : ''}><summary><code>${esc(f.filename)}</code> <span class="muted">${esc(label[f.change] || f.change)}${f.added || f.removed ? ` · <span class="d-add">+${f.added}</span> <span class="d-del">−${f.removed}</span>` : ''}</span></summary>
+      ${f.lines && f.lines.length ? `<pre class="diff">${f.lines.map((l) => `<span class="${l.t === '+' ? 'd-add' : 'd-del'}">${l.t} ${String(l.n).padStart(4, ' ')}  ${esc(l.s)}</span>`).join('')}${f.more ? `<span class="muted" style="display:block">… ${f.more} more changed lines</span>` : ''}</pre>` : `<p class="muted" style="margin:6px 0">${f.text === false ? 'Not a text file, so there are no lines to show.' : 'No lines to show.'}</p>`}</details>`).join('')}${ev.moreFiles ? `<p class="muted">… and ${ev.moreFiles} more files</p>` : ''}</div>`;
+  }
 
   const S = { me: null, admin: false, features: new Set(), stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
   /** Whether a feature is switched on in the founder console (the server enforces it too). */
@@ -339,6 +346,7 @@
       ${item(`${base}/publish`, 'publish', 'Safe to publish', at('publish'))}
       ${item(`${base}/catalog`, 'catalog', 'Catalog', at('catalog'))}
       ${item(`${base}/visual`, 'visual', 'Visual changes', at('visual'))}
+      ${item(`${base}/sale`, 'sparkle', 'Sale readiness', at('sale'))}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
@@ -674,7 +682,7 @@
       const actions = [
         action(`${base}/run`, 'play', 'Run a check now', 'Shopping journey, full suite or pick checks'),
         action(`${base}/publish`, 'publish', 'Check a design before publishing', 'Your draft themes, side by side with live'),
-        action(`${base}/run`, 'sparkle', 'Sale readiness check', 'Before Black Friday or a big sale', 'data-preset="sale"'),
+        action(`${base}/sale`, 'sparkle', 'Sale readiness', 'Before Black Friday or a big sale'),
         action(`${base}/suite/codes`, 'catalog', 'Test discount codes', s.config.discountCodes?.length ? `${plural(s.config.discountCodes.length, 'code')} checked daily` : 'Make sure your sale codes work'),
         action(`${base}/alerts`, 'alerts', 'Alerts', `Sent to ${esc(s.alert_email || 'your email')}`),
       ].join('');
@@ -736,7 +744,7 @@
     const PRESETS = [
       { key: 'quick', title: 'Quick journey', desc: 'Can customers find a product, add it to the cart and reach checkout?', keys: keys(usable.filter((g) => g.run === 'journeys')) },
       { key: 'suite', title: 'Your test suite', desc: 'Everything switched on for scheduled full checks of this store.', keys: suite, tag: 'Recommended' },
-      { key: 'sale', title: 'Sale readiness', desc: 'Before Black Friday or a big sale: buying on a phone, every price, discount codes, speed, app errors and how the store looks.', keys: keys(usable.filter((g) => ['journey.core', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount', 'catalog', 'speed', 'visual', 'law.cookies'].includes(g.key) && (g.key !== 'law.cookies' || inMarket(g, s.config.markets)))) },
+      { key: 'sale', title: 'Sale readiness', desc: 'Before Black Friday or a big sale: buying on a phone, every price, discount codes, speed, app errors and how the store looks.', keys: keys(usable.filter((g) => ['journey.core', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount', 'catalog', 'speed', 'visual', 'law.cookies', 'law.de', 'access.law', 'law.us'].includes(g.key) && (!g.markets || inMarket(g, s.config.markets)))) },
       { key: 'all', title: 'Everything', desc: 'Every validation available, including ones switched off in your suite.', keys: keys(usable) },
     ].filter((p, i, all) => p.key !== 'all' || !same(p.keys, all[1].keys));
     let sel = [...suite];
@@ -1076,15 +1084,43 @@
           <div class="controls"><div class="field"><label for="ae">Alert email</label><input id="ae" name="alertEmail" type="email" value="${esc(s.alert_email || '')}" autocomplete="email"></div></div></div>
         <div class="form-section"><div><h3>Slack</h3><p class="explain">Post alerts to a Slack channel. In Slack, open Apps, add <b>Incoming Webhooks</b>, choose a channel, and paste the webhook URL here.</p></div>
           <div class="controls"><div class="field"><label for="sl">Slack webhook URL <span class="muted" style="font-weight:400">(optional)</span></label><input id="sl" name="slack" placeholder="https://hooks.slack.com/services/…" value="${esc(s.slack_webhook || '')}" ${can('slack') ? '' : 'disabled'}>${can('slack') ? '' : `<p class="hint">${icon('lock', 12)} Slack alerts are in the ${esc(plansFor('slack'))} plans. <a href="#/account/billing">See plans</a></p>`}</div></div></div>
-        <div class="form-section"><div><h3>Test your setup</h3><p class="explain">Sends a sample alert to the saved email and Slack channel.</p></div>
+        <div class="form-section"><div><h3>Webhook</h3><p class="explain">Send alerts to Zapier, Make, Microsoft Teams, Discord or your own system. We post once when something breaks and once when it's fixed, and try again for 30 minutes if your side is down. Every request is signed with the secret below.</p></div>
+          <div class="controls">
+            <div class="field"><label for="wh">Webhook address <span class="muted" style="font-weight:400">(optional)</span></label><input id="wh" name="webhookUrl" placeholder="https://hooks.zapier.com/hooks/catch/…" value="${esc(s.webhook?.url || '')}" ${can('slack') ? '' : 'disabled'}>${can('slack') ? '' : `<p class="hint">${icon('lock', 12)} Webhook alerts come with Slack alerts in the ${esc(plansFor('slack'))} plans. <a href="#/account/billing">See plans</a></p>`}</div>
+            <div class="field"><label for="whf">Send as</label><select id="whf" name="webhookFormat" ${can('slack') ? '' : 'disabled'}>${[['auto', 'Pick from the address'], ['json', 'JSON (Zapier, Make, your own system)'], ['teams', 'Microsoft Teams'], ['discord', 'Discord']].map(([v, l]) => `<option value="${v}" ${(s.webhook?.format || 'auto') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>${s.webhook ? `<p class="hint">Sending as ${esc({ json: 'JSON', teams: 'a Microsoft Teams card', discord: 'a Discord message' }[s.webhook.sendsAs] || s.webhook.sendsAs)}.</p>` : ''}</div>
+            ${s.webhook ? `<div class="field"><label>Signing secret</label><div class="inline-row copy-row"><code id="wh-secret" style="user-select:all">${esc(s.webhook.secret)}</code><button type="button" class="btn small secondary" id="wh-new">New secret</button></div>
+              <p class="hint">Header <code>X-Tharam-Signature: t=…,v1=…</code> is the HMAC-SHA256 of <code>t.body</code> with this secret.</p></div>
+            <div id="wh-log"></div>` : ''}</div></div>
+        <div class="form-section"><div><h3>Test your setup</h3><p class="explain">Sends a sample alert to the saved email, Slack channel and webhook.</p></div>
           <div class="controls"><div class="inline-row"><button type="button" class="btn secondary" id="test-alert">Send test alert</button><span id="test-result" class="muted" role="status"></span></div></div></div>
       </form></div>`;
       const form = $('#ch');
       const mark = savebar($('.main-inner', ctx.main), {
-        onSave: async () => { const fd = new FormData(form); await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { alertEmail: fd.get('alertEmail'), slack: fd.get('slack') } }); await loadStores(); },
+        onSave: async () => {
+          const fd = new FormData(form);
+          const body = { alertEmail: fd.get('alertEmail'), slack: fd.get('slack') };
+          const url = String(fd.get('webhookUrl') ?? s.webhook?.url ?? '').trim(), format = fd.get('webhookFormat') || 'auto';
+          if (url !== (s.webhook?.url || '') || (url && format !== (s.webhook?.format || 'auto'))) body.webhook = url ? { url, format } : null;
+          await api(`/api/stores/${s.id}`, { method: 'PATCH', body });
+          await loadStores();
+        },
         onDiscard: () => render(),
       });
       form.addEventListener('input', mark);
+      const loadHookLog = async () => {
+        const box = $('#wh-log');
+        if (!box) return;
+        const d = await api(`/api/stores/${s.id}/webhook-deliveries`).catch(() => null);
+        if (!d || !ctx.alive()) return;
+        const ST = { delivered: ['healthy', 'Delivered'], pending: ['warning', 'Trying again'], failed: ['critical', 'Not delivered'] };
+        const EV = { 'alert.failing': 'Something broke', 'alert.recovered': 'Fixed', test: 'Test' };
+        box.innerHTML = d.deliveries.length ? `<label>Latest deliveries</label><ul class="list" id="wh-deliveries">${d.deliveries.slice(0, 5).map((x) => { const [k, l] = ST[x.status] || ['', x.status]; return `<li><div class="row"><span class="pill ${k}">${l}</span><span><span class="t">${esc(EV[x.event] || x.event)}</span><span class="d">${x.attempts} attempt${x.attempts === 1 ? '' : 's'}${x.last_code ? ` · answered ${x.last_code}` : ''}${x.last_error && x.status !== 'delivered' ? ` · ${esc(x.last_error)}` : ''}</span></span><span class="r">${time(x.updated_at)}</span></div></li>`; }).join('')}</ul>` : '<p class="hint">Nothing sent yet. Send a test alert to try it.</p>';
+      };
+      if (s.webhook) loadHookLog();
+      if ($('#wh-new')) $('#wh-new').onclick = async () => {
+        if (!(await confirmDialog({ title: 'Make a new signing secret?', body: 'Requests are signed with the new secret from now on. Update it wherever you check signatures.', confirm: 'Make new secret' }))) return;
+        try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { webhookSecret: 'new' } }); await loadStores(); render(); toast('New secret made'); } catch (ex) { toast(ex.message, 'error'); }
+      };
       $('#test-alert').onclick = async (e) => {
         if (S.dirty) { toast('Save your changes first', 'error'); return; }
         const done = busy(e.target, 'Sending');
@@ -1093,6 +1129,8 @@
           const parts = [];
           parts.push(r.email ? `Email sent to ${s.alert_email}.` : r.emailConfigured ? 'Email could not be sent.' : 'Email sending is not set up on this server yet.');
           if (r.slack !== null) parts.push(r.slack ? 'Slack message sent.' : 'Slack rejected the message. Check the webhook URL.');
+          if (r.webhook) parts.push(r.webhook.ok ? 'Webhook delivered.' : `Webhook not delivered: ${r.webhook.error}.`);
+          if (s.webhook) loadHookLog();
           $('#test-result').textContent = parts.join(' ');
         } catch (ex) { toast(ex.message, 'error'); } finally { done(); }
       };
@@ -1112,6 +1150,43 @@
   };
 
   // Visual changes
+  // ---------- Sale readiness ----------
+  STORE_PAGES.sale = async (ctx, s) => {
+    const d = await api(`/api/stores/${s.id}/sale-readiness`).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+    if (!ctx.alive()) return;
+    const runBtn = `<a class="btn" href="#/s/${s.id}/run" data-preset="sale" id="sale-run">Run a sale readiness check</a>`;
+    const intro = '<p class="lede-sm">One report before a sale or Black Friday: can customers buy, is every price right, do your codes work, is the store fast on a phone, are apps breaking anything, are the laws where you sell met, and does it look right.</p>';
+    const wire = () => $$('[data-preset]', ctx.main).forEach((a) => a.addEventListener('click', () => (S.runPreset = a.dataset.preset)));
+    if (!d) {
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Sale readiness')}${intro}<div class="panel empty"><h2>No full check yet</h2><p>A sale readiness check takes a few minutes. Nothing is bought, and the cart is emptied afterwards.</p>${runBtn}</div></div>`;
+      wire();
+      return;
+    }
+    const V = { ready: 'healthy', partial: 'healthy', attention: 'warning', blocked: 'critical' };
+    const P = { ready: 'healthy', attention: 'warning', blocker: 'critical', not_checked: '' };
+    const sections = d.sections.map((x) => `<section class="panel sale-sec status-${x.status}" data-sec="${esc(x.key)}">
+      <header><h2>${esc(x.title)}</h2><span class="pill ${P[x.status]}">${esc(x.label)}</span></header>
+      <p class="sub">${esc(x.summary)}</p>
+      ${x.items.length ? `<ul class="sale-items">${x.items.map((i) => `<li><span class="sev ${i.status}">${i.status === 'fail' ? 'Fix' : 'Check'}</span><span><b>${esc(i.title)}</b><span class="d">${esc(i.detail)}</span>${i.fix ? `<span class="fix-inline">Fix: ${esc(i.fix)}</span>` : ''}</span></li>`).join('')}${x.more ? `<li class="muted">and ${x.more} more in the report</li>` : ''}</ul>` : ''}
+      ${x.key === 'codes' && x.status === 'not_checked' ? `<p><a href="#/s/${s.id}/suite/codes">Add your sale codes</a></p>` : ''}
+    </section>`).join('');
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Sale readiness', { actions: `<button class="btn secondary" id="sale-email">Email me this summary</button>${runBtn}` })}${intro}
+      <div class="panel sale-verdict sv-${d.verdict}"><span class="pill ${V[d.verdict]}">${d.verdict === 'blocked' ? 'Not ready' : d.verdict === 'attention' ? 'Almost ready' : 'Ready'}</span>
+        <h2>${esc(d.headline)}</h2>
+        <p class="muted">From the ${d.kind === 'full' ? 'full ' : ''}check ${time(d.checkedAt)}. <a href="#/s/${s.id}/reports/${d.runId}">Open the full report</a>${d.recipient ? ` · The summary email goes to ${esc(d.recipient)}.` : ''}</p>
+        <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+          <div class="figure"><b style="color:var(--pass)">${d.counts.ready}</b><span>ready</span></div>
+          <div class="figure"><b style="color:${d.counts.attention ? 'var(--warn)' : 'var(--ink)'}">${d.counts.attention}</b><span>need attention</span></div>
+          <div class="figure"><b style="color:${d.counts.blockers ? 'var(--fail)' : 'var(--ink)'}">${d.counts.blockers}</b><span>to fix before the sale</span></div>
+          <div class="figure"><b style="color:var(--ink)">${d.counts.notChecked}</b><span>not checked</span></div></div></div>
+      <div class="sale-grid">${sections}</div></div>`;
+    wire();
+    $('#sale-email').onclick = async (e) => {
+      const done = busy(e.currentTarget, 'Sending');
+      try { const r = await api(`/api/stores/${s.id}/sale-readiness/email`, { method: 'POST', body: { run: d.runId } }); toast(`Sent to ${r.to}`); } catch (ex) { toast(ex.message, 'error'); } finally { done(); }
+    };
+  };
+
   STORE_PAGES.visual = async (ctx, s) => {
     const d = await api(`/api/stores/${s.id}/visual`);
     if (!ctx.alive()) return;
@@ -1256,7 +1331,7 @@
       ${b ? `<div class="change-counts"><button type="button" data-jump="changes" class="cc new"><b>${ch.new.length}</b><span>newly broken</span></button><button type="button" data-jump="changes" class="cc fixed"><b>${ch.fixed.length}</b><span>fixed</span></button><button type="button" data-jump="changes" class="cc still"><b>${ch.still.length}</b><span>still broken</span></button></div>`
         : `<div class="change-counts"><span class="cc still"><b>${ch.still.length}</b><span>to fix or check</span></span></div>`}
     </section>`;
-    const changeItem = (x, kind) => `<li><div class="row"><span class="sev ${kind === 'fixed' ? 'ok' : x.a === 'fail' ? 'fail' : 'warn'}">${kind === 'fixed' ? 'Fixed' : x.a === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(x.title)}</span><span class="d">${esc(kind === 'fixed' ? x.prevDetail : x.detail)}</span></span><span></span></div></li>`;
+    const changeItem = (x, kind) => `<li><div class="row"><span class="sev ${kind === 'fixed' ? 'ok' : x.a === 'fail' ? 'fail' : 'warn'}">${kind === 'fixed' ? 'Fixed' : x.a === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(x.title)}</span><span class="d">${esc(kind === 'fixed' ? x.prevDetail : x.detail)}</span>${kind !== 'fixed' && x.changes?.scripts?.length ? `<span class="started-after"><b>Started after:</b> ${x.changes.scripts.slice(0, 3).map((sc) => { let n = sc.url; try { const u = new URL(sc.url); n = `${u.pathname.split('/').pop() || u.host} from ${u.host}`; } catch {} return esc(n); }).join(', ')} <span class="tag-new">New script</span></span>` : ''}</span><span></span></div></li>`;
     const changes = b ? `<section class="panel" id="changes"><h2>What changed</h2><p class="sub">${compareLine}.</p>
       <div class="grid-2 tight"><div><h3 class="col-h">Newly broken</h3>${ch.new.length ? `<ul class="list">${ch.new.map((x) => changeItem(x, 'new')).join('')}</ul>` : '<p class="muted">Nothing new broke.</p>'}</div>
       <div><h3 class="col-h">Fixed</h3>${ch.fixed.length ? `<ul class="list">${ch.fixed.map((x) => changeItem(x, 'fixed')).join('')}</ul>` : '<p class="muted">Nothing was fixed since then.</p>'}</div></div>
@@ -1270,7 +1345,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -1289,6 +1364,28 @@
     })() : '';
     const aiPanel = c.ai && c.ai.findings && c.ai.findings.length ? `<section class="panel" id="ai"><h2>AI visual review</h2><p class="sub">What an AI reviewer noticed looking at your pages like a shopper.</p>
       <ul class="ai-findings" style="margin-left:0">${c.ai.findings.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul></section>` : '';
+    const sw = res && res.scripts && res.scripts.pages && Object.keys(res.scripts.pages).length ? res.scripts : null;
+    const scriptsPanel = sw ? (() => {
+      const added = new Set((sw.added || []).map((x) => x.url));
+      const PG = [['home', 'Home page'], ['product', 'Product page'], ['cart', 'Cart page']].filter(([k]) => sw.pages[k]);
+      const short = (u) => { try { const x = new URL(u); const p = x.pathname.length > 56 ? '…' + x.pathname.slice(-55) : x.pathname; return { host: x.host, path: p }; } catch { return { host: '', path: u }; } };
+      return `<section class="panel" id="scripts"><h2>Scripts and apps</h2>
+        <p class="sub">Every script and outside site your home, product and cart pages used during this check. New scripts since the last check are marked; we alert you about each one once.</p>
+        ${(sw.bad || []).length ? `<div class="callout fail" role="alert"><b>Known malicious site:</b> ${sw.bad.map(esc).join(', ')}. Remove whatever loads it now.</div>` : ''}
+        ${(() => { const fm = sw.forms; if (!fm || !(fm.readers || []).length) return ''; const PGN = { product: 'Product page', cart: 'Cart page' }; const leak = fm.readers.some((r) => r.sentTo.length || r.bad) || (fm.sentTo || []).length;
+          return `<div class="callout ${leak ? 'fail' : 'warn'}" ${leak ? 'role="alert"' : ''} id="form-readers"><b>${leak ? 'A script sends what shoppers type to another website.' : 'Outside scripts read what shoppers type.'}</b> ${leak ? 'Remove it now.' : 'Fine if it is an app you use; remove it if you don’t recognise it.'}
+            <div class="table-wrap flat" style="margin-top:8px"><table class="data"><thead><tr><th>Script</th><th>Page</th><th>Fields</th><th>Sent to</th></tr></thead><tbody>
+            ${fm.readers.map((r) => `<tr><td><span class="cell-main">${esc(r.script)}</span></td><td>${esc(PGN[r.page] || r.page)}</td><td class="cell-sub">${esc([...new Set([...r.reads, ...r.listens])].join(', '))}</td><td>${r.sentTo.length ? `<b>${esc(r.sentTo.join(', '))}</b>` : '<span class="muted">Nothing seen</span>'}</td></tr>`).join('')}
+            </tbody></table></div></div>`; })()}
+        <div class="figures" style="margin:0 0 14px"><div class="figure"><b>${sw.counts?.scripts ?? 0}</b><span>scripts</span></div><div class="figure"><b>${sw.counts?.sites ?? 0}</b><span>outside sites</span></div>
+          <div class="figure"><b>${sw.baseline ? '–' : (sw.added || []).length}</b><span>${sw.baseline ? 'first record' : 'new since last check'}</span></div></div>
+        ${PG.map(([k, l]) => { const pg = sw.pages[k]; return `<h3 class="col-h">${l} <span class="muted">· ${pg.scripts.length} script${pg.scripts.length === 1 ? '' : 's'} · ${pg.sites.length} outside site${pg.sites.length === 1 ? '' : 's'}</span></h3>
+          <div class="table-wrap flat"><table class="data scripts-table"><thead><tr><th>Script</th><th>From</th></tr></thead><tbody>
+          ${pg.scripts.map((x) => { const s2 = short(x.url); return `<tr class="${added.has(x.url) ? 'row-new' : ''}"><td><span class="cell-main">${esc(s2.path)}</span>${added.has(x.url) ? ' <span class="tag-new">New</span>' : ''}<div class="cell-sub">${esc(s2.host)}</div></td><td class="cell-sub">${x.outside ? 'Outside site' : 'Your store'}</td></tr>`; }).join('')}
+          </tbody></table></div>
+          ${pg.sites.length ? `<p class="muted" style="margin:8px 0 18px">Talks to: ${pg.sites.map(esc).join(', ')}</p>` : ''}`; }).join('')}
+      </section>`;
+    })() : '';
     const ta = c.timings.a.filter((x) => x.ms != null), tb = c.timings.b;
     const timings = ta.length ? `<section class="panel" id="timings"><h2>Journey step timings</h2><p class="sub">How long each step of the shopping journey took, including the page settling.</p>
       <div class="table-wrap flat"><table class="data"><thead><tr><th>Step</th><th class="num">This report</th>${b ? '<th class="num">Before</th>' : ''}</tr></thead><tbody>
@@ -1301,7 +1398,7 @@
       <div class="shots" id="dev-shots"></div></section>` : '';
     // One section at a time, as tabs: no long scrolling page. The chosen tab is remembered between reports.
     const issueCount = c.areas.reduce((n, a) => n + a.counts.fail + a.counts.warn, 0);
-    const tabsList = [['changes', 'What changed', changes], ['areas', 'All checks', areas, issueCount], ['catalog', 'Products', catPanel], ['ai', 'AI review', aiPanel], ['speed', 'Speed', metrics], ['devices', 'Screenshots', visual], ['timings', 'Step timings', timings]].filter((x) => x[2]);
+    const tabsList = [['changes', 'What changed', changes], ['areas', 'All checks', areas, issueCount], ['catalog', 'Products', catPanel], ['scripts', 'Scripts and apps', scriptsPanel, sw && !sw.baseline ? (sw.added || []).length : 0], ['ai', 'AI review', aiPanel], ['speed', 'Speed', metrics], ['devices', 'Screenshots', visual], ['timings', 'Step timings', timings]].filter((x) => x[2]);
     if (S.focus) S.reportTab = 'areas';
     const cur = tabsList.some((x) => x[0] === S.reportTab) ? S.reportTab : tabsList[0]?.[0];
     const tabBar = `<nav class="rtabs no-print" role="tablist" aria-label="Report sections">${tabsList.map(([id, l, , n]) => `<button type="button" role="tab" data-rtab="${id}" aria-selected="${id === cur}">${esc(l)}${n ? `<span class="tab-count">${n}</span>` : ''}</button>`).join('')}</nav>`;
@@ -2501,7 +2598,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false; S.features = new Set(me.features || []);
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', alerts: '/alerts', suite: '/suite', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {

@@ -109,6 +109,8 @@ function ensureColumn(table, col, type) {
 }
 ensureColumn('stores', 'config_json', "TEXT NOT NULL DEFAULT '{}'");
 ensureColumn('stores', 'platform', 'TEXT');
+// Webhook alerts (src/webhooks.js): { url, format, secret } or NULL.
+ensureColumn('stores', 'webhook_json', 'TEXT');
 ensureColumn('runs', 'trigger', 'TEXT');
 ensureColumn('alerts', 'title', 'TEXT');
 ensureColumn('releases', 'environment_id', 'INTEGER');
