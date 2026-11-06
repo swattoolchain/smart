@@ -9,8 +9,6 @@
  * This is never a load test: 5 shoppers is less than a small store sees on a normal evening, every shopper
  * makes one pass, and a store is tested at most once every 6 hours.
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { newContext, gotoStore } from './browser.js';
 import { check, shortErr } from './checks.js';
 
@@ -77,23 +75,18 @@ async function shopOnce({ origin, password, product, variantId, timeout = 30000 
   }
 }
 
-/** When this store was last tested, so it is never tested more often than every MIN_GAP_HOURS. */
-function lastRunFile(dataDir, storeId) { return path.join(dataDir, 'traffic', `store-${storeId}.json`); }
-export function lastTrafficRun(dataDir, storeId) {
-  try { return JSON.parse(fs.readFileSync(lastRunFile(dataDir, storeId), 'utf8')); } catch { return null; }
-}
-
 /**
  * Runs the sale traffic test and adds the check `perf.traffic`.
- * Returns a summary for the run result, or null when it did not run.
+ * `lastAt`: when the store was last tested (ISO). The main server keeps it in the database and claims the slot
+ * before the check starts (queue.js claimTrafficSlot); it is passed in when the test must wait, so every runner
+ * honours the same 6-hour limit. Returns a summary for the run result, or null when it did not run.
  */
-export async function runTraffic({ rec, origin, info, password, storeId, dataDir, shoppers = DEFAULT_SHOPPERS, now = Date.now() }) {
+export async function runTraffic({ rec, origin, info, password, shoppers = DEFAULT_SHOPPERS, lastAt = null, now = Date.now() }) {
   const title = 'Store keeps up when several shoppers buy at once';
   const n = clampShoppers(shoppers);
-  const last = lastTrafficRun(dataDir, storeId);
-  if (last?.at && now - new Date(last.at).getTime() < MIN_GAP_HOURS * 3600e3) {
-    rec.add(check('perf.traffic', 'performance', title, 'skip', { severity: 'minor', detail: `Tested ${new Date(last.at).toUTCString().slice(5, 22)} UTC. To stay gentle with your store, this test runs at most once every ${MIN_GAP_HOURS} hours.` }));
-    return { skipped: 'recent', last: last.at };
+  if (lastAt && now - new Date(lastAt).getTime() < MIN_GAP_HOURS * 3600e3) {
+    rec.add(check('perf.traffic', 'performance', title, 'skip', { severity: 'minor', detail: `Tested ${new Date(lastAt).toUTCString().slice(5, 22)} UTC. To stay gentle with your store, this test runs at most once every ${MIN_GAP_HOURS} hours.` }));
+    return { skipped: 'recent', last: lastAt };
   }
   const product = info.products?.[0];
   const variant = product?.variants?.find((v) => v.available !== false) || product?.variants?.[0];
@@ -101,8 +94,6 @@ export async function runTraffic({ rec, origin, info, password, storeId, dataDir
     rec.add(check('perf.traffic', 'performance', title, 'skip', { severity: 'minor', detail: 'No product in stock was found to shop for.' }));
     return null;
   }
-  fs.mkdirSync(path.dirname(lastRunFile(dataDir, storeId)), { recursive: true });
-  fs.writeFileSync(lastRunFile(dataDir, storeId), JSON.stringify({ at: new Date(now).toISOString(), shoppers: n }));
 
   rec.step('Sale traffic: one shopper alone');
   const alone = await shopOnce({ origin, password, product, variantId: variant.id });

@@ -192,7 +192,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       // Opt-in only (Store settings), never on publish previews, at most every 6 hours (see traffic.js).
       if (kind === 'full' && storeId && traffic && !preview && on('sale.traffic')) {
         phase('traffic');
-        trafficOut = await runTraffic({ rec, origin, info, password, storeId, dataDir: config.dataDir, shoppers: traffic.shoppers });
+        trafficOut = await runTraffic({ rec, origin, info, password, shoppers: traffic.shoppers, lastAt: traffic.lastAt || null });
       }
       if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
         phase('regional');
