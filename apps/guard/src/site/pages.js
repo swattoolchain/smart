@@ -4,6 +4,7 @@ import { layout, esc, icon, badge, capCell, VERSION } from './layout.js';
 export { VERSION };
 import { PRODUCTS, PLATFORMS, MARKETPLACES, CAPS, FAQ, MANAGED, AUDIENCES, PROMISES } from './content.js';
 import { demoMarkup, demoScript } from './demo.js';
+import { ZIP_NAME, pluginVersion } from '../wp-plugin.js';
 import { listPlans, getPlan, setting, FEATURES } from '../license.js';
 
 const checkForm = (id = 'check') => `<form class="check-form" id="check-form" novalidate><label for="${id}-url" class="sr-only">Your store address</label>
@@ -194,6 +195,18 @@ export function platformIndex() {
   return layout({ title: 'Platforms', description: 'Tharam works with Shopify, WooCommerce, BigCommerce, Magento, Salesforce Commerce Cloud, Wix, Squarespace and custom-built stores.', path: '/platforms', body });
 }
 
+const wooPlugin = () => `<section class="band white" id="plugin"><div class="wrap split">
+    <div><p class="eyebrow">WordPress plugin</p><h2 class="h2">Let Tharam in, and link your store with a code</h2>
+      <p class="body-l">Security and caching plugins sometimes stop a test shopper the same way they stop a bot. The Tharam Store Guard plugin makes sure ours gets through, and it shows a short code that links your store to your Tharam account.</p>
+      <p><a class="btn" href="/downloads/${ZIP_NAME}" download>Download the plugin (v${esc(pluginVersion())})</a></p>
+      <p class="fine">Free. No passwords or keys inside. It never reads orders or customers.</p></div>
+    <div class="note-card"><h3>Install in three steps</h3><ol>
+      <li>In WordPress, open Plugins, then Add New, then Upload Plugin. Choose the file you downloaded and press Activate.</li>
+      <li>Open Tools, then Tharam. You will see your link code.</li>
+      <li>Paste the code into Tharam when you add your store.</li></ol>
+      <p>Still blocked by a firewall such as Wordfence, Sucuri or Cloudflare? Allow visitors whose User Agent contains <code>TharamStoreGuard</code>.</p></div>
+  </div></section>`;
+
 export function platform(slug) {
   const p = PLATFORMS.find((x) => x.slug === slug);
   if (!p) return null;
@@ -206,6 +219,7 @@ export function platform(slug) {
       ${!live ? `<form class="note-card wl" data-waitlist="platform-${esc(p.slug)}" novalidate><h3>Join early access for ${esc(p.name)}</h3><p>Leave your email and store address and we’ll set up shopping tests for your store.</p>
         <input name="email" type="email" placeholder="you@yourstore.com" required aria-label="Email"><input name="url" type="text" placeholder="yourstore.com" aria-label="Store address"><button class="btn" type="submit">Join early access</button><p class="wl-msg" role="status"></p></form>` : ''}</div>
   </div></section>
+  ${slug === 'woocommerce' ? wooPlugin() : ''}
   <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">What you get</h2></div><div class="pillars three">${PRODUCTS.slice(0, 3).map((o) => featureCard(o, false)).join('')}</div></div></section>
   ${cta(`See how your ${short} store is doing`)}</main>`;
   return layout({ title: `Tharam for ${p.name}`, description: p.blurb, path: `/platforms/${slug}`, body });
