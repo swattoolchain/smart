@@ -8,14 +8,16 @@
  * (some carry server data) and cached copies stay valid. Inline event handlers (onclick="…") are not
  * allowed. Styles allow inline style attributes: the app builds many of them, and they cannot run code.
  *
- * CSP_MODE: "enforce", "report-only" (default: browsers report but block nothing) or "off".
- * Production starts in report-only so a page we missed can't break during the App Store review; set
- * CSP_MODE=enforce once /csp-report stays quiet. Tests run with enforce (test/lib/harness.js).
+ * CSP_MODE: "enforce", "report-only" or "off". Without it, the founder console switch decides (off by
+ * default = report-only: browsers report but block nothing, so a page we missed can't break). Turn the
+ * switch on once /csp-report stays quiet. Tests run with enforce (test/lib/harness.js).
  */
 import crypto from 'node:crypto';
+import { isOn } from './features.js';
 
-const MODE = ['enforce', 'report-only', 'off'].includes(process.env.CSP_MODE) ? process.env.CSP_MODE : 'report-only';
-export const cspMode = () => MODE;
+// CSP_MODE on the server wins; otherwise the founder console switch "Block unsafe page content" decides
+// (on = enforce, off = report-only), so blocking can be turned on and back off without a deploy.
+export const cspMode = () => (['enforce', 'report-only', 'off'].includes(process.env.CSP_MODE) ? process.env.CSP_MODE : isOn('csp_enforce') ? 'enforce' : 'report-only');
 
 /** SHA-256 sources for every inline script (a <script> without src) in the page. */
 export function inlineScriptHashes(html) {
@@ -83,8 +85,9 @@ const kindFor = (p) => (p.startsWith('/api/') || p.startsWith('/shopify/api/') ?
  * `frameAncestors(req)` gives the frame-ancestors value for the request.
  */
 export function cspMiddleware({ frameAncestors }) {
-  const header = MODE === 'report-only' ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy';
   return (req, res, next) => {
+    const MODE = cspMode();
+    const header = MODE === 'report-only' ? 'Content-Security-Policy-Report-Only' : 'Content-Security-Policy';
     if (MODE === 'off') {
       // Framing rules still apply when the policy is switched off.
       res.setHeader('Content-Security-Policy', `frame-ancestors ${frameAncestors(req)}`);
