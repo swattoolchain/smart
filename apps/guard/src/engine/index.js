@@ -12,6 +12,7 @@ import { groupOf } from './catalog.js';
 import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
+import { runAbTests } from './abtest.js';
 import { reviewScreens } from './visual-ai.js';
 import { aiEnabled } from '../ai.js';
 
@@ -30,7 +31,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], abVariants = [], signal, progress, preview = null, captureOnly = false }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -93,6 +94,10 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
+      if (kind === 'full' && info.isShopify && on('sale.abtest')) {
+        phase('abtest');
+        await runAbTests({ page, rec, origin, info, password, variants: abVariants, shot }).catch((e) => rec.add(check('ab.tools', 'functional', 'A/B tests on your store', 'skip', { severity: 'minor', detail: `The A/B test check could not finish: ${shortErr(e)}` })));
+      }
       if (kind !== 'journeys') {
         phase('quality');
         metrics = (await runNonFunctional({ page, mobilePage, rec, origin, info, password, shot, linkLimit: kind === 'free' ? 30 : 60, on })).metrics;

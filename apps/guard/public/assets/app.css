@@ -854,6 +854,9 @@ dialog.form-dialog form { max-height: calc(100vh - 80px); overflow-y: auto; }
 .code-row .icon-btn { margin-bottom: 12px; }
 .suffix { display: flex; align-items: center; gap: 8px; } .suffix input { flex: 1; min-width: 0; } .suffix span { color: var(--muted); font-size: 13px; white-space: nowrap; }
 @media (max-width: 640px) { .code-row { grid-template-columns: minmax(0, 1fr) auto; } .code-row .field:nth-child(2) { grid-column: 1; } }
+.ab-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; }
+.ab-row input[name=value] { font-family: var(--mono); }
+@media (max-width: 640px) { .ab-row { grid-template-columns: minmax(0, 1fr) auto; } .ab-row .field { grid-column: 1; } }
 
 /* ---------- Inside Shopify admin ---------- */
 body.embedded .rail, body.embedded .topbar, body.embedded .rail-scrim { display: none !important; }
