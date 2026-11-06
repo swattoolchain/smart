@@ -13,7 +13,7 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { runPriceRules } from './pricing.js';
-import { runPriceConfigs } from './configurator.js';
+import { runPriceConfigs, runAutoOptions } from './configurator.js';
 import { reviewScreens } from './visual-ai.js';
 import { aiEnabled } from '../ai.js';
 
@@ -96,6 +96,8 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (on('pricing.journey') && priceRules.length && info.isShopify) await runPriceRules({ page, rec, origin, rules: priceRules });
       if (on('pricing.journey') && priceConfigs.length && info.isShopify) await runPriceConfigs({ page, rec, origin, configs: priceConfigs, shot: () => shot(page, 'price-options') });
+      // Required options on the test product's page, filled with their first value, when the owner listed none (full checks).
+      if (kind === 'full' && on('pricing.journey') && info.isShopify && info.products[0]?.handle) await runAutoOptions({ page, rec, origin, product: info.products[0].handle, listed: priceConfigs.map((c) => c.product), shot: () => shot(page, 'price-options-auto') });
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
       if (kind !== 'journeys') {
         phase('quality');

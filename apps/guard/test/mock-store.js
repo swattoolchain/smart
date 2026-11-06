@@ -21,6 +21,12 @@ const carts = new Map();
 // MOCK_BREAK=upcharge (the add-on line costs ₹149, not the ₹99 shown), props (the choices are not saved on the
 // cart line), optional (Engraving is no longer required).
 const OPTIONS = (process.env.MOCK_EXTRA || '').split(',').includes('options');
+// MOCK_EXTRA=optionsapp: the Organic Cotton Kurta has an options app that draws its own widget outside the product
+// form: "Embroidery colour" (required swatches: Gold +₹100, Silver) and "Name on tag" (optional text). The app adds
+// the choices as line item properties and the upcharge to the line price, and refuses Add to cart without a colour.
+// Breaks: props (the choices are not saved on the cart line), optional (no colour needed), upcharge (the cart
+// charges ₹150 for Gold while the page shows +₹100).
+const OPTIONS_APP = (process.env.MOCK_EXTRA || '').split(',').includes('optionsapp');
 let PW_POSTS = 0; // how many times the password form was submitted
 
 const EXTRA = (process.env.MOCK_EXTRA || '');
@@ -143,11 +149,16 @@ const server = http.createServer(async (req, res) => {
     const vid = Number(u.searchParams.get('variant')) || prod.variants[0].id;
     const v = prod.variants.find((x) => x.id === vid) || prod.variants[0];
     const opts = OPTIONS && prod.id === 2;
+    const app = OPTIONS_APP && prod.id === 1;
+    const appHtml = app ? `<div class="po-app" id="po-app"><p id="po-colour-label">Embroidery colour *</p><div role="radiogroup" aria-labelledby="po-colour-label" ${B.has('optional') ? '' : 'aria-required="true"'}><span role="radio" aria-checked="false" data-value="Gold" tabindex="0">Gold (+₹100)</span> <span role="radio" aria-checked="false" data-value="Silver" tabindex="0">Silver</span></div>
+<label for="po-name">Name on tag</label> <input id="po-name" name="properties[Name on tag]" maxlength="20"><p class="po-error" role="alert"></p></div>
+<script>(function(){var base=${Number(v.price)};document.querySelectorAll('#po-app [role=radio]').forEach(function(r){r.addEventListener('click',function(){document.querySelectorAll('#po-app [role=radio]').forEach(function(x){x.setAttribute('aria-checked','false');});r.setAttribute('aria-checked','true');document.querySelector('.price').textContent='₹'+(base+(r.dataset.value==='Gold'?100:0)).toFixed(2);});});
+document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();var c=document.querySelector('#po-app [aria-checked=true]');if(!c&&${B.has('optional') ? 'false' : 'true'}){document.querySelector('.po-error').textContent='Choose an embroidery colour';return;}var props={};if(c)props['Embroidery colour']=c.dataset.value;var n=document.getElementById('po-name').value;if(n)props['Name on tag']=n;fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:[{id:Number(f.id.value),quantity:1${B.has('props') ? '' : ',properties:props'},upcharge:c&&c.dataset.value==='Gold'?${B.has('upcharge') ? 150 : 100}:0}]})}).then(function(){document.getElementById('cart-count').textContent='1';});});})();</script>` : '';
     const optionsHtml = opts ? `<label for="eng">Engraving</label> <input id="eng" name="properties[Engraving]" maxlength="20" ${B.has('optional') ? '' : 'required'}>
 <label for="gw">Gift wrap</label> <select id="gw" name="properties[Gift wrap]"><option>No</option><option>Yes (+₹99)</option></select>
 <script>document.getElementById('gw').addEventListener('change',function(e){document.querySelector('.price').textContent='₹'+(${Number(v.price)}+(/^Yes/.test(e.target.value)?99:0)).toFixed(2);});</script>` : '';
     const optionsAtc = `<script>document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();var props={};[].forEach.call(f.querySelectorAll('[name^="properties["]'),function(x){props[x.name.slice(11,-1)]=x.value;});var items=[{id:Number(f.id.value),quantity:1${B.has('props') ? '' : ',properties:props'}}];if(/^Yes/.test(props['Gift wrap']||''))items.push({id:902,quantity:1});fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:items})}).then(function(){document.getElementById('cart-count').textContent='1';});});</script>`;
-    const breakAtc = opts ? optionsAtc : B.has('atc')
+    const breakAtc = app ? appHtml : opts ? optionsAtc : B.has('atc')
       ? `<script>document.addEventListener('submit',function(e){e.preventDefault();},true);</script>`
       : `<script>document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:[{id:Number(f.id.value),quantity:1}]})}).then(function(){document.getElementById('cart-count').textContent='1';});});</script>`;
     return send(
@@ -173,7 +184,7 @@ const server = http.createServer(async (req, res) => {
       const hit = byId.get(Number(it.id));
       if (!hit || !hit.v.available) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
       // pricedrift / pricelow: an app or cart script changes the price after the shopper saw it.
-      const price = (Number(hit.v.price) + (B.has('pricedrift') ? 150 : B.has('pricelow') ? -100 : 0)).toFixed(2);
+      const price = (Number(hit.v.price) + (B.has('pricedrift') ? 150 : B.has('pricelow') ? -100 : 0) + (Number(it.upcharge) || 0)).toFixed(2);
       items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price, handle: hit.p.handle, properties: it.properties || null });
     }
     // protection: an app adds its own paid line to every cart, once.

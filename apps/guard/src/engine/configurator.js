@@ -77,8 +77,42 @@ export function hasChoice(props, opt) {
   return false;
 }
 
-/** Fills one option on the product page, the way a shopper would. Returns how, or null when it isn't there. */
+/**
+ * Fills one option on the product page, the way a shopper would. Returns how, or null when it isn't there.
+ * Looks in the product form first, then anywhere on the page (options apps often draw their own widget outside the
+ * form), then for a group of choice buttons or swatches named after the option (role="radio"/"option", or
+ * buttons and swatches under a label with the option's name).
+ */
 async function fill(page, form, opt) {
+  for (const scope of [form, page.locator('body')]) {
+    const how = await fillIn(page, scope, opt);
+    if (how) return how;
+  }
+  return swatch(page, opt);
+}
+
+async function swatch(page, opt) {
+  const ok = await page.evaluate(({ name, value }) => {
+    const low = (x) => String(x || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const n = low(name).replace(/\*$/, '').trim();
+    const v = low(value);
+    // A group named after the option: aria-label / aria-labelledby, or a heading/label just before it.
+    const groups = [...document.querySelectorAll('[role="radiogroup"], [role="listbox"], fieldset, [class*="swatch"], [class*="option"]')].filter((g) => {
+      const lab = low(g.getAttribute('aria-label') || (g.getAttribute('aria-labelledby') && document.getElementById(g.getAttribute('aria-labelledby'))?.textContent) || g.querySelector('legend')?.textContent || g.previousElementSibling?.textContent || '');
+      return lab.replace(/\*$/, '').trim().startsWith(n);
+    });
+    for (const g of groups) {
+      const choices = [...g.querySelectorAll('[role="radio"], [role="option"], button, [data-value], label, li, span')].filter(vis);
+      const hit = choices.find((c) => low(c.getAttribute('data-value')) === v || low(c.textContent).startsWith(v));
+      if (hit) { hit.click(); return true; }
+    }
+    return false;
+  }, { name: opt.name, value: opt.value }).catch(() => false);
+  return ok ? 'choice button' : null;
+}
+
+async function fillIn(page, form, opt) {
   const byName = form.locator(`[name="properties[${opt.name.replace(/"/g, '\\"')}]"]`);
   const byLabel = form.getByLabel(opt.name, { exact: false });
   const candidates = [byName, byLabel];
@@ -145,8 +179,9 @@ async function waitCart(page, ms = 6000) {
 export async function runPriceConfigs({ page, rec, origin, configs, shot = null }) {
   if (!configs?.length) return;
   for (const [i, cfg] of configs.slice(0, MAX_CONFIGS).entries()) {
-    const id = configId(i);
-    let title = `Product options: ${cfg.product}`;
+    const id = cfg.id || configId(i);
+    const label = cfg.auto ? 'Product options found on the page' : 'Product options';
+    let title = `${label}: ${cfg.product}`;
     rec.step(`Check product options for ${cfg.product}`);
     try {
       if (!page.url().startsWith(origin)) await page.goto(origin + '/cart', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
@@ -157,13 +192,14 @@ export async function runPriceConfigs({ page, rec, origin, configs, shot = null 
       }
       const want = cfg.variant ? String(cfg.variant).toLowerCase() : null;
       const v = p.variants.find((x) => want && (String(x.id) === want || String(x.title).toLowerCase() === want)) || (!want && p.variants.find((x) => x.available));
-      title = `Product options: ${p.title}${v && v.title !== 'Default Title' ? ` (${v.title})` : ''}`;
+      title = `${label}: ${p.title}${v && v.title !== 'Default Title' ? ` (${v.title})` : ''}`;
       if (!v) {
         rec.add(check(id, 'functional', title, 'warn', { severity: 'major', detail: want ? `“${p.title}” has no variant called “${cfg.variant}”, so its options weren't checked.` : `“${p.title}” is sold out, so its options weren't checked.` }));
         continue;
       }
-      const expected = Math.round(cfg.price * 100);
       const base = toMinor(v.price, true);
+      // Found on the page (no price from the owner): the price the page shows once the options are filled.
+      let expected = cfg.price != null ? Math.round(cfg.price * 100) : null;
       const url = `${origin}/products/${p.handle}?variant=${v.id}`;
       const problems = []; // { text, severity }
       const notes = [];
@@ -197,7 +233,8 @@ export async function runPriceConfigs({ page, rec, origin, configs, shot = null 
         continue;
       }
       await page.waitForTimeout(700);
-      const shown = await pagePrice(page, expected);
+      const shown = await pagePrice(page, expected ?? base);
+      if (expected == null) expected = shown.trusted ? shown.minor : null;
 
       // 3. Add to cart and read what the cart carries.
       const btn = await atcButton(page);
@@ -215,9 +252,9 @@ export async function runPriceConfigs({ page, rec, origin, configs, shot = null 
       const addOns = (c.items || []).filter((x) => x !== line).map((x) => `${x.title || x.product_title} ${money(x.final_line_price ?? x.line_price, c.currency)}`);
       const total = Number(c.items_subtotal_price ?? c.total_price);
       const cur = c.currency;
-      if (total > expected + 1) problems.push({ severity: 'critical', text: `the cart comes to ${money(total, cur)}, more than the ${money(expected, cur)} you expect` });
-      else if (total < expected - 1) problems.push({ severity: 'major', text: `the cart comes to only ${money(total, cur)}, less than the ${money(expected, cur)} you expect${total <= base + 1 && expected > base ? ' (the upcharge was not added)' : ''}` });
-      if (shown.trusted && Math.abs(shown.minor - expected) > (shown.exact ? 1 : 100) && Math.abs(shown.minor - total) > (shown.exact ? 1 : 100)) {
+      if (expected == null) { /* no price to compare with: the choices and checkout are still checked */ } else if (total > expected + 1) problems.push({ severity: 'critical', text: `the cart comes to ${money(total, cur)}, more than the ${money(expected, cur)} ${cfg.auto ? 'the product page shows' : 'you expect'}` });
+      else if (total < expected - 1) problems.push({ severity: 'major', text: `the cart comes to only ${money(total, cur)}, less than the ${money(expected, cur)} ${cfg.auto ? 'the product page shows' : 'you expect'}${total <= base + 1 && expected > base ? ' (the upcharge was not added)' : ''}` });
+      if (!cfg.auto && shown.trusted && Math.abs(shown.minor - expected) > (shown.exact ? 1 : 100) && Math.abs(shown.minor - total) > (shown.exact ? 1 : 100)) {
         problems.push({ severity: 'major', text: `the product page shows ${money(shown.minor, cur)} with these options, but the cart asks for ${money(total, cur)}` });
       }
 
@@ -231,8 +268,8 @@ export async function runPriceConfigs({ page, rec, origin, configs, shot = null 
       if (co && co.minor > total + 1) problems.push({ severity: 'critical', text: `checkout asks for ${money(co.minor, cur)}, more than the cart's ${money(total, cur)}` });
 
       const steps = [
-        { label: 'You expect', minor: expected, note: optionsSay(cfg.options) },
-        { label: 'Product page', minor: shown.trusted ? shown.minor : null, note: shown.trusted ? '' : 'Price not readable' },
+        cfg.auto ? null : { label: 'You expect', minor: expected, note: optionsSay(cfg.options) },
+        { label: 'Product page', minor: shown.trusted ? shown.minor : null, note: cfg.auto ? `With ${optionsSay(cfg.options)}` : shown.trusted ? '' : 'Price not readable' },
         { label: 'Cart', minor: total, note: [line && lost.length === 0 ? 'Choices saved on the order line' : line ? 'Choices missing' : '', addOns.length ? `Add-ons: ${addOns.join(', ')}` : ''].filter(Boolean).join(' · ') },
         co ? { label: 'Checkout subtotal', minor: co.minor, note: '' } : null,
       ].filter(Boolean).map((s) => ({ ...s, money: s.minor == null ? null : money(s.minor, cur) }));
@@ -244,10 +281,10 @@ export async function runPriceConfigs({ page, rec, origin, configs, shot = null 
           severity: critical ? 'critical' : 'major',
           detail: `With ${optionsSay(cfg.options)}: ${problems.map((x) => x.text).join('; ')}.`,
           evidence: { ...evidence, screenshot: s },
-          fix: 'Check the options app (or theme code) for this product: that each option is saved to the order, that its upcharge is the right amount, and that required options are marked required. If the price changed on purpose, update it in Test suite → Price rules.',
+          fix: cfg.auto ? 'Check the options app (or theme code) for this product: that each option is saved to the order and its upcharge matches the product page. To test other choices or an exact price, add the product under Test suite → Price rules → Product options.' : 'Check the options app (or theme code) for this product: that each option is saved to the order, that its upcharge is the right amount, and that required options are marked required. If the price changed on purpose, update it in Test suite → Price rules.',
         }));
       } else {
-        rec.add(check(id, 'functional', title, 'pass', { severity: 'critical', detail: `With ${optionsSay(cfg.options)}, the cart keeps every choice and comes to ${money(total, cur)}, as you expect.${addOns.length ? ` Add-ons in the cart: ${addOns.join(', ')}.` : ''}${notes.length ? ` ${notes.join('. ')}.` : ''}${co ? ` Checkout shows the same ${money(co.minor, cur)}.` : ''}`, evidence }));
+        rec.add(check(id, 'functional', title, 'pass', { severity: 'critical', detail: `With ${optionsSay(cfg.options)}, the cart keeps every choice and comes to ${money(total, cur)}${cfg.auto ? (expected != null ? ', the price the product page shows' : '') : ', as you expect'}.${addOns.length ? ` Add-ons in the cart: ${addOns.join(', ')}.` : ''}${notes.length ? ` ${notes.join('. ')}.` : ''}${co ? ` Checkout shows the same ${money(co.minor, cur)}.` : ''}`, evidence }));
       }
     } catch (e) {
       rec.add(check(id, 'functional', title, 'skip', { severity: 'major', detail: shortErr(e) }));
@@ -255,5 +292,66 @@ export async function runPriceConfigs({ page, rec, origin, configs, shot = null 
       await page.goto(origin + '/cart', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
       await clear(page);
     }
+  }
+}
+
+/**
+ * The required options on a product page, when the owner listed none: required or aria-required fields in the
+ * product form, line item property fields (properties[...]) anywhere on the page, and required choice groups that
+ * options apps draw outside the form. Each with the first real value a shopper could pick.
+ * Returns [{ name, value, required: true }] (up to 6).
+ */
+export async function findRequiredOptions(page) {
+  return page.evaluate((max) => {
+    const vis = (el) => { const r = el.getBoundingClientRect(); const cs = getComputedStyle(el); return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'; };
+    const clean = (x) => String(x || '').replace(/\s+/g, ' ').replace(/\s*\*\s*$/, '').trim();
+    const form = document.querySelector('form[action*="/cart/add"]');
+    const out = [];
+    const seen = new Set();
+    const add = (name, value) => { const k = name.toLowerCase(); if (!name || !value || seen.has(k) || out.length >= max) return; seen.add(k); out.push({ name, value, required: true }); };
+    const nameOf = (el) => { const m = /^properties\[(.+)\]$/.exec(el.getAttribute('name') || ''); if (m) return m[1].replace(/^_/, ''); return clean((el.id && document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.textContent) || el.getAttribute('aria-label') || el.getAttribute('placeholder')); };
+    const fields = [...document.querySelectorAll('input, select, textarea')].filter((el) => {
+      if (['hidden', 'submit', 'button', 'email', 'password', 'search'].includes(el.type) || ['id', 'quantity'].includes(el.name)) return false;
+      if (!(el.required || el.getAttribute('aria-required') === 'true')) return false;
+      const inForm = form && (form.contains(el) || el.getAttribute('form') === form.id);
+      return (inForm || /^properties\[/.test(el.getAttribute('name') || '')) && vis(el);
+    });
+    for (const el of fields) {
+      const name = nameOf(el);
+      if (el.tagName === 'SELECT') { const o = [...el.options].find((x) => x.value && !x.disabled && !/^(choose|select|pick|--)/i.test(x.textContent.trim())); if (o) add(name, o.textContent.trim()); }
+      else if (el.type === 'checkbox') add(name, 'Yes');
+      else if (el.type === 'radio') { const first = document.querySelector(`[name="${CSS.escape(el.name)}"]`); add(name, (first?.labels?.[0]?.textContent || first?.value || '').trim()); }
+      else if (el.type === 'number') add(name, String(el.min || 1));
+      else add(name, 'Tharam test');
+    }
+    // Choice groups an options app draws itself (swatches, buttons), marked required.
+    for (const g of document.querySelectorAll('[role="radiogroup"][aria-required="true"], [role="listbox"][aria-required="true"]')) {
+      if (!vis(g)) continue;
+      const name = clean(g.getAttribute('aria-label') || (g.getAttribute('aria-labelledby') && document.getElementById(g.getAttribute('aria-labelledby'))?.textContent));
+      const first = [...g.querySelectorAll('[role="radio"], [role="option"]')].find((c) => vis(c) && c.getAttribute('aria-disabled') !== 'true');
+      if (first) add(name, clean(first.getAttribute('data-value') || first.textContent));
+    }
+    return out;
+  }, MAX_OPTIONS).catch(() => []);
+}
+
+export const AUTO_ID = 'fn.price.config-auto';
+
+/**
+ * Product options without setup: on the test product's page, when it has required options and the owner listed
+ * none for it, fill the first value of each and run the same checks (required really required, choices kept on
+ * the cart line, cart total = the price the page shows, checkout subtotal). Nothing is reported when the page has
+ * no required options.
+ */
+export async function runAutoOptions({ page, rec, origin, product, listed = [], shot = null }) {
+  if (!product || listed.includes(product)) return;
+  try {
+    await page.goto(`${origin}/products/${encodeURIComponent(product)}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await settle(page, 800);
+    const options = await findRequiredOptions(page);
+    if (!options.length) return;
+    await runPriceConfigs({ page, rec, origin, configs: [{ id: AUTO_ID, auto: true, product, variant: null, options, price: null }], shot });
+  } catch (e) {
+    rec.add(check(AUTO_ID, 'functional', 'Product options found on the page', 'skip', { severity: 'minor', detail: shortErr(e) }));
   }
 }
