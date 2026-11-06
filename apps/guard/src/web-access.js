@@ -59,6 +59,8 @@ export function sessionValid(req, userId) {
   return { ok: true };
 }
 export const sessionEpoch = (userId) => S.user.get(userId)?.session_epoch || 0;
+/** Ends every browser session of the account; returns the new epoch for a session that should stay. */
+export function bumpSessionEpoch(userId) { S.bump.run(userId); return sessionEpoch(userId); }
 
 // A few links per account and per address, so nobody can flood an inbox.
 const sent = new Map();

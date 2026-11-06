@@ -78,7 +78,11 @@
       img.addEventListener('click', () => {
         const lb = document.createElement('div');
         lb.className = 'lightbox';
-        lb.innerHTML = `<img src="${img.src}" alt="${img.alt}">`;
+        // Built as elements, not HTML: the alt text holds a check title from the store's own page.
+        const big = document.createElement('img');
+        big.src = img.src;
+        big.alt = img.alt;
+        lb.appendChild(big);
         lb.addEventListener('click', () => lb.remove());
         document.body.appendChild(lb);
       })
