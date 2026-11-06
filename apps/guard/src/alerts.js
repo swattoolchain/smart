@@ -3,6 +3,8 @@ import { config } from './config.js';
 import { q } from './db.js';
 import { groupOf, effectiveDisabled } from './engine/catalog.js';
 import { entitlements, has } from './license.js';
+import { deliver } from './webhooks.js';
+import { isOn } from './features.js';
 
 let transport = null;
 function mailer() {
@@ -56,7 +58,8 @@ export async function handleAlerts(storeId, runId, result) {
     }
     if (prev.status !== now) {
       q.upsertCheckState.run(storeId, c.id, now);
-      changes.push({ c, state: now === 'failing' ? 'failing' : 'recovered' });
+      // Notices (like a new script) are news once; they don't "recover".
+      if (now === 'failing' || !c.notice) changes.push({ c, state: now === 'failing' ? 'failing' : 'recovered' });
     }
   }
   // A failure whose check no longer runs (switched off in the suite, or replaced by a better check) can never
@@ -93,6 +96,9 @@ export async function handleAlerts(storeId, runId, result) {
 <p style="color:#78716c;font-size:13px">Tharam Store Guard · You get alerts only when something changes.</p></div>`;
 
   const to = store.alert_email || q.userById.get(store.user_id)?.email;
-  const slack = has(entitlements(store.user_id), 'slack') ? store.slack_webhook : null;
-  await Promise.allSettled([sendMail({ to, subject, text, html }), sendSlack(slack, `*${subject}*\n${text}`)]);
+  // Slack and webhooks come with the same plan feature.
+  const chat = has(entitlements(store.user_id), 'slack');
+  const slack = chat ? store.slack_webhook : null;
+  const hook = chat && isOn('webhooks') ? deliver(store, { event: failing.length ? 'alert.failing' : 'alert.recovered', runId, failing: failing.map((x) => x.c), recovered: recovered.map((x) => x.c), subject, text }) : null;
+  await Promise.allSettled([sendMail({ to, subject, text, html }), sendSlack(slack, `*${subject}*\n${text}`), hook]);
 }

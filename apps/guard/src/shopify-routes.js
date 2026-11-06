@@ -9,6 +9,7 @@ import { startRun } from './scheduler.js';
 import { entitlements, blockReason, has } from './license.js';
 import * as shopify from './shopify.js';
 import { assertPublicTarget } from './engine/browser.js';
+import { isOn } from './features.js';
 
 const pending = new Map(); // storeId:kind -> timestamp, to coalesce bursts of webhooks
 const scheduled = new Set();
@@ -31,7 +32,7 @@ export function shopifyRoutes(app, { requireUser, appHtml, version }) {
   // The app inside Shopify admin: our app page plus Shopify's App Bridge, loaded first as Shopify requires.
   const page = () => appHtml
     .replace('<head>', `<head>\n<meta name="shopify-api-key" content="${config.shopify.apiKey}">\n<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>`)
-    .replace('<body class="app">', `<body class="app embedded">\n<ui-nav-menu><a href="/shopify" rel="home">Overview</a><a href="/shopify/reports">Reports</a><a href="/shopify/publish">Safe to publish</a><a href="/shopify/catalog">Products</a><a href="/shopify/alerts">Alerts</a><a href="/shopify/suite">Test suite</a><a href="/shopify/settings">Settings</a><a href="/shopify/account">Account and plan</a><a href="/shopify/guide">How to use Tharam</a></ui-nav-menu>\n<script>window.THARAM_EMBEDDED = true;</script>`);
+    .replace('<body class="app">', `<body class="app embedded">\n<ui-nav-menu><a href="/shopify" rel="home">Overview</a><a href="/shopify/reports">Reports</a><a href="/shopify/publish">Safe to publish</a><a href="/shopify/catalog">Products</a>${isOn('sale_report') ? '<a href="/shopify/sale">Sale readiness</a>' : ''}<a href="/shopify/alerts">Alerts</a><a href="/shopify/suite">Test suite</a><a href="/shopify/settings">Settings</a><a href="/shopify/account">Account and plan</a><a href="/shopify/guide">How to use Tharam</a></ui-nav-menu>\n<script>window.THARAM_EMBEDDED = true;</script>`);
   const embedded = (req, res) => {
     if (!shopify.shopifyEnabled()) return res.status(503).type('text').send('The Shopify app is not configured on this server.');
     res.set('Cache-Control', 'no-store').type('html').send(page());

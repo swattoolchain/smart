@@ -82,6 +82,43 @@ describe('Feature switches', () => {
     note(t, 'on: visible to customers and in the catalog; audit row with before/after and actor; repeat off is not re-audited');
   });
 
+  it('security watch checks are not offered or run while their switches are off', async (t) => {
+    const groups = (await owner.get('/api/catalog')).json.groups.map((g) => g.key);
+    for (const g of ['security.scripts', 'security.hijack', 'security.theme']) assert.ok(!groups.includes(g), `${g} hidden`);
+    await founder.patch('/api/admin/features/script_watch', { on: true });
+    const after = (await owner.get('/api/catalog')).json.groups.map((g) => g.key);
+    assert.ok(after.includes('security.scripts') && !after.includes('security.hijack'), 'only the switched-on watch appears');
+    await founder.patch('/api/admin/features/script_watch', { on: false });
+    note(t, 'security.scripts / hijack / theme hidden by default; turning script watch on shows only that group');
+  });
+
+  it('sale readiness and webhook alerts answer "not found" while off, and work once on', async (t) => {
+    const storeId = (await owner.get('/api/stores')).json.stores[0].id;
+    const off = await owner.get(`/api/stores/${storeId}/sale-readiness`);
+    assert.equal(off.status, 404); assert.equal(off.json.error, 'Not found');
+    assert.equal((await owner.post(`/api/stores/${storeId}/sale-readiness/email`, {})).status, 404);
+    assert.equal((await owner.get(`/api/stores/${storeId}/webhook-deliveries`)).status, 404);
+    const set = await owner.patch(`/api/stores/${storeId}`, { webhook: { url: 'https://hooks.zapier.com/hooks/catch/1/abc', format: 'json' } });
+    assert.equal(set.status, 400, 'a webhook cannot be saved while the feature is off');
+    assert.match(set.json.error, /not available/);
+
+    // The Shopify admin menu leaves out switched-off pages.
+    const shop = P.session();
+    const nav = (await shop.get('/shopify?shop=x.myshopify.com')).text;
+    if (nav.includes('<ui-nav-menu>')) assert.ok(!nav.includes('/shopify/sale'), 'no Sale readiness link in Shopify admin');
+
+    await founder.patch('/api/admin/features/sale_report', { on: true });
+    await founder.patch('/api/admin/features/webhooks', { on: true });
+    const sr = await owner.get(`/api/stores/${storeId}/sale-readiness`);
+    assert.notEqual(sr.json?.error, 'Not found', 'the sale readiness route answers once on');
+    assert.equal((await owner.get(`/api/stores/${storeId}/webhook-deliveries`)).status, 200);
+    const nav2 = (await shop.get('/shopify?shop=x.myshopify.com')).text;
+    if (nav2.includes('<ui-nav-menu>')) assert.ok(nav2.includes('/shopify/sale'), 'Sale readiness link back in Shopify admin');
+    await founder.patch('/api/admin/features/sale_report', { on: false });
+    await founder.patch('/api/admin/features/webhooks', { on: false });
+    note(t, 'off: sale readiness and webhook routes 404, saving a webhook refused, Shopify menu without the link; on: routes answer again');
+  });
+
   it('screens: the founder console Features tab, and store settings without the extra', async (t) => {
     browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, args: ['--no-sandbox'] });
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });

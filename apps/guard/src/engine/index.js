@@ -13,6 +13,9 @@ import { runCatalog } from './catalog-check.js';
 import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { reviewScreens } from './visual-ai.js';
+import { watchScripts, scriptChecks } from './scripts.js';
+import { watchHijack, hijackChecks } from './hijack.js';
+import { watchForms, formChecks } from './forms.js';
 import { aiEnabled } from '../ai.js';
 
 async function isLocked(ctx, origin) {
@@ -30,7 +33,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [] }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -66,6 +69,8 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
   let info;
   let theme = null;
   try {
+    // Hijack watch records from the first page visit (redirects can happen on any of them).
+    const hijack = on('security.hijack') ? await watchHijack({ contexts: [{ ctx, device: 'desktop' }, { ctx: mctx, device: 'phone' }], origin, shot }) : null;
     // Unlock password-protected storefronts first so discovery shares the unlocked session.
     if (password) {
       await gotoStore(page, origin + '/', { password }).catch(() => {});
@@ -96,8 +101,19 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let metrics = {};
     let catalog = null;
     let ai = null;
+    let scripts = null;
     phase('journey');
+    const inventory = on('security.scripts') ? watchScripts(page, origin) : null;
+    const forms = on('security.scripts') ? await watchForms(page, origin).catch((e) => { console.error('form watch failed', e.message); return null; }) : null;
     const fn = await runFunctional({ page, rec, origin, info, password, shot, on });
+    // Script watch compares with the store's previous check; publish-check runs only record.
+    if (inventory && !fn.locked && !fn.blocked && !fn.down) scripts = scriptChecks({ rec, inventory: inventory(), previous: previousScripts, monitored: !!storeId && !preview && !captureOnly });
+    if (hijack && !fn.locked && !fn.blocked && !fn.down) {
+      await hijack.probe(mctx);
+      hijackChecks({ rec, found: await hijack.result() });
+    }
+    // Scripts reading what shoppers type, on the product and cart pages (also on drafts: a skimmer in a draft theme matters).
+    if (scripts && forms) scripts.forms = formChecks({ rec, found: forms() });
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
@@ -124,6 +140,8 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         ai = await reviewScreens({ runDir, origin, rec });
       }
     }
+    // Checks made outside the browser (theme files through the Shopify API) count like any other.
+    for (const c of extraChecks) rec.add(c);
     // A home screenshot gives every report a visual anchor.
     // Drop anything from a switched-off group (some sections share page visits).
     rec.checks = rec.checks.filter((c) => { const g = groupOf(c.id); return !g || on(g); });
@@ -141,6 +159,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       metrics,
       catalog,
       ai,
+      scripts,
       testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,
       notes: info.notes,
       platform: info.platform,
