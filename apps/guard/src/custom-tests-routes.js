@@ -3,13 +3,15 @@
  *   GET  /api/stores/:id/custom-tests            the current file, its tests, the plan's limits and the version history
  *        ?version=N                              an earlier version
  *        ?download=1                             the file itself, to save
- *   PUT  /api/stores/:id/custom-tests            upload a file: JSON or YAML as the request body, or { text, format }
+ *   PUT  /api/stores/:id/custom-tests            upload a file: JSON or YAML as the request body, or { text, format },
+ *                                                or tests from the editor's form: { tests: [...], format } (written as that format)
+ *   POST /api/stores/:id/custom-tests/restore    { version }: an earlier version becomes the current one (saved as a new version)
  *   POST /api/stores/:id/custom-tests/:name/try  run one test now and get a step-by-step trail with screenshots
  *        body { text } tries a test from an unsaved file (for the editor)
  */
 import express from 'express';
 import { entitlements, blockReason } from './license.js';
-import { currentTests, testsVersion, testsHistory, saveTests, testLimits, readFile, validate, runTest, checkIdOf, MAX_FILE_BYTES } from './custom-tests.js';
+import { currentTests, testsVersion, testsHistory, saveTests, testLimits, readFile, validate, runTest, checkIdOf, fileFromTests, lastResults, STEPS, MAX_FILE_BYTES, MAX_STEPS } from './custom-tests.js';
 import { storeConfig } from './scheduler.js';
 
 const TRIES_PER_HOUR = 30;
@@ -31,10 +33,15 @@ tests:
         contains: "Delivery available"
 `;
 
-function bodyText(req) {
+/** The step library for the editor's form: what each step takes. */
+const LIBRARY = Object.entries(STEPS).map(([key, d]) => ({ key, arg: d.arg, need: d.need || [], opt: d.opt || [], range: !!d.range }));
+
+function bodyText(req, limits) {
   if (typeof req.body === 'string') return { text: req.body, format: /json/.test(req.get('content-type') || '') ? 'json' : undefined };
   const b = req.body || {};
   if (typeof b.text === 'string') return { text: b.text, format: b.format === 'json' || b.format === 'yaml' ? b.format : undefined };
+  // Tests from the editor's form: written out in the format the owner uses (YAML unless the current file is JSON).
+  if (Array.isArray(b.tests) && b.format) return fileFromTests(b.tests, b.format === 'json' ? 'json' : 'yaml', limits);
   // A JSON test file sent as the request body itself.
   if (Array.isArray(b) || Array.isArray(b.tests)) return { text: JSON.stringify(b, null, 2), format: 'json' };
   return { text: '' };
@@ -54,28 +61,47 @@ export function customTestRoutes(app, { requireUser, ownStore }) {
       res.set('Content-Disposition', `attachment; filename="tharam-tests-${host}-v${file.version}.${ext}"`);
       return res.type(ext === 'json' ? 'application/json' : 'text/yaml').send(file.text);
     }
-    res.json({ file: file || null, limits: testLimits(entitlements(s.user_id)), history: testsHistory(s.id), example: EXAMPLE });
+    res.json({ file: file || null, limits: testLimits(entitlements(s.user_id)), history: testsHistory(s.id), results: lastResults(s.id), library: LIBRARY, maxSteps: MAX_STEPS, example: EXAMPLE });
   });
 
   app.put('/api/stores/:id/custom-tests', requireUser, express.text({ type: ['text/*', 'application/yaml', 'application/x-yaml'], limit: MAX_FILE_BYTES + 1024 }), (req, res) => {
     const s = ownStore(req, res);
     if (!s) return;
-    const { text, format } = bodyText(req);
+    const limits = testLimits(entitlements(s.user_id));
     try {
-      const file = saveTests(s.id, req.user.id, text, { format, limits: testLimits(entitlements(s.user_id)) });
+      const { text, format } = bodyText(req, limits);
+      const file = saveTests(s.id, req.user.id, text, { format, limits });
       res.json({ ok: true, unchanged: !!file.unchanged, file: { ...file, unchanged: undefined }, history: testsHistory(s.id) });
     } catch (e) {
       res.status(400).json({ error: e.message, problems: e.problems || [e.message] });
     }
   });
 
-  app.post('/api/stores/:id/custom-tests/:name/try', requireUser, async (req, res) => {
+  app.post('/api/stores/:id/custom-tests/restore', requireUser, (req, res) => {
+    const s = ownStore(req, res);
+    if (!s) return;
+    const v = Number(req.body?.version);
+    const old = Number.isInteger(v) ? testsVersion(s.id, v) : null;
+    if (!old) return res.status(404).json({ error: 'That version does not exist.' });
+    try {
+      // Saved again as a new version, so the history keeps what was current before.
+      const file = saveTests(s.id, req.user.id, old.text, { format: old.format, limits: testLimits(entitlements(s.user_id)) });
+      res.json({ ok: true, restored: v, unchanged: !!file.unchanged, file: { ...file, unchanged: undefined }, history: testsHistory(s.id) });
+    } catch (e) {
+      // An old file can be over today's plan limit.
+      res.status(400).json({ error: `Version ${v} can't be used as it is: ${e.message}`, problems: e.problems || [e.message] });
+    }
+  });
+
+  app.post('/api/stores/:id/custom-tests/:name/try', requireUser, express.text({ type: ['text/*'], limit: MAX_FILE_BYTES + 1024 }), async (req, res) => {
     const s = ownStore(req, res);
     if (!s) return;
     const ent = entitlements(s.user_id);
     const why = blockReason(ent, s.id);
     if (why) return res.status(403).json({ error: why, upgrade: true });
     let tests;
+    // An unsaved file from the editor: as the raw body (text/plain, text/yaml) or { text }.
+    if (typeof req.body === 'string') req.body = { text: req.body };
     if (typeof req.body?.text === 'string') {
       let read;
       try { read = readFile(req.body.text, req.body.format); } catch (e) { return res.status(400).json({ error: e.message, problems: [e.message] }); }
