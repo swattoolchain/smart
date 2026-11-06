@@ -27,6 +27,7 @@ import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
+import { cspMiddleware, cspReportRoute } from './csp.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -48,13 +49,21 @@ app.use(
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   // The Shopify app runs inside Shopify admin; everything else may only be framed by ourselves.
-  if (req.path === '/shopify' || req.path.startsWith('/shopify/')) {
-    const shop = String(req.query.shop || '').toLowerCase();
-    res.setHeader('Content-Security-Policy', `frame-ancestors https://admin.shopify.com${shopify.validShop(shop) ? ` https://${shop}` : ''};`);
-  } else res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  // The Content-Security-Policy below carries the matching frame-ancestors rule.
+  if (!isShopifyPath(req.path)) res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
+app.use(cspMiddleware({
+  frameAncestors: (req) => {
+    if (!isShopifyPath(req.path)) return "'self'";
+    const shop = String(req.query.shop || '').toLowerCase();
+    return `https://admin.shopify.com${shopify.validShop(shop) ? ` https://${shop}` : ''}`;
+  },
+}));
+cspReportRoute(app, express);
+
+function isShopifyPath(p) { return p === '/shopify' || p.startsWith('/shopify/'); }
 
 const ip = (req) => req.ip || req.socket.remoteAddress || 'unknown';
 const isEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(s) && s.length < 200;
