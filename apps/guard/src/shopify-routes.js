@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 import { db, q } from './db.js';
+import { storePassword } from './secret.js';
 import { GROUPS } from './engine/catalog.js';
 import { startRun } from './scheduler.js';
 import { entitlements, blockReason, has } from './license.js';
@@ -23,7 +24,7 @@ function triggerRun(store, groups, trigger, gapMin) {
   const chosen = new Set(groups);
   for (const g of GROUPS) if (g.locked) chosen.add(g.key);
   const disabled = GROUPS.filter((g) => !chosen.has(g.key)).map((g) => g.key);
-  return startRun({ storeId: store.id, origin: store.url, kind: 'full', password: store.storefront_password, trigger, disabled });
+  return startRun({ storeId: store.id, origin: store.url, kind: 'full', password: storePassword(store), trigger, disabled });
 }
 
 export function shopifyRoutes(app, { requireUser, appHtml, version }) {

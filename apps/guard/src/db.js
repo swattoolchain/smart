@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { config } from './config.js';
+import { migratePasswords } from './secret.js';
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 fs.mkdirSync(path.join(config.dataDir, 'shots'), { recursive: true });
@@ -121,6 +122,8 @@ ensureColumn('releases', 'trigger', "TEXT NOT NULL DEFAULT 'manual'");
 ensureColumn('users', 'login_email', 'TEXT');
 ensureColumn('users', 'session_epoch', 'INTEGER NOT NULL DEFAULT 0');
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_login_email ON users(login_email) WHERE login_email IS NOT NULL');
+// Storefront and staging passwords are kept encrypted; encrypt any still stored in plain text (in place).
+migratePasswords(db);
 
 export const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
