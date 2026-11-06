@@ -21,7 +21,7 @@ import * as shopify from './shopify.js';
 import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
 import { paymentRoutes, razorpayWebhook } from './payments.js';
 import { purgeStoreFiles } from './purge.js';
-import { webAccessRoutes, sessionValid, sessionEpoch, bumpSessionEpoch, emailTaken } from './web-access.js';
+import { webAccessRoutes, sessionValid, sessionEpoch, bumpSessionEpoch, emailTaken, sendSignupConfirm } from './web-access.js';
 import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './release.js';
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
@@ -107,6 +107,7 @@ const LIMITS = {
 };
 const tooMany = (res, what) => res.status(429).json({ error: `Too many ${what}. Try again in an hour.` });
 
+const UNCONFIRMED_OK = new Set(['/api/me', '/api/account/confirm/resend']);
 function requireUser(req, res, next) {
   // Inside Shopify admin there are no cookies: every request carries a Shopify session token.
   const auth = req.get('authorization') || '';
@@ -127,6 +128,8 @@ function requireUser(req, res, next) {
   // Signed out everywhere, or the Shopify app was uninstalled: this browser session no longer counts.
   const v = sessionValid(req, u.id);
   if (!v.ok) { req.session = null; return res.status(401).json({ error: v.error || 'Please log in' }); }
+  // A website sign-up that hasn't confirmed its email can only see who it is and ask for the link again.
+  if (!u.email_confirmed && !UNCONFIRMED_OK.has(req.path)) return res.status(403).json({ error: `Confirm your email first. We sent a link to ${u.email}.`, confirm: true });
   req.user = u;
   // Working in someone else's workspace as a team member: act as that account, within the member's role.
   if (req.session.acct) {
@@ -303,23 +306,42 @@ app.post('/api/auth/signup', async (req, res) => {
   if (!isEmail(email)) return res.status(400).json({ error: 'Enter a valid email' });
   if (typeof password !== 'string' || password.length < 8) return res.status(400).json({ error: 'Use a password of at least 8 characters' });
   const e = email.toLowerCase();
-  if (q.userByEmail.get(e) || emailTaken(e)) return res.status(409).json({ error: 'An account with this email already exists. Log in instead.' });
+  const existing = q.userByEmail.get(e);
+  // A confirmed account owns its email. An unconfirmed one holds nothing yet, so signing up again replaces its
+  // pending password; only whoever opens the emailed link gets in.
+  if ((existing && existing.email_confirmed) || emailTaken(e, existing?.id || 0)) return res.status(409).json({ error: 'An account with this email already exists. Log in instead.' });
   // Founder accounts get console access by email, so they are created on the server (scripts/create-user.js), never by signing up.
   if (ADMINS.has(e)) return res.status(403).json({ error: 'This email can’t be used to sign up here.' });
   if (overLimit(`signup:${ip(req)}`, LIMITS.signup)) return tooMany(res, 'sign-ups from this address');
   const hash = await bcrypt.hash(password, 10);
-  const info = q.insertUser.run(e, hash, String(name || '').slice(0, 80));
-  req.session.uid = Number(info.lastInsertRowid);
+  let pendingStore = null;
+  if (storeUrl) { try { pendingStore = normalizeStoreUrl(storeUrl); } catch { /* the store can be added later */ } }
+  let uid;
+  if (existing) {
+    uid = existing.id;
+    if (name) q.updateUserName.run(String(name).slice(0, 80), uid);
+    bumpSessionEpoch(uid);
+  } else {
+    uid = Number(q.insertUser.run(e, `unconfirmed:${crypto.randomBytes(24).toString('hex')}`, String(name || '').slice(0, 80)).lastInsertRowid);
+    db.prepare('UPDATE users SET email_confirmed = 0 WHERE id = ?').run(uid);
+  }
+  db.prepare('UPDATE users SET pending_store_url = ? WHERE id = ?').run(pendingStore, uid);
+  if (!sendSignupConfirm(uid, e, hash)) return res.status(429).json({ error: 'Too many emails sent to this address. Try again in 15 minutes.' });
+  req.session.uid = uid;
+  req.session.ep = sessionEpoch(uid);
   delete req.session.acct; // a fresh login starts in the person's own account
-  // Signing up from a free-check report ("Start monitoring") adds that store with recommended settings.
-  let store = null;
-  if (storeUrl) {
+  res.json({ ok: true, confirm: true, sentTo: e });
+});
+
+/** After a website sign-up confirms its email: add the store from the free-check report, and say hello. */
+async function afterConfirmed(uid, { email: e, storeUrl }) {
+  const u = q.userById.get(uid);
+  if (storeUrl && !q.storesByUser.all(uid).length) {
     try {
       const origin = normalizeStoreUrl(storeUrl);
       await assertPublicTarget(origin);
-      const s = q.insertStore.run(req.session.uid, origin, new URL(origin).host, null, e, null, '{}', null, 1);
-      store = Number(s.lastInsertRowid);
-      startRun({ storeId: store, origin, kind: 'full', trigger: 'setup' });
+      const s = q.insertStore.run(uid, origin, new URL(origin).host, null, e, null, '{}', null, 1);
+      startRun({ storeId: Number(s.lastInsertRowid), origin, kind: 'full', trigger: 'setup' });
     } catch {
       /* the store can be added later */
     }
@@ -328,10 +350,9 @@ app.post('/api/auth/signup', async (req, res) => {
   sendMail({
     to: e,
     subject: 'Welcome to Tharam Store Guard',
-    text: `Hi${name ? ' ' + name : ''},\n\nThanks for joining the Store Guard beta. Add your store at ${config.baseUrl}/app, choose what to test and how often, and we'll alert you only when something breaks or recovers.\n\nReply to this email any time; it reaches the founder directly.\n\nTharam`,
+    text: `Hi${u?.name ? ' ' + u.name : ''},\n\nThanks for joining the Store Guard beta. Add your store at ${config.baseUrl}/app, choose what to test and how often, and we'll alert you only when something breaks or recovers.\n\nReply to this email any time; it reaches the founder directly.\n\nTharam`,
   }).catch(() => {});
-  res.json({ ok: true, storeId: store });
-});
+}
 
 app.post('/api/auth/login', async (req, res) => {
   const key = ip(req);
@@ -340,6 +361,11 @@ app.post('/api/auth/login', async (req, res) => {
   if (a.n >= 10) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
   const { email, password } = req.body || {};
   const u = isEmail(email) && q.userByEmail.get(email.toLowerCase());
+  if (u && !u.email_confirmed) {
+    a.n++;
+    loginAttempts.set(key, a);
+    return res.status(401).json({ error: 'Confirm your email first: open the link we emailed you. No email? Sign up again to get a new link.', confirm: true });
+  }
   if (!u || !(await bcrypt.compare(String(password || ''), u.password_hash))) {
     a.n++;
     loginAttempts.set(key, a);
@@ -1175,7 +1201,7 @@ const appHtml = fs.readFileSync(path.join(config.publicDir, 'app.html'), 'utf8')
 app.get('/app', (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(appHtml));
 shopifyRoutes(app, { requireUser, appHtml });
 paymentRoutes(app, { requireUser });
-webAccessRoutes(app, { requireUser, isEmail, admins: ADMINS });
+webAccessRoutes(app, { requireUser, isEmail, admins: ADMINS, onConfirmed: (uid, info) => { afterConfirmed(uid, info).catch(() => {}); } });
 app.get('/privacy', old('privacy.html', { path: '/privacy' }));
 app.get('/terms', old('terms.html', { path: '/terms' }));
 app.get('/bot', old('bot.html', { path: '/bot' }));

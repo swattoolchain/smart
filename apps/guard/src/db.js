@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS check_state (
 `);
 
 // Lightweight migrations for columns added after launch.
-function ensureColumn(table, col, type) {
+export function ensureColumn(table, col, type) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
   if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
 }
@@ -157,9 +157,14 @@ function freshRunDir(info) {
   return info;
 }
 
+// Website sign-ups confirm their email before the account can be used (accounts made before this, and
+// accounts created by a Shopify install, count as confirmed). The store from a free-check report waits here.
+ensureColumn('users', 'email_confirmed', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('users', 'pending_store_url', 'TEXT');
+
 export const q = {
   userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
-  userById: db.prepare('SELECT id, email, name, plan, created_at, login_email FROM users WHERE id = ?'),
+  userById: db.prepare('SELECT id, email, name, plan, created_at, login_email, email_confirmed FROM users WHERE id = ?'),
   insertUser: db.prepare('INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)'),
   storesByUser: db.prepare('SELECT * FROM stores WHERE user_id = ? ORDER BY id'),
   storeById: db.prepare('SELECT * FROM stores WHERE id = ?'),
