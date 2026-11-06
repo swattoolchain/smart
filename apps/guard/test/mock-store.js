@@ -29,6 +29,12 @@ const CONVERT = EXTRA.split(',').includes('convert');
 const CONV_NAMES = { 1001: 'Original', 1002: 'Sticky buy bar' };
 let CONV_NEXT = 0;
 let CONVV = '';
+// MOCK_EXTRA=optimizely: a running Optimizely experiment (id 200, "Price test") with versions 2001
+// "Original" and 2002 "Lower price" (page shows a lower price than the cart charges), plus a one-version
+// experiment that is not an A/B test. Visitors get Original; ?optimizely_x=<id> forces a version
+// (kept in a cookie), as Optimizely documents. window.optimizely.get('data') lists both, as the snippet does.
+const OPTIMIZELY = EXTRA.split(',').includes('optimizely');
+let OPTV = '';
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -75,7 +81,7 @@ function layout(title, body, { noindex = false } = {}) {
 ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta name="description" content="Handmade Indian clothing and decor from small artisans.">
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
-${AB ? '<script>window._vwo_code={version:2};</script>' : ''}${CONVERT ? `<script>window.convert={currentData:{experiences:{"100":{variation:{id:"${CONVV}",name:"${CONV_NAMES[CONVV]}"}}}},data:{}};</script>` : ''}<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
+${AB ? '<script>window._vwo_code={version:2};</script>' : ''}${CONVERT ? `<script>window.convert={currentData:{experiences:{"100":{variation:{id:"${CONVV}",name:"${CONV_NAMES[CONVV]}"}}}},data:{}};</script>` : ''}${OPTIMIZELY ? `<script>window.optimizely={get:function(k){if(k==='data')return{experiments:{"200":{id:"200",name:"Price test",audienceIds:[],variations:[{id:"2001",name:"Original",actions:[]},{id:"2002",name:"Lower price",actions:[]}]},"300":{id:"300",name:"Personal greeting",variations:[{id:"3001",name:"Greeting",actions:[]}]}},campaigns:{}};if(k==='visitor')return{visitorId:'v1'};return null;},current:"${OPTV}"};</script>` : ''}<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
 <main id="MainContent">${body}</main>${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
@@ -113,6 +119,13 @@ const server = http.createServer(async (req, res) => {
     if (!CONVV) CONVV = String(1001 + (CONV_NEXT++ % 2));
     res.appendHeader('Set-Cookie', `conv_v=${CONVV}; Path=/`);
     if (CONVV === '1002') ABV = 'b';
+  }
+  OPTV = '';
+  if (OPTIMIZELY) {
+    const force = /^(200[12])$/.exec(u.searchParams.get('optimizely_x') || '');
+    OPTV = force?.[1] || (/(?:^|;\s*)opt_v=(200[12])/.exec(req.headers.cookie || '') || [])[1] || '2001';
+    if (force) res.appendHeader('Set-Cookie', `opt_v=${OPTV}; Path=/`);
+    if (OPTV === '2002') ABV = 'c';
   }
   if (B.has('cloudflare')) {
     res.writeHead(403, { 'Content-Type': 'text/html', 'cf-ray': '8f00test-BOM', server: 'cloudflare' });

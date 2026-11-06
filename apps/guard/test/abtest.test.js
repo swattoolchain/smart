@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startProduct, signup, addStore, runAndWait } from './lib/harness.js';
 import { note, screenshot } from './lib/evidence.js';
-import { matchTools, cleanVariants, withParam, onOwnCheckout, priceFrom, convertSeen, convertVariant, AUTO_TOOLS } from '../src/engine/abtest.js';
+import { matchTools, cleanVariants, withParam, onOwnCheckout, priceFrom, convertSeen, convertVariant, optimizelySeen, optimizelyVariant, AUTO_TOOLS } from '../src/engine/abtest.js';
 
 const VERSIONS = [
   { name: 'Control', kind: 'param', value: 'ab_variant=a' },
@@ -134,7 +134,7 @@ describe('A/B test safety: versions found on our own', () => {
     const v = convertVariant({ exp: '100', id: '1002', label: 'Sticky bar' });
     assert.deepEqual(v, { name: 'Sticky bar (Convert)', kind: 'param', value: '_conv_eforce=100.1002', auto: 'Convert' });
     assert.equal(withParam('https://s.test/products/x?variant=1', v), 'https://s.test/products/x?variant=1&_conv_eforce=100.1002');
-    assert.deepEqual(AUTO_TOOLS, ['Convert']);
+    assert.deepEqual(AUTO_TOOLS, ['Convert', 'Optimizely']);
   });
 
   describe('on a store running a Convert test, with nothing listed', () => {
@@ -183,6 +183,81 @@ describe('A/B test safety: versions found on our own', () => {
         await p.waitForSelector('#ab-auto', { timeout: 20000 });
         await p.evaluate(() => document.querySelectorAll('.tour,.tour-mask,.toast').forEach((x) => x.remove()));
         await screenshot(t, p, 'Test suite: A/B tests explains Convert needs no list');
+        assert.deepEqual(errors, []);
+      } finally { await browser.close(); }
+    });
+  });
+});
+
+// T107: Optimizely versions read from optimizely.get('data') and forced with ?optimizely_x=<variationId>.
+describe('A/B test safety: Optimizely versions found on our own', () => {
+  it('reads every version of each Optimizely experiment and builds the documented forcing link', (t) => {
+    const seen = optimizelySeen({
+      200: { id: '200', name: 'Price <i>test', variations: [{ id: '2001', name: 'Original' }, { id: '2002', name: 'Lower price' }] },
+      300: { id: '300', name: 'One version', variations: [{ id: '3001', name: 'Greeting' }] },
+      bad: { id: 'x', variations: [{ id: '1' }, { id: '2' }] },
+      400: { id: '400', name: 'Hero', variations: [{ id: '4001' }, { id: 'nope' }, { id: '4002', name: 'New hero' }, { id: '4003' }, { id: '4004' }] },
+    });
+    assert.deepEqual(seen, [
+      { exp: '200', id: '2001', test: 'Price itest', label: 'Original' },
+      { exp: '200', id: '2002', test: 'Price itest', label: 'Lower price' },
+      { exp: '400', id: '4001', test: 'Hero', label: 'version 4001' },
+      { exp: '400', id: '4002', test: 'Hero', label: 'New hero' },
+    ], 'one-version experiments and bad ids are skipped; at most 4 versions');
+    assert.deepEqual(optimizelySeen(null), []);
+    assert.deepEqual(optimizelySeen([{ id: '9', variations: [{ id: '91' }, { id: '92' }] }]).length, 2);
+    const v = optimizelyVariant(seen[1]);
+    assert.deepEqual(v, { name: 'Lower price (Optimizely)', kind: 'param', value: 'optimizely_x=2002', auto: 'Optimizely' });
+    assert.equal(withParam('https://s.test/cart', v), 'https://s.test/cart?optimizely_x=2002');
+    note(t, 'Optimizely: versions come from optimizely.get("data").experiments; each is forced with ?optimizely_x=<variation id>.');
+  });
+
+  describe('on a store running an Optimizely test, with nothing listed', () => {
+    let P, owner, storeId;
+    before(async () => {
+      P = await startProduct({ mock: { extra: 'optimizely' } });
+      owner = await signup(P, 'abtest-optimizely@shop.test');
+      storeId = await addStore(P, owner, { runNow: false });
+    });
+    after(async () => { await P.stop(); });
+
+    it('finds both versions in one visit, forces each one and reports the one with the wrong price', async (t) => {
+      const run = await runAndWait(owner, storeId, { groups: GROUPS }, 300000);
+      assert.equal(run.status, 'done', run.error || '');
+      const tools = byId(run, 'ab.tools');
+      assert.equal(tools.status, 'pass', tools.detail);
+      assert.match(tools.detail, /found 2 Optimizely test versions on our own/);
+      const vs = run.result.checks.filter((c) => c.id.startsWith('ab.variant.'));
+      assert.equal(vs.length, 2, 'the one-version experiment is not shopped');
+      const orig = vs.find((c) => /Original/.test(c.title));
+      const lower = vs.find((c) => /Lower price/.test(c.title));
+      assert.equal(orig.status, 'pass', orig.detail);
+      assert.equal(lower.status, 'fail');
+      assert.equal(lower.severity, 'major');
+      assert.match(lower.detail, /1,?299\.00.*cart charges 1499\.00/);
+      assert.equal(lower.evidence.variant, 'optimizely_x=2002');
+      assert.equal(lower.evidence.found, 'Optimizely');
+      note(t, tools.detail);
+      note(t, `${orig.title}: ${orig.detail}`);
+      note(t, `${lower.title}: ${lower.detail}`);
+
+      const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, args: ['--no-sandbox'] });
+      try {
+        const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+        await ctx.addCookies(owner.browserCookies());
+        const p = await ctx.newPage();
+        const errors = [];
+        p.on('pageerror', (e) => errors.push(e.message));
+        await p.goto(`${P.base}/app#/s/${storeId}/runs/${run.id}`);
+        await p.waitForSelector('text=Lower price (Optimizely)', { timeout: 20000 });
+        await p.evaluate(() => document.querySelectorAll('.tour,.tour-mask,.toast').forEach((x) => x.remove()));
+        await p.locator('text=Lower price (Optimizely)').first().scrollIntoViewIfNeeded();
+        await screenshot(t, p, 'report: Optimizely versions found and shopped on our own');
+        await p.goto(`${P.base}/app#/s/${storeId}/suite/abtests`);
+        await p.waitForSelector('#ab-auto', { timeout: 20000 });
+        assert.match(await p.textContent('#ab-auto'), /Optimizely/);
+        await p.evaluate(() => document.querySelectorAll('.tour,.tour-mask,.toast').forEach((x) => x.remove()));
+        await screenshot(t, p, 'Test suite: A/B tests explains Optimizely needs no list');
         assert.deepEqual(errors, []);
       } finally { await browser.close(); }
     });

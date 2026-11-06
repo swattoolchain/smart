@@ -95,12 +95,20 @@ export function priceFrom(text) {
  *   can be forced into a version with `?_conv_eforce=<experienceId>.<variationId>` (active experiences
  *   only; the experience's site area and audience rules still apply).
  *
+ * - Optimizely (Web Experimentation): the page exposes `window.optimizely.get('data')`, whose
+ *   `experiments` map each experiment ID to `{ id, name, variations: [{ id, name }] }`
+ *   (docs.developers.optimizely.com/web-experimentation/reference/data), and a visitor can be forced
+ *   into a version with `?optimizely_x=<variationId>` (…/web-experimentation/docs/query-parameters).
+ *   Optimizely's docs say forcing turns off its tracking events, so our visits don't count in the results.
+ *
  * Convert does not document a page-side list of every version, so we open a few fresh shopper sessions
  * and record which versions they land in; each version seen is then forced and shopped like a listed one.
- * Other tools (Optimizely, VWO, AB Tasty, Intelligems, Shoplift) keep using the versions the owner lists:
- * their docs either need an account to find version IDs or only offer a preview from inside the tool.
+ * Optimizely lists every version of the experiments in the page's snippet, so one visit is enough.
+ * Other tools (VWO, AB Tasty, Intelligems, Shoplift) keep using the versions the owner lists:
+ * their docs either need an account to find version IDs, only offer a preview from inside the tool,
+ * or could not be checked yet (VWO).
  */
-export const AUTO_TOOLS = ['Convert'];
+export const AUTO_TOOLS = ['Convert', 'Optimizely'];
 const AUTO_MAX = 4;
 const ID = /^\d{1,20}$/;
 
@@ -143,6 +151,59 @@ export async function discoverConvert({ origin, info, password, tries = 6 }) {
     }
   }
   return [...found.values()].map(convertVariant);
+}
+
+/**
+ * Reads Optimizely versions from `optimizely.get('data')` (already reduced to plain
+ * `{ id, name, variations: [{ id, name }] }` per experiment). Experiments with fewer than two
+ * versions are not A/B tests and are skipped. At most AUTO_MAX versions, in page order.
+ */
+export function optimizelySeen(experiments) {
+  const out = [];
+  const list = Array.isArray(experiments) ? experiments : experiments && typeof experiments === 'object' ? Object.values(experiments) : [];
+  const clean = (x, fb) => String(x || fb).replace(/[<>\n]/g, '').trim().slice(0, 28) || fb;
+  for (const e of list) {
+    const exp = String(e?.id ?? '');
+    const vars = Array.isArray(e?.variations) ? e.variations.filter((v) => ID.test(String(v?.id ?? ''))) : [];
+    if (!ID.test(exp) || vars.length < 2) continue;
+    const test = clean(e.name, `test ${exp}`);
+    for (const v of vars) {
+      if (out.length >= AUTO_MAX) return out;
+      const id = String(v.id);
+      if (!out.some((x) => x.id === id)) out.push({ exp, id, test, label: clean(v.name, `version ${id}`) });
+    }
+  }
+  return out;
+}
+
+/** The forcing setting for one Optimizely version, in the same shape as an owner-listed version. */
+export const optimizelyVariant = ({ id, label }) => ({ name: `${label} (Optimizely)`.slice(0, 40), kind: 'param', value: `optimizely_x=${id}`, auto: 'Optimizely' });
+
+/** One shopper visit to a product page; reads every Optimizely experiment and version from the snippet. */
+export async function discoverOptimizely({ origin, info, password }) {
+  const product = info.products[0];
+  const ctx = await newContext();
+  try {
+    const page = await ctx.newPage();
+    if (password) await gotoStore(page, origin + '/', { password }).catch(() => {});
+    await page.goto(product ? `${origin}/products/${product.handle}` : origin + '/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForFunction(() => window.optimizely && typeof window.optimizely.get === 'function', null, { timeout: 5000 }).catch(() => {});
+    // get('data') holds functions and big objects; take only ids and names inside the page.
+    const exps = await page.evaluate(() => {
+      try {
+        const d = window.optimizely.get('data');
+        return Object.values((d && d.experiments) || {}).slice(0, 20).map((e) => ({
+          id: e && e.id, name: e && e.name,
+          variations: ((e && e.variations) || []).slice(0, 10).map((v) => ({ id: v && v.id, name: v && v.name })),
+        }));
+      } catch { return []; }
+    }).catch(() => []);
+    return optimizelySeen(exps).map(optimizelyVariant);
+  } catch {
+    return [];
+  } finally {
+    await ctx.close().catch(() => {});
+  }
 }
 
 async function oneVariant({ variant, origin, info, password, shot, n }) {
@@ -240,7 +301,7 @@ async function oneVariant({ variant, origin, info, password, shot, n }) {
 }
 
 /** Runs on full checks of Shopify stores: tool detection, then one shopping journey per version. */
-export async function runAbTests({ page, rec, origin, info, password, variants = [], shot, discover = { Convert: discoverConvert } }) {
+export async function runAbTests({ page, rec, origin, info, password, variants = [], shot, discover = { Convert: discoverConvert, Optimizely: discoverOptimizely } }) {
   rec.step('Look for A/B tests');
   await page.goto(origin + '/', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   await settle(page, 800);
@@ -270,7 +331,10 @@ export async function runAbTests({ page, rec, origin, info, password, variants =
     const parts = [];
     if (tools.length) parts.push(`We found ${tools.join(' and ')} on your store.`);
     else parts.push(`No A/B tool found on the pages we opened, but you listed ${listed.length} test version${listed.length === 1 ? '' : 's'}; we checked each one.`);
-    if (found.length) parts.push(`We found ${found.length} ${found[0].auto} test version${found.length === 1 ? '' : 's'} on our own and checked ${found.length === 1 ? 'it' : 'each one'}.`);
+    if (found.length) {
+      const by = [...new Set(found.map((v) => v.auto))];
+      parts.push(`We found ${found.length} ${by.join(' and ')} test version${found.length === 1 ? '' : 's'} on our own and checked ${found.length === 1 ? 'it' : 'each one'}.`);
+    }
     if (tools.length && listed.length) parts.push(`Checking the ${listed.length} test version${listed.length === 1 ? '' : 's'} you listed.`);
     if (needList) parts.push(`Shoppers in a ${manualTools.join(' or ')} test may see a different price or page than we checked.`);
     rec.add(check('ab.tools', 'functional', 'A/B tests on your store', needList ? 'warn' : 'pass', {
