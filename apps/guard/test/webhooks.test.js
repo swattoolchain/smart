@@ -54,6 +54,7 @@ describe('Webhook delivery', () => {
     process.env.WEBHOOK_TIMEOUT_MS = '400';
     process.env.SMTP_HOST = '';
     let ensureLicense;
+    process.env.FEATURES_DEFAULT = 'on'; // the webhook feature is switched on, like the harness does for every feature
     ({ db, q } = await import('../src/db.js'));
     ({ ensureLicense } = await import('../src/license.js'));
     w = await import('../src/webhooks.js');
