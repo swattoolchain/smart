@@ -108,7 +108,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         phase('visual');
         await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
       }
-      if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
+      if (kind === 'full' && storeId && (info.isShopify || info.isWoo) && on('catalog')) {
         phase('catalog');
         catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on });
         // The full catalog checks supersede the quick sample check; reporting both double-counts one mistake.

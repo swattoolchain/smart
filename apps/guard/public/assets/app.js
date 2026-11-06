@@ -709,7 +709,8 @@
   // Run validations: choose what to check, see the plan, then start. Nothing runs without this preview.
   function availability(g, s) {
     const shopify = !s.platform || /shopify/i.test(s.platform);
-    if (!shopify && ((g.key.startsWith('journey.') && !g.locked) || g.key === 'catalog' || g.key === 'ai.copy')) return 'Shopify stores only for now';
+    const woo = /woocommerce/i.test(s.platform || '');
+    if (!shopify && ((g.key.startsWith('journey.') && !g.locked) || ((g.key === 'catalog' || g.key === 'ai.copy') && !woo))) return 'Shopify stores only for now';
     if (!groupAllowed(g)) return `In ${plansFor(featureOf(g.key))}`;
     return null;
   }
@@ -1378,7 +1379,7 @@
     if (tab === 'issues') {
       const types = Object.keys(c.byType);
       body = types.length ? types.map((t) => `<section class="panel"><h2>${esc(CAT_TYPE[t] || t)} <span class="muted" style="font-weight:400">(${c.byType[t].length})</span></h2>
-        <ul class="list">${c.byType[t].slice(0, 60).map((i) => `<li><a class="row" href="${esc(s.url)}/products/${esc(i.handle)}" target="_blank" rel="noopener"><span class="sev ${i.severity === 'critical' ? 'fail' : i.severity === 'major' ? 'warn' : ''}">${i.severity === 'critical' ? 'Serious' : i.severity === 'major' ? 'Issue' : 'Minor'}</span><span><span class="t">${esc(i.title)}</span><span class="d">${esc(i.message)}</span></span><span class="r" aria-label="Open product in your store">${icon('external', 15)}</span></a></li>`).join('')}</ul>
+        <ul class="list">${c.byType[t].slice(0, 60).map((i) => `<li><a class="row" href="${esc(i.url || `${s.url}/products/${i.handle}`)}" target="_blank" rel="noopener"><span class="sev ${i.severity === 'critical' ? 'fail' : i.severity === 'major' ? 'warn' : ''}">${i.severity === 'critical' ? 'Serious' : i.severity === 'major' ? 'Issue' : 'Minor'}</span><span><span class="t">${esc(i.title)}</span><span class="d">${esc(i.message)}</span></span><span class="r" aria-label="Open product in your store">${icon('external', 15)}</span></a></li>`).join('')}</ul>
         ${c.byType[t].length > 60 ? `<p class="muted" style="margin:10px 4px 0">and ${c.byType[t].length - 60} more</p>` : ''}</section>`).join('') : '<div class="panel"><p class="muted" style="margin:0">No catalog issues found. Nice.</p></div>';
     } else if (tab === 'changes') {
       if (!c.totals) body = '<div class="panel"><p class="muted" style="margin:0">No earlier snapshot to compare with yet. The next full check will show changes.</p></div>';
@@ -1390,7 +1391,7 @@
       }
     } else {
       body = `<div class="table-wrap"><table class="data"><thead><tr><th>Product</th><th>Price</th><th>Stock</th><th class="num">Issues</th><th>Changed</th><th aria-label="Open"></th></tr></thead><tbody>
-        ${c.products.map((p) => `<tr class="link" data-href="${esc(s.url)}/products/${esc(p.handle)}" tabindex="0"><td><div class="prod-cell">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}<span><span class="cell-main">${esc(p.title)}</span><div class="cell-sub">${p.variants} variant${p.variants > 1 ? 's' : ''} · ${p.images} image${p.images === 1 ? '' : 's'}</div></span></div></td>
+        ${c.products.map((p) => `<tr class="link" data-href="${esc(p.url || `${s.url}/products/${p.handle}`)}" tabindex="0"><td><div class="prod-cell">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy">` : '<span class="noimg"></span>'}<span><span class="cell-main">${esc(p.title)}</span><div class="cell-sub">${p.variants} variant${p.variants > 1 ? 's' : ''} · ${p.images} image${p.images === 1 ? '' : 's'}</div></span></div></td>
           <td class="nowrap">${money(p.price)}${p.maxPrice && p.maxPrice !== p.price ? ` – ${money(p.maxPrice)}` : ''}</td>
           <td>${p.available ? '<span class="status-inline"><span class="dot healthy"></span>In stock</span>' : '<span class="status-inline"><span class="dot"></span>Sold out</span>'}</td>
           <td class="num">${p.issues ? `<span class="pill ${p.worst === 'critical' ? 'critical' : p.worst === 'major' ? 'warning' : ''}">${p.issues}</span>` : '<span class="muted">0</span>'}</td>
@@ -1401,7 +1402,7 @@
     $$('tr.link', ctx.main).forEach((tr) => { tr.onclick = () => window.open(tr.dataset.href, '_blank', 'noopener'); tr.onkeydown = (e) => { if (e.key === 'Enter') window.open(tr.dataset.href, '_blank', 'noopener'); }; });
   };
   function catChange(ch, s) {
-    const link = `${s.url}/products/${ch.handle}`;
+    const link = ch.url || `${s.url}/products/${ch.handle}`;
     if (ch.kind === 'added') return `<li><div class="row"><span class="sev ok">Added</span><span><span class="t">${esc(ch.title)}</span><span class="d">${esc(ch.detail || '')}</span></span><span></span></div></li>`;
     if (ch.kind === 'removed') return `<li><div class="row"><span class="sev">Removed</span><span><span class="t">${esc(ch.title)}</span><span class="d">${esc(ch.detail || '')}</span></span><span></span></div></li>`;
     const fields = (ch.fields || []).map((f) => {

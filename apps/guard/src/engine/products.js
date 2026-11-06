@@ -35,6 +35,7 @@ function normalize(p) {
   const n = {
     id: p.id,
     handle: p.handle,
+    url: p.url || null,
     title: String(p.title || ''),
     vendor: p.vendor || '',
     type: p.product_type || '',
@@ -51,6 +52,54 @@ function normalize(p) {
   };
   n.checksum = sha(JSON.stringify([n.title, n.vendor, n.type, n.tags, n.textHash, n.images, n.variants]));
   return n;
+}
+
+const decode = (s) => String(s || '').replace(/&amp;/g, '&').replace(/&#0?39;|&#8217;/g, '’').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#8211;/g, '–');
+
+/** A WooCommerce Store API product, shaped like a Shopify products.json entry so the same rules apply. */
+export function wooToRaw(p) {
+  const pr = p.prices || {};
+  const unit = Number(pr.currency_minor_unit ?? 2);
+  const money = (v) => (v == null || v === '' ? null : (Number(v) / 10 ** unit));
+  const range = pr.price_range;
+  const price = range?.min_amount != null ? money(range.min_amount) : money(pr.price);
+  const regular = money(pr.regular_price);
+  const onSale = p.on_sale === true || (pr.sale_price != null && pr.sale_price !== '' && pr.sale_price !== pr.regular_price);
+  const html = [p.description, p.short_description].filter(Boolean).join('\n');
+  return {
+    id: p.id,
+    handle: p.slug,
+    url: p.permalink || null,
+    title: decode(p.name),
+    body_html: html,
+    vendor: (p.brands || [])[0]?.name || '',
+    product_type: (p.categories || [])[0]?.name || '',
+    tags: (p.tags || []).map((t) => t.name || t.slug || ''),
+    images: p.images || [],
+    currency: pr.currency_code || null,
+    variants: [{ id: p.id, title: 'Default Title', sku: p.sku || '', price, compare_at_price: onSale && regular != null ? regular : null, available: p.is_in_stock !== false }],
+  };
+}
+
+/** Reads every product through the public WooCommerce Store API, page by page. */
+export async function fetchWooCatalog(request, origin, base = '/wp-json/wc/store/v1', { maxPages = 8, perPage = 100 } = {}) {
+  const products = [];
+  let truncated = false;
+  let currency = null;
+  for (let page = 1; page <= maxPages; page++) {
+    const url = origin + base + '/products' + (base.includes('?') ? '&' : '?') + `per_page=${perPage}&page=${page}`;
+    const res = await request.get(url, { timeout: 25000, headers: { Accept: 'application/json' } }).catch(() => null);
+    if (!res || !res.ok()) break;
+    const list = await res.json().catch(() => null);
+    if (!Array.isArray(list) || !list.length) break;
+    for (const p of list) { const raw = wooToRaw(p); currency ||= raw.currency; products.push(normalize(raw)); }
+    const totalPages = Number(res.headers()['x-wp-totalpages'] || 0);
+    const last = totalPages ? page >= totalPages : list.length < perPage;
+    if (last) break;
+    if (page === maxPages) truncated = true;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return { takenAt: new Date().toISOString(), count: products.length, truncated, currency, platform: 'woocommerce', products };
 }
 
 /** Reads the whole public catalog (up to maxPages × 250 products). */
@@ -93,7 +142,7 @@ export function formatMoney(n, currency) {
 export function validateCatalog(snap, prev = null) {
   const m = (n) => formatMoney(n, snap.currency);
   const issues = [];
-  const add = (p, type, severity, message, extra = {}) => issues.push({ handle: p.handle, title: p.title, type, severity, message, ...extra });
+  const add = (p, type, severity, message, extra = {}) => issues.push({ handle: p.handle, url: p.url || null, title: p.title, type, severity, message, ...extra });
   const prevBy = new Map((prev?.products || []).map((p) => [p.id, p]));
   const textCount = new Map();
   for (const p of snap.products) if (p.text.length > 40) textCount.set(p.textHash, (textCount.get(p.textHash) || 0) + 1);
@@ -148,9 +197,9 @@ export function diffCatalog(cur, prev) {
   const changes = [];
   for (const p of cur.products) {
     const o = P.get(p.id);
-    if (!o) { changes.push({ kind: 'added', handle: p.handle, title: p.title, detail: `New product, ${p.minPrice != null ? `from ${p.minPrice}` : 'no price'}` }); continue; }
+    if (!o) { changes.push({ kind: 'added', handle: p.handle, url: p.url || null, title: p.title, detail: `New product, ${p.minPrice != null ? `from ${p.minPrice}` : 'no price'}` }); continue; }
     if (o.checksum === p.checksum) continue;
-    const c = { kind: 'changed', handle: p.handle, title: p.title, fields: [] };
+    const c = { kind: 'changed', handle: p.handle, url: p.url || null, title: p.title, fields: [] };
     if (o.title !== p.title) c.fields.push({ field: 'title', label: 'Title', before: o.title, after: p.title });
     for (const v of p.variants) {
       const ov = o.variants.find((x) => x.id === v.id);
