@@ -24,6 +24,7 @@ import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
 import { approveBaseline } from './engine/visual.js';
+import { seal, storePassword } from './secret.js';
 import { sendMail, sendSlack } from './alerts.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
@@ -395,7 +396,7 @@ app.post('/api/stores', requireUser, async (req, res) => {
   let cfg;
   try { cfg = normalizeConfig(req.body?.config || {}); } catch (e) { return res.status(400).json({ error: e.message }); }
   const info = q.insertStore.run(
-    req.user.id, origin, String(name || new URL(origin).host).slice(0, 80), password || null,
+    req.user.id, origin, String(name || new URL(origin).host).slice(0, 80), seal(password || null),
     alertEmail || req.user.email, slack || null, JSON.stringify(cfg), platform ? String(platform).slice(0, 60) : null, monitoring ? 1 : 0
   );
   const id = Number(info.lastInsertRowid);
@@ -422,7 +423,7 @@ app.patch('/api/stores/:id', requireUser, (req, res) => {
   if (b.config?.fullIntervalMin && Number(b.config.fullIntervalMin) < ent.limits.fullMinInterval) return refuse(res, 'Your plan doesn\'t include full checks this often.');
   q.updateStoreSettings.run(
     b.name === undefined ? s.name : String(b.name).trim().slice(0, 80),
-    b.password === undefined ? s.storefront_password : b.password || null,
+    b.password === undefined ? s.storefront_password : seal(b.password || null),
     b.alertEmail === undefined ? s.alert_email : b.alertEmail || q.userById.get(s.user_id).email,
     b.slack === undefined ? s.slack_webhook : b.slack || null,
     b.monitoring === undefined ? s.monitoring : b.monitoring ? 1 : 0,
@@ -469,7 +470,7 @@ app.post('/api/stores/:id/run', requireUser, (req, res) => {
     disabled = GROUPS.filter((g) => !chosen.has(g.key)).map((g) => g.key);
     kind = GROUPS.some((g) => g.run === 'full' && chosen.has(g.key)) ? 'full' : 'journeys';
   }
-  res.json({ runId: startRun({ storeId: s.id, origin: s.url, kind, password: s.storefront_password, trigger: 'manual', disabled }), kind });
+  res.json({ runId: startRun({ storeId: s.id, origin: s.url, kind, password: storePassword(s), trigger: 'manual', disabled }), kind });
 });
 
 app.post('/api/stores/:id/run/:runId/cancel', requireUser, (req, res) => {
@@ -644,7 +645,7 @@ app.post('/api/stores/:id/discover', requireUser, async (req, res) => {
   if (!s) return;
   if (!entitlements(s.user_id).usable) return refuse(res, blockReason(entitlements(s.user_id)));
   try {
-    res.json(await discoverStore(s.url, s.storefront_password));
+    res.json(await discoverStore(s.url, storePassword(s)));
   } catch {
     res.status(502).json({ error: 'We could not look at this store right now. Try again in a minute.' });
   }
