@@ -120,12 +120,13 @@ export async function runShopper({ rec, origin, password, shot, shopDomain = '',
   ctx.setDefaultTimeout(15000);
   let page = null;
   let left = ''; // the other site a page load tried to reach; the run ends there
+  let priming = false; // opening a draft's share-preview link may pass through Shopify's preview hosts; that is ours, not the AI's
   // Block every top-level page load (link, form, script, popup) that would leave the store or Shopify's checkout.
   await ctx.route('**/*', (route) => {
     const r = route.request();
     let top = false;
     try { top = r.isNavigationRequest() && !r.frame().parentFrame(); } catch {}
-    if (top && isHttp(r.url()) && !allowedPlace(r.url(), origin, shopDomain)) {
+    if (top && !priming && isHttp(r.url()) && !allowedPlace(r.url(), origin, shopDomain)) {
       if (!left) left = hostOf(r.url());
       return route.abort('blockedbyclient').catch(() => {});
     }
@@ -143,7 +144,7 @@ export async function runShopper({ rec, origin, password, shot, shopDomain = '',
   const offStore = () => left || (isHttp(page.url()) && !allowedPlace(page.url(), origin, shopDomain) ? hostOf(page.url()) : '');
   try {
     // Safe to publish: open the draft theme's preview in this window first, so every page shows the draft.
-    if (prime) await prime(page);
+    if (prime) { priming = true; try { await prime(page); } finally { priming = false; } }
     const g = await gotoStore(page, origin + '/', { password });
     if (g.locked) { rec.add(check('ai.shopper', 'functional', title, 'skip', { severity: 'minor', detail: 'The store is password protected and could not be opened.' })); await ctx.close().catch(() => {}); return null; }
     await settle(page, 600);
