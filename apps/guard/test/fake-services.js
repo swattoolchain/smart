@@ -1,7 +1,7 @@
 // A stand-in for Shopify's Admin API and Razorpay's API, for local end-to-end tests.
 // Shopify:  POST /:shop/admin/oauth/access_token, POST /:shop/admin/api/:v/graphql.json
 // Razorpay: POST /rzp/v1/orders, GET /rzp/v1/payments/:id
-// Control:  POST /control {subscription, primaryDomain, payStatus}
+// Control:  POST /control {subscription, primaryDomain, payStatus, devStore}
 import http from 'node:http';
 const PORT = Number(process.env.FAKE_PORT || 4200);
 const state = { subscription: null, primaryDomain: 'http://localhost:4100', orders: new Map(), payments: new Map(), tokenCalls: [], payStatus: 'captured' };
@@ -22,7 +22,7 @@ http.createServer(async (req, res) => {
   if ((m = /^\/([^/]+)\/admin\/api\/[^/]+\/graphql\.json$/.exec(u.pathname))) {
     if (!/^shpat_/.test(req.headers['x-shopify-access-token'] || '')) return json(res, 401, { errors: 'Invalid API key or access token' });
     const qy = JSON.parse(body).query;
-    if (qy.includes('shop {')) return json(res, 200, { data: { shop: { name: 'Test Shop', email: 'owner@testshop.example', contactEmail: 'hello@testshop.example', currencyCode: 'INR', myshopifyDomain: m[1], primaryDomain: { url: state.primaryDomain }, billingAddress: { countryCodeV2: 'DE' } } } });
+    if (qy.includes('shop {')) return json(res, 200, { data: { shop: { name: 'Test Shop', email: 'owner@testshop.example', contactEmail: 'hello@testshop.example', currencyCode: 'INR', myshopifyDomain: m[1], primaryDomain: { url: state.primaryDomain }, billingAddress: { countryCodeV2: 'DE' }, plan: { partnerDevelopment: !!state.devStore } } } });
     if (qy.includes('activeSubscriptions')) return json(res, 200, { data: { currentAppInstallation: { activeSubscriptions: state.subscription ? [state.subscription] : [] } } });
     if (qy.includes('themes(')) return json(res, 200, { data: { themes: { nodes: [{ id: 'gid://shopify/OnlineStoreTheme/222', name: 'Dawn – Black Friday', role: 'UNPUBLISHED', updatedAt: new Date(Date.now() - 3600e3).toISOString() }] } } });
     if (qy.includes('codeDiscountNodes')) return json(res, 200, { data: { codeDiscountNodes: { nodes: [{ codeDiscount: { title: 'BF', codes: { nodes: [{ code: 'BF20' }] }, customerGets: { value: { percentage: 0.2 } } } }] } } });
