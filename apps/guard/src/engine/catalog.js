@@ -1,5 +1,6 @@
 import { cleanCodes } from './discount.js';
 import { cleanPriceRules } from './pricing.js';
+import { cleanOffers } from './offers.js';
 /**
  * The test suite catalog: every check belongs to one group, and merchants switch groups on or off per store.
  * `run`: 'journeys' groups run on every scheduled journey test; 'full' groups run on the daily full check.
@@ -19,7 +20,7 @@ export const GROUPS = [
   { key: 'pricing.journey', label: 'Prices stay the same', run: 'journeys', area: 'Shopping journey',
     description: 'The price on the product page is what the cart and checkout ask for. Also checks your own price rules, like “3 of this product cost 1,299 each”. Add rules under Test suite → Price rules.', checks: ['fn.price', 'fn.price.'] },
   { key: 'sale.discount', label: 'Discount codes', run: 'full', area: 'Shopping journey',
-    description: 'Your sale codes applied to a real cart: the price really drops, by the amount you expect. Nothing is bought; the cart is emptied. Add codes under Test suite → Discount codes.', checks: ['fn.discount.'] },
+    description: 'Your sale codes and automatic offers (bundles, buy X get Y, spend and save, free gifts) tried in a real cart: the price really drops, by the amount you expect, and not below the offer\'s threshold. Nothing is bought; the cart is emptied. Add codes under Test suite → Discount codes, offers under Test suite → Price rules.', checks: ['fn.discount.', 'fn.offer.'] },
   { key: 'errors.js', label: 'JavaScript errors', run: 'journeys', area: 'Errors and links',
     description: 'Script errors that happen while shopping, usually from apps or custom code.', checks: ['nf.jserrors'] },
   { key: 'speed', label: 'Mobile speed', run: 'full', area: 'Speed',
@@ -88,6 +89,7 @@ export function normalizeConfig(input = {}, base = {}) {
   const cfg = { ...base };
   if (input.discountCodes !== undefined) cfg.discountCodes = cleanCodes(input.discountCodes);
   if (input.priceRules !== undefined) cfg.priceRules = cleanPriceRules(input.priceRules);
+  if (input.priceOffers !== undefined) cfg.priceOffers = cleanOffers(input.priceOffers);
   // Onboarding progress: the welcome flow and the first-report tour.
   if (typeof input.onboarded === 'boolean') cfg.onboarded = input.onboarded;
   if (typeof input.toured === 'boolean') cfg.toured = input.toured;

@@ -4,7 +4,9 @@
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
  *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
  *   checkoutprice (checkout subtotal ₹200 more than the cart), protection (a shipping-protection app adds a
- *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price)
+ *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price),
+ *   autodiscount / autolow / bxgy / bundle / gift (with MOCK_EXTRA=offers: the spend-and-save offer stopped
+ *   working / is given from ₹3,000 instead of ₹5,000 / buy-2-get-1 stopped / the bundle stopped / the gift is charged)
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -21,13 +23,14 @@ let PW_POSTS = 0; // how many times the password form was submitted
 const EXTRA = (process.env.MOCK_EXTRA || '');
 const DE = EXTRA.includes('de');
 const TRACK = EXTRA.includes('track');
+const OFFERS = EXTRA.split(',').includes('offers');
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
     { id: 102, title: 'Medium', sku: 'KUR-M', price: '1499.00', available: true },
     { id: 103, title: 'Large', sku: 'KUR-L', price: '1599.00', available: true } ] },
   { id: 2, title: 'Handwoven Silk Saree', handle: 'silk-saree', product_type: 'Saree', vendor: 'Tharam', tags: 'silk', body_html: EXTRA.includes('placeholder') ? '<p>Lorem ipsum dolor sit amet, TBD description here.</p>' : '<p>Traditional handwoven silk saree with zari border and intricate detailing.</p>', images: [{ src: '/img/s.png' }], variants: [{ id: 201, title: 'Default Title', sku: 'SAR-1', price: '8999.00', available: true }] },
-  { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: '0.00', available: true }] },
+  { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: OFFERS ? '499.00' : '0.00', available: true }] },
 ];
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
 
@@ -44,23 +47,49 @@ function cartFor(req, res) {
 // Discount codes, like Shopify's: BF20 takes 20% off; MIN5000 needs a cart of ₹5,000 or more; anything else is unknown.
 // MOCK_BREAK=discount makes BF20 stop working (e.g. it expired or a discount app broke it).
 const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
+// MOCK_EXTRA=offers: automatic offers like Shopify automatic discounts or offer apps.
+//   Buy 2 Large kurtas, get 1 free (line discount); any kurta + the silk saree is a bundle, ₹500 off the saree;
+//   the Brass Diya (₹499) is free in a cart of ₹3,000 or more (not counting the diya); spend ₹5,000 or more
+//   (after line discounts) and get 10% off the order, which does not combine with the bundle.
+function offerLineOff(i, items) {
+  if (!OFFERS) return [0, null];
+  const unit = Math.round(Number(i.price) * 100);
+  if (i.id === 103 && !B.has('bxgy')) { const free = Math.floor(i.quantity / 3); if (free) return [free * unit, 'Buy 2, get 1 free']; }
+  if (i.id === 201 && !B.has('bundle') && items.some((x) => [101, 102, 103].includes(x.id))) return [50000, 'Kurta + saree bundle'];
+  if (i.id === 301) {
+    const others = items.filter((x) => x.id !== 301).reduce((s, x) => s + x.quantity * Math.round(Number(x.price) * 100), 0);
+    if (others >= 300000 && !B.has('gift')) return [unit, 'Free diya over ₹3,000'];
+  }
+  return [0, null];
+}
 function cartJson(items) {
-  const original = items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0);
+  const lines = items.map((i) => {
+    const unit = Math.round(Number(i.price) * 100);
+    const full = unit * i.quantity;
+    const [off, title] = offerLineOff(i, items);
+    return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: Math.round((full - off) / i.quantity), line_price: full - off, original_line_price: full, final_line_price: full - off, line_level_discount_allocations: off ? [{ amount: off, discount_application: { type: 'automatic', title } }] : [] };
+  });
+  const before = lines.reduce((s, i) => s + i.original_line_price, 0);
+  const original = lines.reduce((s, i) => s + i.final_line_price, 0);
   const code = items.discount;
   const rule = code && !(B.has('discount') && code === 'BF20') ? CODES[code] : null;
   const applicable = !!rule && original >= rule.min;
   const off = applicable ? Math.round((original * rule.pct) / 100) : 0;
+  const bundled = lines.some((l) => l.line_level_discount_allocations.some((d) => d.discount_application.title === 'Kurta + saree bundle'));
+  const spendMin = B.has('autolow') ? 300000 : 500000;
+  const autoOff = OFFERS && !off && !bundled && !B.has('autodiscount') && original >= spendMin ? Math.round((original * 10) / 100) : 0;
+  const apps = [...(off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : []), ...(autoOff ? [{ type: 'automatic', title: 'Spend 5,000, save 10%', total_allocated_amount: autoOff }] : [])];
   return {
     item_count: items.reduce((s, i) => s + i.quantity, 0),
-    original_total_price: original,
-    total_discount: off,
-    total_price: original - off,
+    original_total_price: before,
+    total_discount: before - original + off + autoOff,
+    total_price: original - off - autoOff,
     discount_codes: code ? [{ code, applicable }] : [],
-    cart_level_discount_applications: off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : [],
+    cart_level_discount_applications: apps,
     items_subtotal_price: original,
     currency: 'INR',
     // Like Shopify's cart.js: prices in paise, one entry per line.
-    items: items.map((i) => { const unit = Math.round(Number(i.price) * 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: unit, line_price: unit * i.quantity, original_line_price: unit * i.quantity, final_line_price: unit * i.quantity }; }),
+    items: lines,
   };
 }
 function layout(title, body, { noindex = false } = {}) {

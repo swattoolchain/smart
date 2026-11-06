@@ -16,6 +16,14 @@
   }
   window.priceTrailHtml = priceTrailHtml;
 
+  // Automatic offers: each cart we tried, what the offer should do there and what the cart did.
+  function offerTableHtml(t) {
+    if (!t || !t.rows || !t.rows.length) return '';
+    const mark = { missing: '<b>Offer missing</b>', over: '<b>Bigger discount</b>', leak: '<b>Given too early</b>', refused: 'Cart refused', ok: '' };
+    return `<table class="price-trail offer-table"><thead><tr><th>Cart we tried</th><th>Should get</th><th>Cart gave</th><th class="num">Cart total</th><th></th></tr></thead><tbody>${t.rows.map((r) => `<tr class="${r.state === 'missing' ? 'up' : r.state === 'over' || r.state === 'leak' ? 'down' : ''}"><td>${esc(r.cart)}${r.role === 'below' ? ' <span class="muted">(just below the offer)</span>' : ''}</td><td>${esc(r.expect)}</td><td>${r.got == null ? '<span class="muted">–</span>' : esc(r.got)}</td><td class="num">${r.total == null ? '<span class="muted">–</span>' : esc(r.total)}</td><td class="muted">${mark[r.state] || ''}</td></tr>`).join('')}${t.checkout ? `<tr class="${t.checkout.higher ? 'up' : ''}"><td>Checkout subtotal</td><td><span class="muted">Cart</span> ${esc(t.checkout.cart)}</td><td>${esc(t.checkout.money)}</td><td></td><td class="muted">${t.checkout.higher ? '<b>Higher</b>' : 'Same as the cart'}</td></tr>` : ''}</tbody></table>`;
+  }
+  window.offerTableHtml = offerTableHtml;
+
   function checkHtml(c) {
     const shot = c.evidence && c.evidence.screenshot;
     const errors = c.evidence && c.evidence.errors;
@@ -26,6 +34,7 @@
       <p class="detail">${esc(c.detail)}</p>
       ${c.fix && c.status !== 'pass' ? `<p class="fix"><b>How to fix:</b> ${esc(c.fix)}</p>` : ''}
       ${c.evidence && c.evidence.priceTrail ? priceTrailHtml(c.evidence.priceTrail) : ''}
+      ${c.evidence && c.evidence.offerTable ? offerTableHtml(c.evidence.offerTable) : ''}
       ${errors ? `<p class="fix">${errors.map((e) => `<code>${esc(e.message)}</code>`).join('<br>')}</p>` : ''}
       ${shot ? `<img class="shot" src="${esc(shot)}" alt="Screenshot when '${esc(c.title)}' was checked" loading="lazy">` : ''}
       ${visual && visual.some((v) => v.status === 'changed') ? `<p class="fix">${visual.filter((v) => v.status === 'changed').map((v) => `${esc(v.key)}: ${v.ratio}% changed`).join(' · ')}</p>` : ''}

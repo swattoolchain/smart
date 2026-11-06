@@ -895,6 +895,20 @@
     if (tab === 'prices') {
       const limit = S.license?.limits?.priceRules ?? 10;
       const rules = s.config.priceRules?.length ? s.config.priceRules : [{ product: '', variant: '', quantity: 1, price: '' }];
+      const offers = s.config.priceOffers?.length ? s.config.priceOffers : [{ type: 'spend', products: [], variant: '', offer: '' }];
+      // What to write for each kind of offer: the products, then the offer itself.
+      const OFFER_KIND = {
+        spend: { label: 'Spend and save', products: 'Product to fill the cart, e.g. cotton-kurta', offer: 'e.g. 5000 10% or 5000 500 off' },
+        bxgy: { label: 'Buy X get Y', products: 'Product to buy (and the one they get, if different)', offer: 'e.g. buy 2 get 1' },
+        bundle: { label: 'Bundle', products: '2 to 4 products, e.g. cotton-kurta, silk-saree', offer: 'Bundle price, e.g. 9998' },
+        gift: { label: 'Free gift', products: 'Product to fill the cart, then the gift', offer: 'Spend for the gift, e.g. 3000' },
+      };
+      const offerText = (o) => (o.offer != null ? o.offer : o.type === 'spend' ? `${o.min} ${o.percent != null ? `${o.percent}%` : `${o.amount} off`}` : o.type === 'bxgy' ? `buy ${o.buy} get ${o.get}${o.percent !== 100 ? ` ${o.percent}%` : ''}` : o.type === 'bundle' ? String(o.price) : String(o.min ?? ''));
+      const orow = (o, i) => { const k = OFFER_KIND[o.type] || OFFER_KIND.spend; return `<div class="code-row offer-rule"><div class="field"><label for="ok${i}">Offer</label><select id="ok${i}" name="type">${Object.entries(OFFER_KIND).map(([v, x]) => `<option value="${v}" ${v === o.type ? 'selected' : ''}>${x.label}</option>`).join('')}</select></div>
+        <div class="field"><label for="op${i}">Products</label><input id="op${i}" name="products" value="${esc((o.products || []).join(', '))}" placeholder="${esc(k.products)}" maxlength="600" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="ov${i}">Variant</label><input id="ov${i}" name="variant" value="${esc(o.variant || '')}" placeholder="Optional" maxlength="100"></div>
+        <div class="field"><label for="oo${i}">Details</label><input id="oo${i}" name="offer" value="${esc(offerText(o))}" placeholder="${esc(k.offer)}" maxlength="80" autocomplete="off"></div>
+        <button type="button" class="icon-btn" data-rm aria-label="Remove offer" data-tip="Remove">${icon('trash', 16)}</button></div>`; };
       const row = (r, i) => `<div class="code-row price-rule"><div class="field"><label for="pr${i}">Product</label><input id="pr${i}" name="product" value="${esc(r.product)}" placeholder="Product link or handle, e.g. cotton-kurta" maxlength="300" autocomplete="off" spellcheck="false"></div>
         <div class="field"><label for="pv${i}">Variant</label><input id="pv${i}" name="variant" value="${esc(r.variant || '')}" placeholder="Optional, e.g. Large" maxlength="100"></div>
         <div class="field"><label for="pq${i}">Quantity</label><input id="pq${i}" name="quantity" type="number" min="1" max="99" value="${r.quantity ?? 1}"></div>
@@ -905,19 +919,29 @@
           <div class="controls"><form id="prules">${rules.map(row).join('')}</form>
             <div class="inline-row"><button type="button" class="btn secondary small" id="addr">${icon('add', 15)}Add a rule</button><span class="muted" style="font-size:12.5px">Your plan includes ${plural(limit, 'rule')} per store.</span></div>
             <p class="error-msg" id="pr-err" role="alert"></p>
-            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Price rules are checked on Shopify stores for now.</p>' : ''}</div></div></div>`;
+            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Price rules are checked on Shopify stores for now.</p>' : ''}</div></div>
+        <div class="form-section"><div><h3>Offers</h3><p class="explain">Running a bundle, “buy 2 get 1 free”, “spend 5,000 and save 10%” or a free gift? Add it here. Each full check builds the cart that should get the offer and the cart just below it, and checks the discount is there (and not given too early), all the way to checkout. It works with Shopify discounts and offer apps. Nothing is bought, and the cart is emptied.</p></div>
+          <div class="controls"><form id="poffers">${offers.map(orow).join('')}</form>
+            <div class="inline-row"><button type="button" class="btn secondary small" id="addo">${icon('add', 15)}Add an offer</button><span class="muted" style="font-size:12.5px">Each offer counts as one rule.</span></div></div></div></div>`;
       const form = $('#prules');
+      const oform = $('#poffers');
+      const count = () => $$('.price-rule', form).filter((r) => r.querySelector('[name=product]').value.trim() || r.querySelector('[name=price]').value.trim()).length + $$('.offer-rule', oform).length;
       const mark = savebar($('.main-inner', ctx.main), {
         onSave: async () => {
           const list = $$('.price-rule', form).map((r) => ({ product: r.querySelector('[name=product]').value.trim(), variant: r.querySelector('[name=variant]').value.trim() || null, quantity: r.querySelector('[name=quantity]').value, price: r.querySelector('[name=price]').value.trim() })).filter((x) => x.product || x.price);
-          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
+          const olist = $$('.offer-rule', oform).map((r) => ({ type: r.querySelector('[name=type]').value, products: r.querySelector('[name=products]').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean), variant: r.querySelector('[name=variant]').value.trim() || null, offer: r.querySelector('[name=offer]').value.trim() })).filter((x) => x.products.length || x.offer);
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list, priceOffers: olist } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
           await loadStores();
         },
         onDiscard: () => render(),
       });
       form.addEventListener('input', mark);
       form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.price-rule', form).length > 1) b.closest('.price-rule').remove(); else b.closest('.price-rule').querySelectorAll('input').forEach((i) => (i.value = i.name === 'quantity' ? '1' : '')); mark(); });
-      $('#addr').onclick = () => { if ($$('.price-rule', form).length >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
+      oform.addEventListener('input', mark);
+      oform.addEventListener('change', (e) => { const sel = e.target.closest('[name=type]'); if (!sel) return; const k = OFFER_KIND[sel.value]; const r = sel.closest('.offer-rule'); r.querySelector('[name=products]').placeholder = k.products; r.querySelector('[name=offer]').placeholder = k.offer; mark(); });
+      oform.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.offer-rule', oform).length > 1) b.closest('.offer-rule').remove(); else b.closest('.offer-rule').querySelectorAll('input').forEach((i) => (i.value = '')); mark(); });
+      $('#addo').onclick = () => { if (count() >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); oform.insertAdjacentHTML('beforeend', orow({ type: 'spend', products: [], variant: '', offer: '' }, Date.now())); mark(); oform.lastElementChild.querySelector('select').focus(); };
+      $('#addr').onclick = () => { if (count() >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
       return;
     }
     if (tab === 'codes') {
@@ -1288,7 +1312,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.evidence?.offerTable ? window.offerTableHtml(x.evidence.offerTable) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
