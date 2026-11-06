@@ -346,7 +346,7 @@
       ${item(`${base}/publish`, 'publish', 'Safe to publish', at('publish'))}
       ${item(`${base}/catalog`, 'catalog', 'Catalog', at('catalog'))}
       ${item(`${base}/visual`, 'visual', 'Visual changes', at('visual'))}
-      ${item(`${base}/sale`, 'sparkle', 'Sale readiness', at('sale'))}
+      ${feat('sale_report') ? item(`${base}/sale`, 'sparkle', 'Sale readiness', at('sale')) : ''}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
@@ -429,7 +429,9 @@
       const main = $('#main');
       if (!silent) { main.innerHTML = skeleton(); window.scrollTo(0, 0); }
       const ctx = { alive, main, r };
-      if (r.store) await (STORE_PAGES[r.module] || STORE_PAGES.overview)(ctx, S.stores.find((s) => s.id === r.store));
+      // Pages of features that are switched off open the overview instead.
+      const PAGE_FEATURE = { sale: 'sale_report' };
+      if (r.store) await ((!PAGE_FEATURE[r.module] || feat(PAGE_FEATURE[r.module])) && STORE_PAGES[r.module] || STORE_PAGES.overview)(ctx, S.stores.find((s) => s.id === r.store));
       else await PAGES[r.page](ctx);
       if (!silent && alive()) { const h1 = main.querySelector('h1'); document.title = `${h1 ? h1.textContent + ' – ' : ''}Tharam`; }
     } catch (e) {
@@ -682,7 +684,7 @@
       const actions = [
         action(`${base}/run`, 'play', 'Run a check now', 'Shopping journey, full suite or pick checks'),
         action(`${base}/publish`, 'publish', 'Check a design before publishing', 'Your draft themes, side by side with live'),
-        action(`${base}/sale`, 'sparkle', 'Sale readiness', 'Before Black Friday or a big sale'),
+        feat('sale_report') ? action(`${base}/sale`, 'sparkle', 'Sale readiness', 'Before Black Friday or a big sale') : '',
         action(`${base}/suite/codes`, 'catalog', 'Test discount codes', s.config.discountCodes?.length ? `${plural(s.config.discountCodes.length, 'code')} checked daily` : 'Make sure your sale codes work'),
         action(`${base}/alerts`, 'alerts', 'Alerts', `Sent to ${esc(s.alert_email || 'your email')}`),
       ].join('');
@@ -746,7 +748,7 @@
       { key: 'suite', title: 'Your test suite', desc: 'Everything switched on for scheduled full checks of this store.', keys: suite, tag: 'Recommended' },
       { key: 'sale', title: 'Sale readiness', desc: 'Before Black Friday or a big sale: buying on a phone, every price, discount codes, speed, app errors and how the store looks.', keys: keys(usable.filter((g) => ['journey.core', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount', 'catalog', 'speed', 'visual', 'law.cookies', 'law.de', 'access.law', 'law.us'].includes(g.key) && (!g.markets || inMarket(g, s.config.markets)))) },
       { key: 'all', title: 'Everything', desc: 'Every validation available, including ones switched off in your suite.', keys: keys(usable) },
-    ].filter((p, i, all) => p.key !== 'all' || !same(p.keys, all[1].keys));
+    ].filter((p, i, all) => (p.key !== 'all' || !same(p.keys, all[1].keys)) && (p.key !== 'sale' || feat('sale_report')));
     let sel = [...suite];
     if (S.runPreset) { const p = PRESETS.find((x) => x.key === S.runPreset); if (p) sel = [...p.keys]; S.runPreset = null; }
     let saveSuite = false;
@@ -1084,13 +1086,13 @@
           <div class="controls"><div class="field"><label for="ae">Alert email</label><input id="ae" name="alertEmail" type="email" value="${esc(s.alert_email || '')}" autocomplete="email"></div></div></div>
         <div class="form-section"><div><h3>Slack</h3><p class="explain">Post alerts to a Slack channel. In Slack, open Apps, add <b>Incoming Webhooks</b>, choose a channel, and paste the webhook URL here.</p></div>
           <div class="controls"><div class="field"><label for="sl">Slack webhook URL <span class="muted" style="font-weight:400">(optional)</span></label><input id="sl" name="slack" placeholder="https://hooks.slack.com/services/…" value="${esc(s.slack_webhook || '')}" ${can('slack') ? '' : 'disabled'}>${can('slack') ? '' : `<p class="hint">${icon('lock', 12)} Slack alerts are in the ${esc(plansFor('slack'))} plans. <a href="#/account/billing">See plans</a></p>`}</div></div></div>
-        <div class="form-section"><div><h3>Webhook</h3><p class="explain">Send alerts to Zapier, Make, Microsoft Teams, Discord or your own system. We post once when something breaks and once when it's fixed, and try again for 30 minutes if your side is down. Every request is signed with the secret below.</p></div>
+        ${feat('webhooks') ? `<div class="form-section"><div><h3>Webhook</h3><p class="explain">Send alerts to Zapier, Make, Microsoft Teams, Discord or your own system. We post once when something breaks and once when it's fixed, and try again for 30 minutes if your side is down. Every request is signed with the secret below.</p></div>
           <div class="controls">
             <div class="field"><label for="wh">Webhook address <span class="muted" style="font-weight:400">(optional)</span></label><input id="wh" name="webhookUrl" placeholder="https://hooks.zapier.com/hooks/catch/…" value="${esc(s.webhook?.url || '')}" ${can('slack') ? '' : 'disabled'}>${can('slack') ? '' : `<p class="hint">${icon('lock', 12)} Webhook alerts come with Slack alerts in the ${esc(plansFor('slack'))} plans. <a href="#/account/billing">See plans</a></p>`}</div>
             <div class="field"><label for="whf">Send as</label><select id="whf" name="webhookFormat" ${can('slack') ? '' : 'disabled'}>${[['auto', 'Pick from the address'], ['json', 'JSON (Zapier, Make, your own system)'], ['teams', 'Microsoft Teams'], ['discord', 'Discord']].map(([v, l]) => `<option value="${v}" ${(s.webhook?.format || 'auto') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>${s.webhook ? `<p class="hint">Sending as ${esc({ json: 'JSON', teams: 'a Microsoft Teams card', discord: 'a Discord message' }[s.webhook.sendsAs] || s.webhook.sendsAs)}.</p>` : ''}</div>
             ${s.webhook ? `<div class="field"><label>Signing secret</label><div class="inline-row copy-row"><code id="wh-secret" style="user-select:all">${esc(s.webhook.secret)}</code><button type="button" class="btn small secondary" id="wh-new">New secret</button></div>
               <p class="hint">Header <code>X-Tharam-Signature: t=…,v1=…</code> is the HMAC-SHA256 of <code>t.body</code> with this secret.</p></div>
-            <div id="wh-log"></div>` : ''}</div></div>
+            <div id="wh-log"></div>` : ''}</div></div>` : ''}
         <div class="form-section"><div><h3>Test your setup</h3><p class="explain">Sends a sample alert to the saved email, Slack channel and webhook.</p></div>
           <div class="controls"><div class="inline-row"><button type="button" class="btn secondary" id="test-alert">Send test alert</button><span id="test-result" class="muted" role="status"></span></div></div></div>
       </form></div>`;

@@ -4,6 +4,7 @@ import { q } from './db.js';
 import { groupOf, effectiveDisabled } from './engine/catalog.js';
 import { entitlements, has } from './license.js';
 import { deliver } from './webhooks.js';
+import { isOn } from './features.js';
 
 let transport = null;
 function mailer() {
@@ -98,6 +99,6 @@ export async function handleAlerts(storeId, runId, result) {
   // Slack and webhooks come with the same plan feature.
   const chat = has(entitlements(store.user_id), 'slack');
   const slack = chat ? store.slack_webhook : null;
-  const hook = chat ? deliver(store, { event: failing.length ? 'alert.failing' : 'alert.recovered', runId, failing: failing.map((x) => x.c), recovered: recovered.map((x) => x.c), subject, text }) : null;
+  const hook = chat && isOn('webhooks') ? deliver(store, { event: failing.length ? 'alert.failing' : 'alert.recovered', runId, failing: failing.map((x) => x.c), recovered: recovered.map((x) => x.c), subject, text }) : null;
   await Promise.allSettled([sendMail({ to, subject, text, html }), sendSlack(slack, `*${subject}*\n${text}`), hook]);
 }

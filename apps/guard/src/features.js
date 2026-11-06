@@ -26,6 +26,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS feature_flags (
  * aren't offered in Test suite. `core: true` = on unless a founder turns it off.
  */
 export const FLAGS = [
+  { key: 'sale_report', area: 'Sales', label: 'Sale readiness report', about: 'One report and email before a big sale: buying on a phone, prices, discount codes, speed and looks.' },
+  { key: 'webhooks', area: 'Alerts', label: 'Webhook alerts', about: 'Alerts to Zapier, Make, Microsoft Teams, Discord or the owner\'s own system, signed, with retries.' },
+  { key: 'script_watch', area: 'Security watch', label: 'Script watch', about: 'Every script and outside site on the home, product and cart pages; alerts on new scripts, known card-skimming sites and scripts reading form fields; links new failures to new scripts.', checks: ['security.scripts'] },
+  { key: 'hijack_watch', area: 'Security watch', label: 'Redirects, hidden pages and mining', about: 'Shoppers sent to other sites, hidden frames and crypto-mining scripts.', checks: ['security.hijack'] },
+  { key: 'theme_watch', area: 'Security watch', label: 'Theme code changes', about: 'Fingerprints every file of the live Shopify theme on each full check and shows changed lines.', checks: ['security.theme'] },
   { key: 'laws', area: 'Checks', label: 'Laws where you sell', about: 'Checks for the German legal notice, EU cookie consent and US accessibility, and the "Where you sell" setting.', checks: ['law.de', 'law.cookies', 'access.law', 'law.us'] },
 ].map((f) => ({ area: 'Other', core: false, checks: [], ...f }));
 

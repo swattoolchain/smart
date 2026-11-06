@@ -15,7 +15,7 @@ import { scorecard, weekBuyability } from './scorecard.js';
 import crypto from 'node:crypto';
 import { entitlements, has, blockReason, licenseView, ensureLicense, notIncluded, plansWith, FEATURES, envAllowed, listPlans } from './license.js';
 import { adminRoutes } from './admin.js';
-import { enabledKeys, checkOn } from './features.js';
+import { enabledKeys, checkOn, isOn, requireFeature } from './features.js';
 import * as shopify from './shopify.js';
 import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
 import { paymentRoutes, razorpayWebhook } from './payments.js';
@@ -438,6 +438,7 @@ app.patch('/api/stores/:id', requireUser, async (req, res) => {
   // Webhook alerts: { url, format } to set, null or '' to remove; webhookSecret: 'new' makes a new signing secret.
   let hook;
   if (b.webhook !== undefined || b.webhookSecret !== undefined) {
+    if (!isOn('webhooks')) return res.status(400).json({ error: 'Webhook alerts are not available.' });
     const cur = webhookOf(s);
     if (b.webhook === null || b.webhook === '' || (b.webhook && !String(b.webhook.url || '').trim())) hook = null;
     else if (b.webhook) {
@@ -714,12 +715,12 @@ app.post('/api/stores/:id/test-alert', requireUser, async (req, res) => {
   const [mail, slack, webhook] = await Promise.all([
     sendMail({ to: s.alert_email, subject: `Test alert for ${name}`, text }).catch(() => false),
     s.slack_webhook && chat ? sendSlack(s.slack_webhook, `*Test alert for ${name}*\n${text}`).catch(() => false) : Promise.resolve(null),
-    chat ? deliverWebhook(s, { event: 'test', subject: `Test alert for ${name}`, text }, { retry: false }).catch(() => ({ ok: false, error: 'Could not send' })) : Promise.resolve(null),
+    chat && isOn('webhooks') ? deliverWebhook(s, { event: 'test', subject: `Test alert for ${name}`, text }, { retry: false }).catch(() => ({ ok: false, error: 'Could not send' })) : Promise.resolve(null),
   ]);
   res.json({ email: mail, slack, webhook, emailConfigured: !!config.smtp.host });
 });
 
-app.get('/api/stores/:id/webhook-deliveries', requireUser, (req, res) => {
+app.get('/api/stores/:id/webhook-deliveries', requireUser, requireFeature('webhooks'), (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   res.json({ deliveries: recentDeliveries(s.id, 20) });
@@ -787,7 +788,7 @@ app.get('/api/stores/:id/catalog', requireUser, (req, res) => {
 });
 
 // Sale readiness: one report before a sale, from the latest full check (or ?run=), and as an email.
-app.get('/api/stores/:id/sale-readiness', requireUser, (req, res) => {
+app.get('/api/stores/:id/sale-readiness', requireUser, requireFeature('sale_report'), (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   const r = saleReadiness(s, req.query.run ? Number(req.query.run) || -1 : null);
@@ -795,7 +796,7 @@ app.get('/api/stores/:id/sale-readiness', requireUser, (req, res) => {
   res.json({ ...r, groups: saleGroups(s), recipient: saleRecipients(s) });
 });
 
-app.post('/api/stores/:id/sale-readiness/email', requireUser, async (req, res) => {
+app.post('/api/stores/:id/sale-readiness/email', requireUser, requireFeature('sale_report'), async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   const r = saleReadiness(s, req.body?.run ? Number(req.body.run) || -1 : null);
