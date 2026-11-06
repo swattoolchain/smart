@@ -10,11 +10,18 @@
  *        body { text } tries a test from an unsaved file (for the editor)
  */
 import express from 'express';
-import { entitlements, blockReason } from './license.js';
-import { currentTests, testsVersion, testsHistory, saveTests, testLimits, readFile, validate, runTest, checkIdOf, fileFromTests, lastResults, STEPS, MAX_FILE_BYTES, MAX_STEPS } from './custom-tests.js';
+import { entitlements, blockReason, has } from './license.js';
+import { aiEnabled } from './ai.js';
+import { draftFromWords, cleanDescription, startPath } from './custom-tests-draft.js';
+import { currentTests, testsVersion, testsHistory, saveTests, testLimits, readFile, validate, runTest, checkIdOf, fileFromTests, fileDoc, lastResults, STEPS, MAX_FILE_BYTES, MAX_STEPS } from './custom-tests.js';
 import { storeConfig } from './scheduler.js';
 
 const TRIES_PER_HOUR = 30;
+const drafts = new Map(); // userId -> [timestamps] of AI drafts in the last 24 hours
+const drafting = new Set(); // storeIds with a draft in progress
+const draftsLeft = (userId, ent) => Math.max(0, ent.limits.aiDrafts - (drafts.get(userId) || []).filter((t) => Date.now() - t < 864e5).length);
+/** Whether this account can ask AI to draft tests: the server has an AI key and the plan includes AI. */
+const aiDraft = (userId, ent) => (aiEnabled() && has(ent, 'ai') ? { available: true, left: draftsLeft(userId, ent), perDay: ent.limits.aiDrafts } : { available: false });
 const tries = new Map(); // storeId -> [timestamps]
 const trying = new Set(); // storeIds with a try in progress
 
@@ -61,7 +68,7 @@ export function customTestRoutes(app, { requireUser, ownStore }) {
       res.set('Content-Disposition', `attachment; filename="tharam-tests-${host}-v${file.version}.${ext}"`);
       return res.type(ext === 'json' ? 'application/json' : 'text/yaml').send(file.text);
     }
-    res.json({ file: file || null, limits: testLimits(entitlements(s.user_id)), history: testsHistory(s.id), results: lastResults(s.id), library: LIBRARY, maxSteps: MAX_STEPS, example: EXAMPLE });
+    res.json({ file: file || null, limits: testLimits(entitlements(s.user_id)), ai: aiDraft(s.user_id, entitlements(s.user_id)), history: testsHistory(s.id), results: lastResults(s.id), library: LIBRARY, maxSteps: MAX_STEPS, example: EXAMPLE });
   });
 
   app.put('/api/stores/:id/custom-tests', requireUser, express.text({ type: ['text/*', 'application/yaml', 'application/x-yaml'], limit: MAX_FILE_BYTES + 1024 }), (req, res) => {
@@ -74,6 +81,36 @@ export function customTestRoutes(app, { requireUser, ownStore }) {
       res.json({ ok: true, unchanged: !!file.unchanged, file: { ...file, unchanged: undefined }, history: testsHistory(s.id) });
     } catch (e) {
       res.status(400).json({ error: e.message, problems: e.problems || [e.message] });
+    }
+  });
+
+  // Describe a test in words; AI drafts the steps. The draft goes back to the editor and is never saved here.
+  app.post('/api/stores/:id/custom-tests/draft', requireUser, async (req, res) => {
+    const s = ownStore(req, res);
+    if (!s) return;
+    const ent = entitlements(s.user_id);
+    const why = blockReason(ent, s.id);
+    if (why) return res.status(403).json({ error: why, upgrade: true });
+    if (!aiEnabled()) return res.status(404).json({ error: 'Writing tests from a description is not available.' });
+    if (!has(ent, 'ai')) return res.status(403).json({ error: 'Your plan doesn’t include AI. Build the test with the steps instead, or upgrade.', upgrade: true });
+    let description, start;
+    try { description = cleanDescription(req.body?.description); start = startPath(req.body?.page); } catch (e) { return res.status(400).json({ error: e.message }); }
+    if (!draftsLeft(s.user_id, ent)) return res.status(429).json({ error: `Your plan includes ${ent.limits.aiDrafts} AI drafts a day, and you’ve used them. Build the test with the steps, or try again tomorrow.` });
+    if (drafting.has(s.id)) return res.status(409).json({ error: 'A draft is already being written for this store. Wait for it to finish.' });
+    drafting.add(s.id);
+    // Counted when asked, so a failed or refused draft still uses one (each one costs an AI call).
+    drafts.set(s.user_id, [...(drafts.get(s.user_id) || []).filter((t) => Date.now() - t < 864e5), Date.now()]);
+    try {
+      const cfg = storeConfig(s);
+      const out = await draftFromWords({ store: s, testProduct: cfg.testProduct || null, description, start, limits: testLimits(ent) });
+      // Written the way the file and the editor's form write tests (short targets, no internal ids).
+      res.json({ ...out, test: fileDoc([out.test]).tests[0], left: draftsLeft(s.user_id, ent) });
+    } catch (e) {
+      if (e.status) return res.status(e.status).json({ error: e.message, problems: e.problems || [e.message], left: draftsLeft(s.user_id, ent) });
+      console.error('[custom-tests] draft failed:', e.message);
+      res.status(502).json({ error: 'The AI could not draft the test just now. Try again in a minute.', left: draftsLeft(s.user_id, ent) });
+    } finally {
+      drafting.delete(s.id);
     }
   });
 

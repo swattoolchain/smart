@@ -1189,6 +1189,14 @@
     const head = storeHead(s, isNew ? 'New test' : 'Edit test', { crumb: `<a href="#/s/${s.id}">${esc(s.name || host(s.url))}</a> › <a href="${base}">Your tests</a>` });
     const t = isNew ? { name: '', severity: 'major', runs: 'full', device: 'desktop', enabled: true, fix: '', steps: [{ open: '{product}' }] } : JSON.parse(JSON.stringify(tests[idx]));
     const lib = Object.fromEntries(d.library.map((x) => [x.key, x]));
+    // Describe it in words: AI drafts the steps into this form; nothing is saved until the owner saves.
+    const ai = isNew && d.ai?.available ? { desc: '', page: '', note: '', left: d.ai.left } : null;
+    const aiPanel = () => (ai ? `<section class="panel yt-ai"><h2>Describe it in words <span class="tag ai">AI</span></h2><p class="sub">Say what a shopper does and what should happen. We open the page, and AI drafts the steps below for you to try and save.</p>
+            <div class="field"><label for="yt-desc">What should the test do?</label><textarea id="yt-desc" rows="3" maxlength="600" placeholder="e.g. Enter pincode 560001 on a product page, press Check and make sure it says delivery is available">${esc(ai.desc)}</textarea></div>
+            <div class="inline-row"><div class="field" style="flex:1;margin:0"><label for="yt-page">Page to start on <span class="muted" style="font-weight:400">(optional)</span></label><input id="yt-page" maxlength="300" value="${esc(ai.page)}" placeholder="Your test product, or a page like /pages/contact" spellcheck="false"></div>
+              <button type="button" class="btn secondary" id="yt-draft" ${ai.left ? '' : 'disabled'} style="align-self:flex-end">Draft the steps</button></div>
+            <p class="muted" style="font-size:12.5px;margin:8px 0 0">${ai.left ? `${ai.left} AI ${ai.left === 1 ? 'draft' : 'drafts'} left today.` : 'You’ve used today’s AI drafts. Build the test with the steps below.'}</p>
+            <div id="yt-ai-out" role="status">${ai.note ? `<div class="notice ok-n"><p>${esc(ai.note)}</p></div>` : ''}</div></section>` : '');
     const opt = (v, label, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(label)}</option>`;
     const stepRow = (st, i) => {
       const k = ytKind(st), def = lib[k], meta = YT_STEPS[k];
@@ -1226,6 +1234,7 @@
     const draw = () => {
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
         <form id="yt-form" novalidate>
+          ${aiPanel()}
           <section class="panel">
             <div class="field"><label for="yt-name">Name</label><input id="yt-name" name="name" maxlength="80" value="${esc(t.name)}" placeholder="e.g. Delivery checker works"><p class="hint">Shown in reports and alerts.</p></div>
             <div class="yt-grid">
@@ -1265,6 +1274,27 @@
         $$('input, select', li).forEach((x) => { x.addEventListener('mousedown', () => (li.draggable = false)); x.addEventListener('blur', () => (li.draggable = true)); });
       });
       $('#yt-add').onclick = () => { read(); t.steps.push({ click: '' }); S.dirty = true; draw(); $$('.yt-step select').at(-1)?.focus(); };
+      if (ai) {
+        $('#yt-draft').onclick = async (e) => {
+          ai.desc = $('#yt-desc').value; ai.page = $('#yt-page').value;
+          const done = busy(e.currentTarget, 'Drafting');
+          $('#yt-ai-out').innerHTML = '<p class="muted"><span class="spinner"></span> Opening your store and drafting the steps…</p>';
+          try {
+            const r = await api(`/api/stores/${s.id}/custom-tests/draft`, { method: 'POST', body: { description: ai.desc, page: ai.page } });
+            const keep = { enabled: t.enabled, fix: t.fix };
+            Object.assign(t, r.test, keep, { runs: t.runs });
+            ai.left = r.left;
+            ai.note = `Draft ready: ${r.test.steps.length} steps. Check them, press Try it now, then save.${r.note ? ` ${r.note}` : ''}`;
+            S.dirty = true;
+            draw();
+            $('#yt-steps')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } catch (ex) {
+            done();
+            if (ex.status === 429) ai.left = 0;
+            $('#yt-ai-out').innerHTML = `<div class="notice fail-n"><p>${esc(ex.message)}</p></div>`;
+          }
+        };
+      }
       form.onsubmit = async (e) => {
         e.preventDefault();
         read();

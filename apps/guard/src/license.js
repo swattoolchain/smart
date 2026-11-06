@@ -226,7 +226,9 @@ export function entitlements(userId) {
     license: l, plan, state, usable, features, maxStores, storesUsed: storeIds.length, covered,
     limits: { journeyMinInterval: plan.limits.journeyMinInterval || 60, fullMinInterval: plan.limits.fullMinInterval || 720, environments: plan.limits.environments ?? 0, manualRunsPerDay: plan.limits.manualRunsPerDay || 20,
       // Your tests: how many per store, and steps per test (never more than 25). Plans saved before this existed get 5.
-      customTests: plan.limits.customTests ?? 5, customSteps: Math.min(plan.limits.customSteps ?? 25, 25) },
+      customTests: plan.limits.customTests ?? 5, customSteps: Math.min(plan.limits.customSteps ?? 25, 25),
+      // Tests drafted by AI from a description, per account per day (plans with the AI feature only).
+      aiDrafts: plan.limits.aiDrafts ?? 20 },
     daysLeft: exp == null ? null : Math.ceil((exp - Date.now()) / 864e5),
   };
 }

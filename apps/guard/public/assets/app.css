@@ -1022,3 +1022,6 @@ pre.yt-code { background: #f6f7fa; border: 1px solid var(--line); border-radius:
   .yt-step { flex-wrap: wrap; }
   .yt-list .row-actions { white-space: normal; }
 }
+.yt-ai textarea { width: 100%; resize: vertical; font: inherit; }
+.yt-ai .tag.ai { vertical-align: middle; margin-left: 6px; }
+.yt-ai #yt-ai-out .notice { margin-top: 10px; }

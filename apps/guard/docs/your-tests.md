@@ -64,5 +64,9 @@ tests:
 - `PUT /api/stores/:id/custom-tests` — upload: the file as the body (`text/yaml` or JSON), or `{ "text": "…" }`.
   Mistakes come back as `400 { error, problems: ["Test 1 (“…”), step 3: “click” needs a target …"] }`.
   Every saved file becomes a new version; older versions are never deleted.
+- `POST /api/stores/:id/custom-tests/draft` — `{ description, page? }`: AI opens the page (your test product by default),
+  reads its outline and drafts one test in this format. Returns `{ test, note, left }`; nothing is saved. Only when the
+  server has an AI key and the plan includes AI; drafts per account per day are set by the plan (`aiDrafts`, default 20).
+  A draft that breaks the rules above is refused (`422`), never handed on.
 - `POST /api/stores/:id/custom-tests/:name/try` — run one test now; returns each step with its result and a
   screenshot. `{ "text": "…" }` tries a test from a file that isn't saved yet.
