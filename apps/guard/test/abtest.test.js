@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startProduct, signup, addStore, runAndWait } from './lib/harness.js';
 import { note, screenshot } from './lib/evidence.js';
-import { matchTools, cleanVariants, withParam, onOwnCheckout, priceFrom } from '../src/engine/abtest.js';
+import { matchTools, cleanVariants, withParam, onOwnCheckout, priceFrom, convertSeen, convertVariant, AUTO_TOOLS } from '../src/engine/abtest.js';
 
 const VERSIONS = [
   { name: 'Control', kind: 'param', value: 'ab_variant=a' },
@@ -121,6 +121,70 @@ describe('A/B test safety', () => {
       }, storeId, { timeout: 10000 });
       assert.deepEqual(errors, []);
       await ctx.close();
+    });
+  });
+});
+
+// T106: versions found and forced automatically, for tools whose forcing method is documented (Convert).
+describe('A/B test safety: versions found on our own', () => {
+  it('reads Convert versions from the page and builds the documented forcing link', () => {
+    assert.deepEqual(convertSeen({ 100: { variation: { id: '1002', name: 'Sticky <b>bar' } }, bad: { variation: { id: '1' } }, 200: { variation: { id: 'x' } } }),
+      [{ exp: '100', id: '1002', label: 'Sticky bbar' }]);
+    assert.deepEqual(convertSeen(null), []);
+    const v = convertVariant({ exp: '100', id: '1002', label: 'Sticky bar' });
+    assert.deepEqual(v, { name: 'Sticky bar (Convert)', kind: 'param', value: '_conv_eforce=100.1002', auto: 'Convert' });
+    assert.equal(withParam('https://s.test/products/x?variant=1', v), 'https://s.test/products/x?variant=1&_conv_eforce=100.1002');
+    assert.deepEqual(AUTO_TOOLS, ['Convert']);
+  });
+
+  describe('on a store running a Convert test, with nothing listed', () => {
+    let P, owner, storeId;
+    before(async () => {
+      P = await startProduct({ mock: { extra: 'convert' } });
+      owner = await signup(P, 'abtest-convert@shop.test');
+      storeId = await addStore(P, owner, { runNow: false });
+    });
+    after(async () => { await P.stop(); });
+
+    it('finds both versions, forces each one and reports the broken one', async (t) => {
+      const run = await runAndWait(owner, storeId, { groups: GROUPS }, 300000);
+      assert.equal(run.status, 'done', run.error || '');
+      const tools = byId(run, 'ab.tools');
+      assert.equal(tools.status, 'pass', tools.detail);
+      assert.match(tools.detail, /Convert/);
+      assert.match(tools.detail, /found 2 Convert test versions on our own/);
+      const vs = run.result.checks.filter((c) => c.id.startsWith('ab.variant.'));
+      assert.equal(vs.length, 2);
+      const orig = vs.find((c) => /Original/.test(c.title));
+      const sticky = vs.find((c) => /Sticky buy bar/.test(c.title));
+      assert.equal(orig.status, 'pass', orig.detail);
+      assert.equal(sticky.status, 'fail');
+      assert.equal(sticky.severity, 'critical');
+      assert.match(sticky.detail, /Add to cart did nothing/);
+      assert.equal(sticky.evidence.variant, '_conv_eforce=100.1002');
+      assert.equal(sticky.evidence.found, 'Convert');
+      note(t, tools.detail);
+      note(t, `${orig.title}: ${orig.detail}`);
+      note(t, `${sticky.title}: ${sticky.detail}`);
+
+      const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, args: ['--no-sandbox'] });
+      try {
+        const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+        await ctx.addCookies(owner.browserCookies());
+        const p = await ctx.newPage();
+        const errors = [];
+        p.on('pageerror', (e) => errors.push(e.message));
+        await p.goto(`${P.base}/app#/s/${storeId}/runs/${run.id}`);
+        await p.waitForSelector('text=Sticky buy bar', { timeout: 20000 });
+        await p.evaluate(() => document.querySelectorAll('.tour,.tour-mask,.toast').forEach((x) => x.remove()));
+        await p.locator('text=Sticky buy bar').first().scrollIntoViewIfNeeded();
+        await screenshot(t, p, 'report: Convert versions found and shopped on our own');
+        await p.goto(`${P.base}/app#/s/${storeId}/suite/abtests`);
+        await p.waitForSelector('#ab-auto', { timeout: 20000 });
+        await p.evaluate(() => document.querySelectorAll('.tour,.tour-mask,.toast').forEach((x) => x.remove()));
+        await screenshot(t, p, 'Test suite: A/B tests explains Convert needs no list');
+        assert.deepEqual(errors, []);
+      } finally { await browser.close(); }
     });
   });
 });

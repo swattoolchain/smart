@@ -901,7 +901,8 @@
         <button type="button" class="icon-btn" data-rm aria-label="Remove version" data-tip="Remove">${icon('trash', 16)}</button></div>`;
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
         <div class="form-section" style="border-top:0;padding-top:0"><div><h3>A/B and price tests</h3><p class="explain">If you test prices or a new theme with an A/B app, some shoppers see a different version of your store. Each full check shops once in every version you list here: the page loads, Add to cart works, the cart charges the price shown, and checkout opens on your store. Nothing is bought, and your test settings are never changed.</p>
-          <p class="explain">Find the setting in your A/B app’s preview link for each version, for example <code>?ab_variant=b</code>, and enter it as <code>ab_variant=b</code>.</p></div>
+          <p class="explain">Find the setting in your A/B app’s preview link for each version, for example <code>?ab_variant=b</code>, and enter it as <code>ab_variant=b</code>.</p>
+          <p class="explain" id="ab-auto">Using Convert? You don’t need to list anything: we find its running test versions on our own and shop each one.</p></div>
           <div class="controls"><form id="abv">${list.map(row).join('')}</form>
             <div class="inline-row"><button type="button" class="btn secondary small" id="adda">${icon('add', 15)}Add a version</button><span class="muted" style="font-size:12.5px">Up to 4 versions.</span></div>
             <p class="error-msg" id="ab-err" role="alert"></p>

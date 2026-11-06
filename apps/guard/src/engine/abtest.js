@@ -86,6 +86,65 @@ export function priceFrom(text) {
   return Number(m[1].replace(/[,\s.]/g, '')) + (m[2] ? Number(m[2]) / 10 ** m[2].length : 0);
 }
 
+/**
+ * Test versions we can find and force on our own, per tool, using only each tool's documented
+ * storefront mechanism (checked against the tool's docs on 2026-11-06):
+ *
+ * - Convert: the page exposes `window.convert.currentData.experiences`
+ *   (`{ "<experienceId>": { variation: { id, name } } }`), the version this visitor got, and a visitor
+ *   can be forced into a version with `?_conv_eforce=<experienceId>.<variationId>` (active experiences
+ *   only; the experience's site area and audience rules still apply).
+ *
+ * Convert does not document a page-side list of every version, so we open a few fresh shopper sessions
+ * and record which versions they land in; each version seen is then forced and shopped like a listed one.
+ * Other tools (Optimizely, VWO, AB Tasty, Intelligems, Shoplift) keep using the versions the owner lists:
+ * their docs either need an account to find version IDs or only offer a preview from inside the tool.
+ */
+export const AUTO_TOOLS = ['Convert'];
+const AUTO_MAX = 4;
+const ID = /^\d{1,20}$/;
+
+/** Reads the Convert versions a visitor was put in from `window.convert.currentData.experiences`. */
+export function convertSeen(experiences) {
+  const out = [];
+  if (!experiences || typeof experiences !== 'object') return out;
+  for (const [exp, v] of Object.entries(experiences)) {
+    const id = String(v?.variation?.id ?? '');
+    if (!ID.test(exp) || !ID.test(id)) continue;
+    const label = String(v?.variation?.name || `version ${id}`).replace(/[<>\n]/g, '').trim().slice(0, 28) || `version ${id}`;
+    out.push({ exp, id, label });
+  }
+  return out;
+}
+
+/** The forcing setting for one Convert version, in the same shape as an owner-listed version. */
+export const convertVariant = ({ exp, id, label }) => ({ name: `${label} (Convert)`.slice(0, 40), kind: 'param', value: `_conv_eforce=${exp}.${id}`, auto: 'Convert' });
+
+/** Opens up to `tries` fresh shopper sessions on a product page and collects the Convert versions they get. */
+export async function discoverConvert({ origin, info, password, tries = 6 }) {
+  const product = info.products[0];
+  const found = new Map();
+  let sinceNew = 0;
+  for (let i = 0; i < tries && found.size < AUTO_MAX && sinceNew < 3; i++) {
+    const ctx = await newContext();
+    try {
+      const page = await ctx.newPage();
+      if (password) await gotoStore(page, origin + '/', { password }).catch(() => {});
+      await page.goto(product ? `${origin}/products/${product.handle}` : origin + '/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForFunction(() => window.convert && window.convert.currentData, null, { timeout: 5000 }).catch(() => {});
+      const seen = convertSeen(await page.evaluate(() => (window.convert && window.convert.currentData && window.convert.currentData.experiences) || null).catch(() => null));
+      let added = false;
+      for (const v of seen) if (!found.has(`${v.exp}.${v.id}`) && found.size < AUTO_MAX) { found.set(`${v.exp}.${v.id}`, v); added = true; }
+      sinceNew = added ? 0 : sinceNew + 1;
+    } catch {
+      sinceNew++;
+    } finally {
+      await ctx.close().catch(() => {});
+    }
+  }
+  return [...found.values()].map(convertVariant);
+}
+
 async function oneVariant({ variant, origin, info, password, shot, n }) {
   const product = info.products[0];
   const pv = product.variants[0];
@@ -180,8 +239,8 @@ async function oneVariant({ variant, origin, info, password, shot, n }) {
   }
 }
 
-/** Runs on full checks of Shopify stores: tool detection, then one shopping journey per listed version. */
-export async function runAbTests({ page, rec, origin, info, password, variants = [], shot }) {
+/** Runs on full checks of Shopify stores: tool detection, then one shopping journey per version. */
+export async function runAbTests({ page, rec, origin, info, password, variants = [], shot, discover = { Convert: discoverConvert } }) {
   rec.step('Look for A/B tests');
   await page.goto(origin + '/', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   await settle(page, 800);
@@ -191,14 +250,33 @@ export async function runAbTests({ page, rec, origin, info, password, variants =
     await settle(page, 600);
     tools = [...new Set([...tools, ...(await detectTools(page))])];
   }
-  const list = cleanVariants(variants);
+  const listed = cleanVariants(variants);
+  // Versions we can find ourselves, for tools whose forcing method is documented (see AUTO_TOOLS).
+  const found = [];
+  const foundBy = new Set();
+  if (info.products[0]) {
+    for (const tool of tools.filter((t) => discover[t])) {
+      rec.step(`Find the ${tool} test versions`);
+      const vs = await discover[tool]({ origin, info, password }).catch(() => []);
+      if (vs.length) foundBy.add(tool);
+      for (const v of vs) if (!listed.some((x) => x.value === v.value) && !found.some((x) => x.value === v.value)) found.push(v);
+    }
+  }
+  const list = [...listed, ...found].slice(0, 8);
+  // Tools whose versions we could not find on our own still need the owner's list.
+  const manualTools = tools.filter((t) => !foundBy.has(t));
+  const needList = manualTools.length > 0 && !listed.length;
   if (tools.length || list.length) {
-    rec.add(check('ab.tools', 'functional', 'A/B tests on your store', tools.length && !list.length ? 'warn' : 'pass', {
+    const parts = [];
+    if (tools.length) parts.push(`We found ${tools.join(' and ')} on your store.`);
+    else parts.push(`No A/B tool found on the pages we opened, but you listed ${listed.length} test version${listed.length === 1 ? '' : 's'}; we checked each one.`);
+    if (found.length) parts.push(`We found ${found.length} ${found[0].auto} test version${found.length === 1 ? '' : 's'} on our own and checked ${found.length === 1 ? 'it' : 'each one'}.`);
+    if (tools.length && listed.length) parts.push(`Checking the ${listed.length} test version${listed.length === 1 ? '' : 's'} you listed.`);
+    if (needList) parts.push(`Shoppers in a ${manualTools.join(' or ')} test may see a different price or page than we checked.`);
+    rec.add(check('ab.tools', 'functional', 'A/B tests on your store', needList ? 'warn' : 'pass', {
       severity: 'minor',
-      detail: tools.length
-        ? `We found ${tools.join(' and ')} on your store.${list.length ? ` Checking the ${list.length} test version${list.length === 1 ? '' : 's'} you listed.` : ' Shoppers in a test may see a different price or page than we checked.'}`
-        : `No A/B tool found on the pages we opened, but you listed ${list.length} test version${list.length === 1 ? '' : 's'}; we checked each one.`,
-      fix: tools.length && !list.length ? 'Open Test suite → A/B tests and add each version’s preview link setting (a URL parameter or cookie from your A/B app), so we can check every version shoppers can see.' : '',
+      detail: parts.join(' '),
+      fix: needList ? `Open Test suite → A/B tests and add each ${manualTools.join(' or ')} version’s preview link setting (a URL parameter or cookie from your A/B app), so we can check every version shoppers can see.` : '',
     }));
   }
   if (!list.length || !info.products[0]) return { tools, variants: [] };
@@ -212,10 +290,10 @@ export async function runAbTests({ page, rec, origin, info, password, variants =
       detail: r.problems.length
         ? `Shoppers who get version “${v.name}”: ${r.problems.map((p) => p.text).join('; ')}.`
         : `Version “${v.name}”: ${r.facts.join(', ')}.`,
-      evidence: r.problems.length ? { screenshot: r.screenshot, variant: v.value, via: v.kind } : null,
+      evidence: r.problems.length ? { screenshot: r.screenshot, variant: v.value, via: v.kind, found: v.auto || null } : null,
       fix: r.problems.length ? `Pause version “${v.name}” in your A/B app until it is fixed, or end the test. Then check the theme or price changes that version makes.` : '',
     }));
-    results.push({ name: v.name, ok: !r.problems.length });
+    results.push({ name: v.name, ok: !r.problems.length, auto: !!v.auto });
   }
   return { tools, variants: results };
 }
