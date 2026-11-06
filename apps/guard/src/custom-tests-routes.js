@@ -9,6 +9,7 @@
  *   POST /api/stores/:id/custom-tests/:name/try  run one test now and get a step-by-step trail with screenshots
  *        body { text } tries a test from an unsaved file (for the editor)
  */
+import { storePassword } from './secret.js';
 import express from 'express';
 import { entitlements, blockReason, has } from './license.js';
 import { aiEnabled } from './ai.js';
@@ -178,7 +179,7 @@ export function customTestRoutes(app, { requireUser, ownStore }) {
     trying.add(s.id);
     try {
       const cfg = storeConfig(s);
-      const r = await runTest(test, { origin: s.url, password: s.storefront_password, testProduct: cfg.testProduct || null, images: true });
+      const r = await runTest(test, { origin: s.url, password: storePassword(s), testProduct: cfg.testProduct || null, images: true });
       res.json({ test: { name: test.name, id: test.id, severity: test.severity, device: test.device }, status: r.status, message: r.message || `All ${test.steps.length} steps worked.`, ms: r.ms, steps: r.trail });
     } catch (e) {
       res.status(500).json({ error: 'The test could not be started. Try again in a minute.' });

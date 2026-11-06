@@ -412,7 +412,7 @@ const server = http.createServer(async (req, res) => {
   // Tests: what is in the carts (sizes per cart, and how many are not empty).
   if (p === '/__carts') return send(res, 200, { carts: [...carts.values()].map((c) => c.length), filled: [...carts.values()].filter((c) => c.length).length }, 'application/json');
   if (p === '/__sale') { if (SALE) { if (u.searchParams.get('end')) endSale(); else { SALE.at = 0; saleClock(); } } return send(res, 200, { on: saleOn, ended: saleEnded }, 'application/json'); } // tests: start (or end) the sale now
-  if (p === '/localization' && req.method === 'POST' && !BREAK.has('localization')) {
+  if (SALE && p === '/localization' && req.method === 'POST' && !BREAK.has('localization')) {
     const f = new URLSearchParams(await readBody(req));
     const cc = String(f.get('country_code') || '').toUpperCase();
     if (!CURRENCY[cc]) return send(res, 422, layout('Error', '<h1>Country not available</h1>'));
