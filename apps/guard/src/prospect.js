@@ -9,7 +9,8 @@
  *   - at most one visit per page per store, no retries;
  *   - at most 2 stores at a time;
  *   - identifies itself as TharamBot with a link to https://tharam.store/bot;
- *   - respects robots.txt (rules for TharamBot, else for *), including Crawl-delay (up to 10 s);
+ *   - respects robots.txt (rules for TharamBot, else for *), including Crawl-delay: honoured in full up to
+ *     30 s; a store asking for longer is skipped, never visited faster than it asks;
  *   - never places orders and never types anything into any page;
  *   - keeps only findings (statuses, counts, timings, addresses), never page content;
  *   - public addresses only (no private or internal networks).
@@ -21,7 +22,7 @@ import { assertPublicTarget } from './engine/browser.js';
 export const BOT = 'TharamBot';
 export const USER_AGENT = `Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36 ${BOT}/1.0 (+https://tharam.store/bot)`;
 export const MAX_CONCURRENCY = 2;
-const MAX_CRAWL_DELAY_MS = 10000;
+export const MAX_CRAWL_DELAY_MS = 30000; // longer Crawl-delay: the store is skipped
 const PAGE_TIMEOUT = 30000;
 const SLOW_PHONE_MS = 4000;
 const CHECKOUT_HOSTS = ['checkout.shopify.com', 'shop.app'];
@@ -53,7 +54,7 @@ export function parseRobots(text, agent = BOT) {
   const chosen = mine.length ? mine : groups.filter((g) => g.agents.includes('*'));
   const rules = chosen.flatMap((g) => g.rules);
   const delays = chosen.map((g) => g.delay).filter((d) => d != null);
-  return { rules, delayMs: delays.length ? Math.min(Math.max(...delays) * 1000, MAX_CRAWL_DELAY_MS) : 0 };
+  return { rules, delayMs: delays.length ? Math.max(...delays) * 1000 : 0 };
 }
 
 function ruleRegex(p) {
@@ -141,6 +142,8 @@ export async function checkStore(input, { browser, log = () => {}, now = () => n
     return { ...out, status: 'unreachable', error: `Could not reach the store (${e.cause?.code || e.message})` };
   }
   if (!robotsAllows(robots, '/')) return { ...out, status: 'skipped', skipped: ['whole store (robots.txt)'] };
+  // A Crawl-delay longer than we wait between pages: stay away rather than visit faster than the store asks.
+  if (robots.delayMs > MAX_CRAWL_DELAY_MS) return { ...out, status: 'skipped', error: `crawl delay too long (${Math.round(robots.delayMs / 1000)} s)`, skipped: ['whole store (robots.txt Crawl-delay)'] };
 
   const ctx = await browser.newContext({
     userAgent: USER_AGENT, viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, locale: 'en-US',

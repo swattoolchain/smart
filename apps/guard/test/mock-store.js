@@ -9,7 +9,7 @@
  * and reuses the kurta's SKU.
  * theme (a sale banner and warmer colours), restyle (a theme update that turns every page dark)
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
- * robots.txt (env MOCK_EXTRA): robots-shopify, robots-block, robots-slow. GET /__requests lists the requests received.
+ * robots.txt (env MOCK_EXTRA): robots-shopify, robots-block, robots-slow, robots-crawl60. GET /__requests lists the requests received.
  * Script extras (env MOCK_EXTRA): newscript, badscript (see NEW_SCRIPT and BAD_SCRIPT below);
  * skimmer, formreader (form-field readers, see FORM_EXTRAS below).
  * Hijack extras (env MOCK_EXTRA or live via /__extra): redirect, phoneredirect, hiddenframe, badframe, miner (see HIJACK below).
@@ -232,6 +232,7 @@ const server = http.createServer(async (req, res) => {
     if (EXTRA.includes('robots-shopify')) return send(res, 200, 'User-agent: *\nDisallow: /admin\nDisallow: /cart\nDisallow: /orders\nDisallow: /checkouts/\nDisallow: /checkout\nDisallow: /account\nDisallow: /search\nAllow: /products/*.js\n\nSitemap: http://localhost:' + PORT + '/sitemap.xml\n', 'text/plain');
     if (EXTRA.includes('robots-block')) return send(res, 200, 'User-agent: *\nAllow: /\n\nUser-agent: TharamBot\nDisallow: /\n', 'text/plain');
     if (EXTRA.includes('robots-slow')) return send(res, 200, 'User-agent: *\nCrawl-delay: 2\n', 'text/plain');
+    if (EXTRA.includes('robots-crawl60')) return send(res, 200, 'User-agent: *\nCrawl-delay: 60\n', 'text/plain');
     return send(res, 404, 'Not found', 'text/plain');
   }
   if (p === '/__extra') {
