@@ -89,7 +89,11 @@ async function main() {
       if (r.status === 401) { console.error('The main server no longer knows this runner. Delete runner.json and join again with a new token.'); process.exit(1); }
       if (r.status === 200) {
         for (const id of r.json.cancel || []) running.get(id)?.controller.abort();
-        for (const spec of stopping ? [] : r.json.jobs || []) runOne(auth, spec);
+        for (const spec of stopping ? [] : r.json.jobs || []) {
+          // Never more checks than this machine's slots (anything over is reported back as not running, and moves on).
+          if (running.has(spec.runId) || running.size >= (r.json.slots || 1)) { log(`no free slot for check ${spec.runId}`); continue; }
+          runOne(auth, spec);
+        }
       }
     } catch (e) { log('check-in failed', e.message); }
     await new Promise((res) => setTimeout(res, POLL_MS));

@@ -2102,18 +2102,19 @@
   async function adminRunners(ctx, head) {
     const d = await api('/api/admin/runners');
     if (!ctx.alive()) return;
-    const STAT = { active: ['healthy', 'Active'], draining: ['warning', 'Draining'], paused: ['', 'Paused'] };
+    const STAT = { active: ['healthy', 'Active'], draining: ['warning', 'Draining'], paused: ['', 'Paused'], removed: ['critical', 'Removed'] };
     const row = (r) => {
       const [cls, label] = STAT[r.status] || ['', r.status];
-      const health = r.kind === 'main' ? '<span class="pill healthy">This server</span>' : r.healthy ? `<span class="pill healthy">Checking in</span><div class="cell-sub">${time(r.lastSeen)}</div>` : `<span class="pill critical">Not responding</span><div class="cell-sub">last seen ${time(r.lastSeen)}</div>`;
+      const removed = r.status === 'removed';
+      const health = removed ? '<span class="muted">–</span>' : r.kind === 'main' ? '<span class="pill healthy">This server</span>' : r.healthy ? `<span class="pill healthy">Checking in</span><div class="cell-sub">${time(r.lastSeen)}</div>` : `<span class="pill critical">Not responding</span><div class="cell-sub">last seen ${time(r.lastSeen)}</div>`;
       const btn = (st, txt) => (r.status === st ? '' : `<button type="button" class="btn small secondary" data-runner="${r.id}" data-status="${st}">${txt}</button>`);
       return `<tr class="runner-row" data-name="${esc(r.name)}"><td><span class="cell-main">${esc(r.name)}</span><div class="cell-sub">${r.kind === 'main' ? 'Main server · web, database, scheduler' : 'Worker'}</div></td>
         <td><span class="pill ${cls}">${label}</span></td><td>${health}</td><td class="num">${r.used} of ${r.slots}</td>
         <td>${r.tags.length ? r.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join(' ') : '<span class="muted">–</span>'}</td>
-        <td class="actions">${btn('active', 'Activate')} ${btn('draining', 'Drain')} ${btn('paused', 'Pause')}</td></tr>`;
+        <td class="actions">${removed ? '' : `${btn('active', 'Activate')} ${btn('draining', 'Drain')} ${btn('paused', 'Pause')}${r.kind === 'main' ? '' : ` <button type="button" class="btn small danger" data-remove="${r.id}" data-rname="${esc(r.name)}">Remove</button>`}`}</td></tr>`;
     };
     ctx.main.innerHTML = `<div class="main-inner">${head}
-      <p class="lede-sm">Checks go to the active runner with the most free slots. Stores in sale mode prefer runners tagged <code>sale</code>, paid plans prefer their plan's tag (for example <code>pro</code>), and stores prefer their region's tag (<code>india</code>, <code>eu</code>, <code>us</code>). If no such runner has room, any runner takes the check. Workers take journey checks; full and publish checks run on the main server. A worker that stops checking in for a minute gets no new checks, and its unfinished checks are retried once elsewhere. <b>Drain</b> finishes current checks and takes no new ones.</p>
+      <p class="lede-sm">Checks go to the active runner with the most free slots. Stores in sale mode prefer runners tagged <code>sale</code>, paid plans prefer their plan's tag (for example <code>pro</code>), and stores prefer their region's tag (<code>india</code>, <code>eu</code>, <code>us</code>). If no such runner has room, any runner takes the check. Workers take journey checks; full and publish checks run on the main server. A worker that stops checking in for a minute gets no new checks, and its unfinished checks are retried once elsewhere. <b>Drain</b> finishes current checks and takes no new ones. Pausing or draining the main server moves journey checks to workers; free, full and publish checks still run here. <b>Remove</b> cuts a worker off for good (its credentials stop working) and retries its unfinished checks elsewhere.</p>
       <section class="panel"><div class="table-wrap flat"><table class="data" id="runners"><thead><tr><th>Runner</th><th>Status</th><th>Health</th><th class="num">Slots in use</th><th>Tags</th><th></th></tr></thead>
         <tbody>${d.runners.map(row).join('')}</tbody></table></div></section>
       <section class="panel"><h2>Add a worker</h2><p class="muted" style="margin-top:0">Creates a join token that works once, for 24 hours. Start the worker with it; the worker then gets its own credentials.</p>
@@ -2122,6 +2123,10 @@
           <div class="field"><label>Tags (comma separated)</label><input name="tags" placeholder="sale, india"></div>
           <div class="field"><label>&nbsp;</label><button class="btn" type="submit">Create join token</button></div></form>
         <p class="error-msg" id="rjoin-err" role="alert"></p><div id="rjoin-out"></div></section></div>`;
+    ctx.main.querySelectorAll('[data-remove]').forEach((b) => (b.onclick = async () => {
+      if (!(await confirmDialog({ title: `Remove ${b.dataset.rname}?`, body: 'Its credentials stop working at once and its unfinished checks move to another runner. To use the machine again, join it with a new token.', confirm: 'Remove runner', danger: true }))) return;
+      try { await api(`/api/admin/runners/${b.dataset.remove}/remove`, { method: 'POST' }); toast('Runner removed'); adminRunners(ctx, head); } catch (ex) { toast(ex.message, 'error'); }
+    }));
     ctx.main.querySelectorAll('[data-runner]').forEach((b) => (b.onclick = async () => {
       try { await api(`/api/admin/runners/${b.dataset.runner}`, { method: 'PATCH', body: { status: b.dataset.status } }); toast('Runner updated'); adminRunners(ctx, head); } catch (ex) { toast(ex.message, 'error'); }
     }));
