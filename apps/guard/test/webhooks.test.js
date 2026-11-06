@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import dns from 'node:dns/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
@@ -100,6 +101,11 @@ describe('Webhook delivery', () => {
     await assert.rejects(w.checkWebhookUrl('https://user:pw@hooks.example.com/x'), /user name and password/);
     await assert.rejects(w.checkWebhookUrl('https://10.0.0.5/hook'), /public addresses/);
     await assert.rejects(w.checkWebhookUrl('https://127.0.0.1:8080/hook'), /public addresses/);
+    // IPv6 forms of internal addresses: IPv4-mapped (both spellings), unspecified, loopback.
+    for (const a of ['[::ffff:127.0.0.1]', '[::ffff:7f00:1]', '[::ffff:10.0.0.5]', '[::]', '[::1]']) {
+      await assert.rejects(w.checkWebhookUrl(`https://${a}/hook`), /public addresses/, a);
+      await assert.rejects(w.addressFor(a), (e) => e.private === true, a);
+    }
     await assert.rejects(w.checkWebhookUrl(`https://x.example/${'a'.repeat(600)}`), /too long/);
     process.env.ALLOW_LOCAL_TARGETS = '1';
     assert.equal(await w.checkWebhookUrl(` ${rcv.url}/hook `), `${rcv.url}/hook`);
@@ -150,6 +156,55 @@ describe('Webhook delivery', () => {
     assert.equal(rcv.got.filter((x) => x.path === '/elsewhere').length, 0, 'the redirect was not followed');
     assert.equal(rows().at(-1).status, 'failed');
     assert.equal(await w.deliver({ ...store(), webhook_json: null }, { event: 'test', subject: 'x', text: 'x' }), null, 'no webhook, nothing sent');
+  });
+
+  it('each attempt connects to the exact address it checked (no DNS rebinding)', async (t) => {
+    delete process.env.ALLOW_LOCAL_TARGETS;
+    const port = new URL(rcv.url).port;
+    const realLookup = dns.lookup;
+    const calls = [];
+    // A fake DNS: pinned.test is the receiver (127.0.0.1, treated as public for this test); rebind.test answers
+    // with a public address twice, then with 127.0.0.1, the way a rebinding attacker's DNS would.
+    dns.lookup = async (host, opts) => {
+      calls.push(host);
+      if (host === 'pinned.test') return [{ address: '127.0.0.1', family: 4 }];
+      if (host === 'rebind.test') return [{ address: calls.filter((h) => h === 'rebind.test').length <= 2 ? '93.184.215.14' : '127.0.0.1', family: 4 }];
+      return realLookup(host, opts);
+    };
+    process.env.EGRESS_TEST_ALLOW = 'pinned.test';
+    try {
+      // The request goes to the checked address: no other DNS lookup happens, and the Host stays the name.
+      setHook(storeId, `http://pinned.test:${port}/pinned`);
+      rcv.got.length = 0;
+      rcv.set(() => 200);
+      calls.length = 0;
+      const ok = await w.deliver(store(), { event: 'test', subject: 'x', text: 'x' }, { retry: false });
+      assert.equal(ok.ok, true, ok.error || '');
+      assert.deepEqual(calls, ['pinned.test'], 'one lookup per attempt');
+      assert.equal(rcv.got.length, 1);
+      assert.equal(rcv.got[0].headers.host, `pinned.test:${port}`);
+
+      // Rebinding: the address passes the check when saved (public answer)…
+      calls.length = 0;
+      assert.equal(await w.checkWebhookUrl(`https://rebind.test:${port}/x`), `https://rebind.test:${port}/x`);
+      setHook(storeId, `http://rebind.test:${port}/rebind`);
+      rcv.got.length = 0;
+      // …the attempt resolves once more (still public) and connects only there, so the later 127.0.0.1 answer is never used.
+      const first = await w.deliver(store(), { event: 'test', subject: 'x', text: 'x' }, { retry: false });
+      assert.equal(first.ok, false);
+      assert.equal(calls.length, 2, 'the check and one lookup for the attempt, nothing more');
+      assert.equal(rcv.got.length, 0, 'nothing reached the internal address');
+      // The next attempt sees the private answer and stops for good.
+      const next = await w.deliver(store(), { event: 'test', subject: 'x', text: 'x' });
+      assert.deepEqual([next.ok, next.retrying], [false, false]);
+      assert.match(next.error, /private network/);
+      assert.equal(rcv.got.length, 0);
+      note(t, `pinned.test → 127.0.0.1: delivered with Host pinned.test after one lookup. rebind.test (public, public, then 127.0.0.1): first attempt went only to the public address (${first.error}); next attempt refused: ${next.error}. Receiver got nothing.`);
+    } finally {
+      dns.lookup = realLookup;
+      delete process.env.EGRESS_TEST_ALLOW;
+      process.env.ALLOW_LOCAL_TARGETS = '1';
+    }
   });
 
   it('alerts: one delivery when a check breaks, none while it stays broken, one when fixed; not on plans without chat alerts', async (t) => {
