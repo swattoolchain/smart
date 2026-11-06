@@ -205,6 +205,9 @@ async function prepare(job) {
     // Price rules the owner set, as many as the plan allows.
     // The owner's own tests (Your tests), as many as the plan allows; never on publish checks.
     customTests: store && !release && isOn('custom_tests') ? testsForRun(store.id, kind, entitlements(store.user_id)) : [],
+    // Prices by country (Test suite → Price rules): the store's markets and the owner's settings.
+    markets: cfg.markets || [],
+    marketPrices: isOn('price_checks') ? cfg.marketPrices || null : null,
     // A/B test versions the owner listed (Test suite → A/B tests).
     abVariants: isOn('ab_tests') ? cfg.abVariants || [] : [],
     // Price rules, quantity breaks, product options and offers the owner set, together as many as the plan allows (rules first).

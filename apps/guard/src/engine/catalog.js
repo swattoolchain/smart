@@ -3,6 +3,7 @@ import { cleanPriceRules, cleanPriceTiers } from './pricing.js';
 import { cleanVariants } from './abtest.js';
 import { cleanPriceConfigs } from './configurator.js';
 import { cleanOffers } from './offers.js';
+import { cleanMarketPrices } from './market-prices.js';
 /**
  * The test suite catalog: every check belongs to one group, and merchants switch groups on or off per store.
  * `run`: 'journeys' groups run on every scheduled journey test; 'full' groups run on the daily full check.
@@ -20,7 +21,7 @@ export const GROUPS = [
   { key: 'journey.checkout', label: 'Cart and checkout', run: 'journeys', area: 'Shopping journey',
     description: 'The cart lists the item and checkout opens. Stops before payment, then empties the cart.', checks: ['fn.cart', 'fn.checkout'] },
   { key: 'pricing.journey', label: 'Prices stay the same', run: 'journeys', area: 'Shopping journey',
-    description: 'The price on the product page is what the cart and checkout ask for. Also checks your own price rules, like “3 of this product cost 1,299 each”. Add rules under Test suite → Price rules.', checks: ['fn.price', 'fn.price.'] },
+    description: 'The price on the product page is what the cart and checkout ask for. Also checks your own price rules, like “3 of this product cost 1,299 each”, and (on full checks) prices in each country you sell in. Add rules under Test suite → Price rules.', checks: ['fn.price', 'fn.price.'] },
   { key: 'sale.discount', label: 'Discount codes', run: 'full', area: 'Shopping journey',
     description: 'Your sale codes and automatic offers (bundles, buy X get Y, spend and save, free gifts) tried in a real cart: the price really drops, by the amount you expect, and not below the offer\'s threshold. Nothing is bought; the cart is emptied. Add codes under Test suite → Discount codes, offers under Test suite → Price rules.', checks: ['fn.discount.', 'fn.offer.'] },
   { key: 'security.scripts', label: 'Script watch', run: 'journeys', area: 'Security',
@@ -130,6 +131,7 @@ export function normalizeConfig(input = {}, base = {}) {
   if (input.priceTiers !== undefined) cfg.priceTiers = cleanPriceTiers(input.priceTiers);
   if (input.priceConfigs !== undefined) cfg.priceConfigs = cleanPriceConfigs(input.priceConfigs);
   if (input.priceOffers !== undefined) cfg.priceOffers = cleanOffers(input.priceOffers);
+  if (input.marketPrices !== undefined) cfg.marketPrices = cleanMarketPrices(input.marketPrices);
   // Onboarding progress: the welcome flow and the first-report tour.
   if (typeof input.onboarded === 'boolean') cfg.onboarded = input.onboarded;
   if (typeof input.toured === 'boolean') cfg.toured = input.toured;

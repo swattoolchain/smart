@@ -19,6 +19,7 @@ import { runPageTiers } from './page-tiers.js';
 import { runAbTests } from './abtest.js';
 import { runPriceConfigs, runAutoOptions } from './configurator.js';
 import { runOffers } from './offers.js';
+import { runMarketPrices } from './market-prices.js';
 import { reviewScreens } from './visual-ai.js';
 import { watchScripts, scriptChecks, pageKind } from './scripts.js';
 import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js';
@@ -46,7 +47,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], priceTiers = [], priceConfigs = [], priceOffers = [], abVariants = [], customTests = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], priceTiers = [], priceConfigs = [], priceOffers = [], markets = [], marketPrices = null, abVariants = [], customTests = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -251,6 +252,10 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind === 'full' && storeId && !preview && !release && on('security.domain')) {
         phase('domain');
         await runDomain({ rec, request: ctx.request, origin, storeId }).catch((e) => rec.add(check('sec.domain.dns', 'security', 'Domain and email records unchanged', 'skip', { severity: 'minor', detail: shortErr(e) })));
+      }
+      // Prices by country switch the storefront's country, so they run after the other page checks.
+      if (kind === 'full' && on('pricing.journey') && marketPrices?.enabled && markets.length && info.isShopify) {
+        await runMarketPrices({ page, rec, origin, markets, settings: marketPrices, product: info.products[0]?.handle });
       }
       if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
         phase('ai');

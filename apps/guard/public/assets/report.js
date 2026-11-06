@@ -30,6 +30,14 @@
     return `<table class="price-trail offer-table"><thead><tr><th>Cart we tried</th><th>Should get</th><th>Cart gave</th><th class="num">Cart total</th><th></th></tr></thead><tbody>${t.rows.map((r) => `<tr class="${r.state === 'missing' ? 'up' : r.state === 'over' || r.state === 'leak' ? 'down' : ''}"><td>${esc(r.cart)}${r.role === 'below' ? ' <span class="muted">(just below the offer)</span>' : ''}</td><td>${esc(r.expect)}</td><td>${r.got == null ? '<span class="muted">–</span>' : esc(r.got)}</td><td class="num">${r.total == null ? '<span class="muted">–</span>' : esc(r.total)}</td><td class="muted">${mark[r.state] || ''}</td></tr>`).join('')}${t.checkout ? `<tr class="${t.checkout.higher ? 'up' : ''}"><td>Checkout subtotal</td><td><span class="muted">Cart</span> ${esc(t.checkout.cart)}</td><td>${esc(t.checkout.money)}</td><td></td><td class="muted">${t.checkout.higher ? '<b>Higher</b>' : 'Same as the cart'}</td></tr>` : ''}</tbody></table>`;
   }
   window.offerTableHtml = offerTableHtml;
+  // Prices by country: what a shopper in each country saw on the product page, in the cart and at checkout.
+  function marketTableHtml(t) {
+    if (!t || !t.rows || !t.rows.length) return '';
+    const dash = '<span class="muted">–</span>';
+    const mark = { fail: '<b>Problem</b>', warn: '<b>Check</b>', switch: 'Not checked', ok: '' };
+    return `<table class="price-trail market-table"><thead><tr><th>Country</th><th class="num">Product page</th><th class="num">Cart</th><th class="num">Checkout</th><th class="num">Your price converted</th><th></th></tr></thead><tbody>${t.rows.map((r) => `<tr class="${r.state === 'fail' ? 'up' : r.state === 'warn' ? 'down' : ''}"><td>${esc(r.country)}${r.currency ? ` <span class="muted">${esc(r.currency)}</span>` : ''}</td><td class="num">${r.page ? esc(r.page) : dash}</td><td class="num">${r.cart ? esc(r.cart) : dash}</td><td class="num">${r.checkout ? esc(r.checkout) : dash}</td><td class="num">${r.converted ? esc(r.converted) : dash}</td><td class="muted">${mark[r.state] || ''}${r.notes ? `<div class="cell-sub">${esc(r.notes)}</div>` : ''}</td></tr>`).join('')}</tbody></table>`;
+  }
+  window.marketTableHtml = marketTableHtml;
 
   function checkHtml(c) {
     const shot = c.evidence && c.evidence.screenshot;
@@ -49,6 +57,7 @@
       ${c.evidence && c.evidence.priceTrail ? priceTrailHtml(c.evidence.priceTrail) : ''}
       ${c.evidence && c.evidence.tierTable ? tierTableHtml(c.evidence.tierTable) : ''}
       ${c.evidence && c.evidence.offerTable ? offerTableHtml(c.evidence.offerTable) : ''}
+      ${c.evidence && c.evidence.marketTable ? marketTableHtml(c.evidence.marketTable) : ''}
       ${errors ? `<p class="fix">${errors.map((e) => `<code>${esc(e.message)}</code>`).join('<br>')}</p>` : ''}
       ${variants ? `<ul class="ai-findings variant-list">${variants.map((x) => `<li><b>${esc(x.name)}</b> <span class="muted">(${x.problem === 'unpublished' ? 'cart can\'t find it' : x.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${x.message ? `<br><span class="fix-inline">Store said: ${esc(x.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}
       ${video ? (videoGone ? '<p class="fix video-gone">The video replay was deleted after 7 days.</p>' : `<details class="video-replay"><summary>Watch the replay</summary><video controls preload="metadata" playsinline src="${esc(video)}"></video><span class="muted">Kept until ${esc(new Date(c.evidence.videoUntil).toLocaleDateString())}</span></details>`) : ''}

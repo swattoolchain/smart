@@ -1221,3 +1221,6 @@ pre.yt-code { background: #f6f7fa; border: 1px solid var(--line); border-radius:
 @media (max-width: 640px) { .code-row.config-rule { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; } .code-row.config-rule .field:nth-child(1), .code-row.config-rule .field:nth-child(3) { grid-column: 1 / -1; } }
 .code-row.offer-rule { grid-template-columns: 150px minmax(0, 1.6fr) minmax(0, .7fr) minmax(0, 1.1fr) auto; }
 @media (max-width: 640px) { .code-row.offer-rule { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; } .code-row.offer-rule .field:nth-child(2) { grid-column: 1 / -1; } }
+.code-row.market-rule { grid-template-columns: minmax(0, 1.5fr) minmax(0, .8fr) minmax(0, 1fr) 120px; }
+@media (max-width: 640px) { .code-row.market-rule { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+#pmarkets .check-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; font-size: 14px; }
