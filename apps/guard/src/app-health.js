@@ -6,6 +6,7 @@
  */
 import { db } from './db.js';
 import { appFor } from './engine/apps.js';
+import { isOn } from './features.js';
 
 const WINDOW = 30; // checks looked at for "first seen" and "last code change"
 // A slow 4G phone connection (the speed test baseline Lighthouse uses): 1.6 Mbit/s ≈ 200 KB a second.
@@ -60,13 +61,48 @@ const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
 const updatedFiles = (x, y) => [...x.hashes].filter(([k, h]) => y.hashes.has(k) && y.hashes.get(k).hash !== h.hash).map(([, h]) => h.url);
 const codeDiffers = (x, y) => !sameSet(x.keys, y.keys) || updatedFiles(x, y).length > 0;
 
+/**
+ * A/B tests (T109): the tools found on the store, and for each test version whether it was listed by the owner or
+ * found by Tharam, and how it did in the latest check that shopped it. Null when the switch is off or no check has
+ * looked for A/B tests yet.
+ */
+export function abHealth(storeId) {
+  if (!isOn('ab_tests')) return null;
+  const rows = db.prepare(`SELECT id, finished_at, created_at, result_json FROM runs
+    WHERE store_id = ? AND status = 'done' AND (trigger IS NULL OR trigger != 'release') AND result_json LIKE '%"abTests":{%'
+    ORDER BY id DESC LIMIT 20`).all(storeId);
+  let latest = null;
+  const last = new Map(); // version name → its newest result
+  for (const r of rows) {
+    let ab;
+    try { ab = JSON.parse(r.result_json).abTests; } catch { continue; }
+    if (!ab || !Array.isArray(ab.variants)) continue;
+    const at = iso(r.finished_at || r.created_at);
+    if (!latest) latest = { runId: r.id, at, tools: ab.tools || [], variants: ab.variants };
+    for (const v of ab.variants) if (!last.has(v.name)) last.set(v.name, { ...v, at, runId: r.id });
+  }
+  if (!latest) return null;
+  const now = new Set(latest.variants.map((v) => v.name));
+  const versions = latest.variants.map((v) => ({ name: v.name, source: v.auto ? 'found' : 'listed', tool: v.by || null, ok: !!v.ok, problems: v.problems || [], at: latest.at }));
+  // Versions that were checked before but are not in the latest check (the test ended or the list changed).
+  for (const [name, v] of last) if (!now.has(name)) versions.push({ name, source: v.auto ? 'found' : 'listed', tool: v.by || null, ok: !!v.ok, problems: v.problems || [], at: v.at, stale: true });
+  return {
+    runId: latest.runId, checkedAt: latest.at, tools: latest.tools,
+    listed: versions.filter((v) => v.source === 'listed' && !v.stale).length,
+    found: versions.filter((v) => v.source === 'found' && !v.stale).length,
+    failing: versions.filter((v) => !v.ok && !v.stale).length,
+    versions,
+  };
+}
+
 export function appHealth(store) {
   let storeHost;
   try { storeHost = new URL(store.url).host; } catch { storeHost = ''; }
   const runs = recentRuns(store.id);
   const visits = db.prepare("SELECT COUNT(*) n FROM runs WHERE store_id = ? AND created_at >= datetime('now', '-7 days')").get(store.id).n;
   const tharam = { scripts: 0, sites: [], bytes: 0, visits7d: visits };
-  if (!runs.length) return { runId: null, checkedAt: null, apps: [], tharam, totals: { apps: 0, errors: 0, phoneBytes: 0 }, phone: null, compared: false };
+  const abTests = abHealth(store.id);
+  if (!runs.length) return { runId: null, checkedAt: null, apps: [], tharam, totals: { apps: 0, errors: 0, phoneBytes: 0 }, phone: null, compared: false, abTests };
 
   const latest = runs[0];
   const host = storeHostOf(latest, storeHost);
@@ -178,6 +214,7 @@ export function appHealth(store) {
     comparedAt: runs[1]?.at || null,
     phone: phoneRun ? { runId: phoneRun.id, at: phoneRun.at, pages: phoneRun.scripts.phone.pages } : null,
     apps,
+    abTests,
     unattributedErrors: unattributed,
     tharam,
     totals: {

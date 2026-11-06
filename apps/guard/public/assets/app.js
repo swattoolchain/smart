@@ -1882,6 +1882,18 @@
 
   // ---------- App health ----------
   const kb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : b ? `${b} bytes` : '–');
+  // A/B tests on App health (T109): tools found, each version checked (listed by you or found by us) and its last result.
+  const abPanel = (ab) => {
+    if (!ab) return '';
+    const vrow = (v) => `<tr class="ab-row ${v.ok ? 'ok' : 'bad'}" data-version="${esc(v.name)}">
+      <td><span class="cell-main">${esc(v.name)}</span>${v.tool ? `<div class="cell-sub">${esc(v.tool)}</div>` : ''}</td>
+      <td>${v.source === 'found' ? 'Found by Tharam' : 'Listed by you'}</td>
+      <td>${v.stale ? '<span class="pill">Not in the latest check</span>' : `<span class="pill ${v.ok ? 'healthy' : 'critical'}">${v.ok ? 'Can sell' : 'Broken'}</span>`}${v.problems.length ? `<div class="cell-sub">${v.problems.map(esc).join('; ')}</div>` : ''}</td>
+      <td>${time(v.at)}</td></tr>`;
+    return `<section class="panel ab-panel"><h2>A/B tests</h2>
+      <p>${ab.tools.length ? `We found ${esc(ab.tools.join(' and '))} on your store.` : 'We did not find an A/B tool on the pages we opened.'} ${ab.versions.length ? `We shopped ${plural(ab.listed + ab.found, 'test version')} (${ab.listed} listed by you, ${ab.found} found by us)${ab.failing ? `, and ${ab.failing === 1 ? 'one cannot' : `${ab.failing} cannot`} sell.` : ', and every one can sell.'}` : 'No test versions were checked yet. List them under Test suite → A/B tests.'}</p>
+      ${ab.versions.length ? `<div class="table-wrap flat"><table class="data ab-table"><thead><tr><th>Test version</th><th>Where it came from</th><th>Last result</th><th>Checked</th></tr></thead><tbody>${ab.versions.map(vrow).join('')}</tbody></table></div>` : ''}</section>`;
+  };
   STORE_PAGES.apps = async (ctx, s) => {
     const d = await api(`/api/stores/${s.id}/apps`);
     if (!ctx.alive()) return;
@@ -1934,6 +1946,7 @@
       <section class="panel"><div class="table-wrap flat"><table class="data apps-table"><thead><tr><th>App or service</th><th>Status</th><th>Loads on</th><th class="num">Phone cost per page</th><th class="num">Errors</th><th>Last code change</th><th>Talks to</th></tr></thead>
         <tbody>${d.apps.map(row).join('')}</tbody></table></div>
         ${d.unattributedErrors ? `<p class="muted" style="margin:10px 4px 0">${plural(d.unattributedErrors, 'script error')} could not be traced to one app. See the latest report's checks.</p>` : ''}</section>
+      ${abPanel(d.abTests)}
       ${tharamRow}</div>`;
   };
 

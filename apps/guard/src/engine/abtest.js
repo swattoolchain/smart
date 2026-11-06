@@ -357,7 +357,7 @@ export async function runAbTests({ page, rec, origin, info, password, variants =
       evidence: r.problems.length ? { screenshot: r.screenshot, variant: v.value, via: v.kind, found: v.auto || null } : null,
       fix: r.problems.length ? `Pause version “${v.name}” in your A/B app until it is fixed, or end the test. Then check the theme or price changes that version makes.` : '',
     }));
-    results.push({ name: v.name, ok: !r.problems.length, auto: !!v.auto });
+    results.push({ name: v.name, ok: !r.problems.length, auto: !!v.auto, by: v.auto || null, problems: r.problems.map((p) => String(p.text).slice(0, 200)).slice(0, 4) });
   }
   return { tools, variants: results };
 }
