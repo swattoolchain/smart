@@ -26,7 +26,9 @@
  *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
  *   checkoutprice (checkout subtotal ₹200 more than the cart), protection (a shipping-protection app adds a
  *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price),
- *   tiers (with MOCK_EXTRA=tiers: the 10+ quantity break stopped working)
+ *   tiers (with MOCK_EXTRA=tiers: the 10+ quantity break stopped working),
+ *   autodiscount / autolow / bxgy / bundle / gift (with MOCK_EXTRA=offers: the spend-and-save offer stopped
+ *   working / is given from ₹3,000 instead of ₹5,000 / buy-2-get-1 stopped / the bundle stopped / the gift is charged)
  * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out), slowcart (each
  * add to cart takes 300 ms, like a store with a slow bundle or upsell app).
  * Extras (env MOCK_EXTRA) include offsite: links, page text and a script button that try to lead a shopper off the store
@@ -163,6 +165,7 @@ const FEATURE_HTML = `<p class="cod-note">Cash on delivery available</p><button 
 <button type="button" id="wish" onclick="this.insertAdjacentHTML('afterend','<span class=wish-done>Added to wishlist</span>')">Add to wishlist</button>
 <section class="reviews"><div class="review">Lovely fabric. ★★★★★</div><div class="review">Fits well. ★★★★</div></section><a class="wa" href="https://wa.me/919999999999">Chat on WhatsApp</a>`;
 const NEWSLETTER_HTML = `<form class="newsletter" onsubmit="event.preventDefault();this.insertAdjacentHTML('afterend','<p class=nl-done>Thanks for subscribing</p>')"><label for="nl">Get sale news</label> <input id="nl" type="email" name="contact[email]"> <button type="submit">Subscribe</button></form>`;
+const OFFERS = EXTRA.split(',').includes('offers');
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -171,7 +174,7 @@ const products = [
   { id: 2, title: 'Handwoven Silk Saree', handle: 'silk-saree', product_type: 'Saree', vendor: 'Tharam', tags: 'silk', body_html: EXTRA.includes('placeholder') ? '<p>Lorem ipsum dolor sit amet, TBD description here.</p>' : '<p>Traditional handwoven silk saree with zari border and intricate detailing.</p>', images: [{ src: '/img/s.png' }], variants: [{ id: 201, title: 'Default Title', sku: 'SAR-1', price: '8999.00', available: true }] },
   CLEAN
     ? { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '<p>Set of four hand-cast brass diyas for Diwali and everyday puja.</p>', images: [{ src: '/img/d.png' }], variants: [{ id: 301, title: 'Default Title', sku: 'DIY-4', price: '799.00', available: true }] }
-    : { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: '0.00', available: true }] },
+    : { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: OFFERS ? '499.00' : '0.00', available: true }] },
 ];
 if (EXTRA.includes('manyvariants')) products.push({ id: 4, title: 'Block Print Cushion Cover', handle: 'cushion-cover', product_type: 'Decor', vendor: 'Tharam', tags: 'cotton', body_html: '<p>Hand block printed cotton cushion cover, 16 by 16 inches.</p>', images: [{ src: '/img/c.png' }],
   variants: Array.from({ length: 40 }, (_, i) => ({ id: 401 + i, title: `Colour ${i + 1}`, sku: `CUS-${i + 1}`, price: '799.00', available: i !== 39 })) });
@@ -242,8 +245,33 @@ function tierPct(i) {
   if (i.quantity >= 10) return B.has('tiers') ? 10 : 20;
   return i.quantity >= 5 ? 10 : 0;
 }
+// MOCK_EXTRA=offers: automatic offers like Shopify automatic discounts or offer apps.
+//   Buy 2 Large kurtas, get 1 free (line discount); any kurta + the silk saree is a bundle, ₹500 off the saree;
+//   the Brass Diya (₹499) is free in a cart of ₹3,000 or more (not counting the diya); spend ₹5,000 or more
+//   (after line discounts) and get 10% off the order, which does not combine with the bundle.
+function offerLineOff(i, items) {
+  if (!OFFERS) return [0, null];
+  const unit = Math.round(Number(i.price) * 100);
+  if (i.id === 103 && !B.has('bxgy')) { const free = Math.floor(i.quantity / 3); if (free) return [free * unit, 'Buy 2, get 1 free']; }
+  if (i.id === 201 && !B.has('bundle') && items.some((x) => [101, 102, 103].includes(x.id))) return [50000, 'Kurta + saree bundle'];
+  if (i.id === 301) {
+    const others = items.filter((x) => x.id !== 301).reduce((s, x) => s + x.quantity * Math.round(Number(x.price) * 100), 0);
+    if (others >= 300000 && !B.has('gift')) return [unit, 'Free diya over ₹3,000'];
+  }
+  return [0, null];
+}
 function cartJson(items, country = 'IN') {
-  const lines = items.map((i) => { const unit = Math.round(Number(i.price) * 100); const full = unit * i.quantity; const off = Math.round((full * tierPct(i)) / 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: Math.round((full - off) / i.quantity), line_price: full - off, original_line_price: full, final_line_price: full - off, line_level_discount_allocations: off ? [{ amount: off, discount_application: { type: 'automatic', title: 'Buy more, save more' } }] : [] }; });
+  const lines = items.map((i) => {
+    const unit = Math.round(Number(i.price) * 100);
+    const full = unit * i.quantity;
+    // Line discounts: the volume-discount app (MOCK_EXTRA=tiers) and the automatic offers (MOCK_EXTRA=offers).
+    const tierOff = Math.round((full * tierPct(i)) / 100);
+    const [offerOff, title] = offerLineOff(i, items);
+    const off = tierOff + offerOff;
+    const allocations = [...(tierOff ? [{ amount: tierOff, discount_application: { type: 'automatic', title: 'Buy more, save more' } }] : []), ...(offerOff ? [{ amount: offerOff, discount_application: { type: 'automatic', title } }] : [])];
+    return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: Math.round((full - off) / i.quantity), line_price: full - off, original_line_price: full, final_line_price: full - off, line_level_discount_allocations: allocations };
+  });
+  const before = lines.reduce((s, i) => s + i.original_line_price, 0);
   const original = lines.reduce((s, i) => s + i.final_line_price, 0);
   const code = items.discount;
   let rule = code && !(B.has('discount') && code === 'BF20') && !(saleEnded && code === 'BF20') ? CODES[code] : null;
@@ -253,13 +281,17 @@ function cartJson(items, country = 'IN') {
   if (rule && pct) rule = { ...rule, pct };
   const applicable = !!rule && original >= rule.min;
   const off = applicable ? Math.round((original * rule.pct) / 100) : 0;
+  const bundled = lines.some((l) => l.line_level_discount_allocations.some((d) => d.discount_application.title === 'Kurta + saree bundle'));
+  const spendMin = B.has('autolow') ? 300000 : 500000;
+  const autoOff = OFFERS && !off && !bundled && !B.has('autodiscount') && original >= spendMin ? Math.round((original * 10) / 100) : 0;
+  const apps = [...(off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : []), ...(autoOff ? [{ type: 'automatic', title: 'Spend 5,000, save 10%', total_allocated_amount: autoOff }] : [])];
   return {
     item_count: items.reduce((s, i) => s + i.quantity, 0),
-    original_total_price: original,
-    total_discount: off,
-    total_price: original - off,
+    original_total_price: before,
+    total_discount: before - original + off + autoOff,
+    total_price: original - off - autoOff,
     discount_codes: code ? [{ code, applicable }] : [],
-    cart_level_discount_applications: off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : [],
+    cart_level_discount_applications: apps,
     items_subtotal_price: original,
     currency: CURRENCY[country] || 'INR',
     // Like Shopify's cart.js: prices in paise, one entry per line.
