@@ -47,6 +47,16 @@ describe('Feature switches', () => {
     note(t, 'laws off by default: not in /api/me features, not in the catalog, skipped by the run even when asked for');
   });
 
+  it('every extra starts off, so a fresh install shows the simple product', async (t) => {
+    const list = (await founder.get('/api/admin/features')).json.features;
+    assert.ok(list.length >= 20, `all extras have a switch (${list.length})`);
+    const on = list.filter((f) => !f.core && f.on).map((f) => f.key);
+    assert.deepEqual(on, [], 'no extra is on by default');
+    const me = (await owner.get('/api/me')).json.features;
+    assert.deepEqual(me.filter((k) => !list.find((f) => f.key === k)?.core), []);
+    note(t, `${list.length} switches, all extras off by default: ${list.map((f) => f.key).join(', ')}`);
+  });
+
   it('only founders can see or change the switches', async (t) => {
     assert.equal((await owner.get('/api/admin/features')).status, 403);
     assert.equal((await owner.patch('/api/admin/features/laws', { on: true })).status, 403);
