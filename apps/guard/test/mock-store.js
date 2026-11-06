@@ -2,7 +2,7 @@
  * A small fake Shopify storefront for testing Store Guard offline.
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
- * robots.txt (env MOCK_EXTRA): robots-shopify, robots-block, robots-slow. GET /__requests lists the requests received.
+ * robots.txt (env MOCK_EXTRA): robots-shopify, robots-block, robots-slow, robots-crawl60. GET /__requests lists the requests received.
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -105,6 +105,7 @@ const server = http.createServer(async (req, res) => {
     if (EXTRA.includes('robots-shopify')) return send(res, 200, 'User-agent: *\nDisallow: /admin\nDisallow: /cart\nDisallow: /orders\nDisallow: /checkouts/\nDisallow: /checkout\nDisallow: /account\nDisallow: /search\nAllow: /products/*.js\n\nSitemap: http://localhost:' + PORT + '/sitemap.xml\n', 'text/plain');
     if (EXTRA.includes('robots-block')) return send(res, 200, 'User-agent: *\nAllow: /\n\nUser-agent: TharamBot\nDisallow: /\n', 'text/plain');
     if (EXTRA.includes('robots-slow')) return send(res, 200, 'User-agent: *\nCrawl-delay: 2\n', 'text/plain');
+    if (EXTRA.includes('robots-crawl60')) return send(res, 200, 'User-agent: *\nCrawl-delay: 60\n', 'text/plain');
     return send(res, 404, 'Not found', 'text/plain');
   }
   if (B.has('password') && !/storefront_digest=ok/.test(req.headers.cookie || '') && !p.startsWith('/password')) {
