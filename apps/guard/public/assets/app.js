@@ -5,7 +5,9 @@
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = window.escHtml;
 
-  const S = { me: null, admin: false, stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
+  const S = { me: null, admin: false, features: new Set(), stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
+  /** Whether a feature is switched on in the founder console (the server enforces it too). */
+  const feat = (k) => S.features.has(k);
 
   // ---------- Helpers ----------
   // Inside Shopify admin (the Shopify app) there are no cookies: each request carries a fresh Shopify session token.
@@ -660,7 +662,7 @@
         tile(`${base}/reports/${sc?.speed?.run || lastDone.id}`, 'Homepage on phones', sp != null ? `<span class="${sp <= 2.5 ? 'good' : sp <= 4 ? 'mid' : 'bad'}">${speed < 100 ? '&lt;0.1' : sp} s</span>` : '–', sp == null ? 'After a full check' : sp <= 2.5 ? 'Fast' : sp <= 4 ? 'A little slow' : 'Slow: shoppers may leave'),
         tile(`${base}/catalog`, 'Products', cat ? `<span class="${cat.withIssues ? 'mid' : 'good'}">${cat.withIssues}</span>` : '–', cat ? (cat.withIssues ? `of ${cat.products} need fixing` : `All ${cat.products} look right`) : 'After a full check'),
         tile(`${base}/alerts`, 'Time to fix', durTxt(t?.medianMinutes), t?.open ? `<span class="t-fail">${plural(t.open, 'problem')} still open</span>` : t?.incidents ? `typical, ${plural(t.incidents, 'incident')}` : 'No buying problems'),
-        rules?.markets?.length ? tile(`${base}/reports/${rules.run?.id || lastDone.id}`, 'Laws where you sell', (() => { const ms = rules.markets.filter((m) => !m.pending); const met = ms.reduce((a, m) => a + m.met, 0), tot = ms.reduce((a, m) => a + m.total, 0); return tot ? `<span class="${met === tot ? 'good' : 'mid'}">${met}/${tot}</span>` : '–'; })(), rules.markets.map((m) => `${esc(m.label)}${m.pending ? '' : ` ${m.met}/${m.total}`}`).join(' · ') + ' rules met') : '',
+        feat('laws') && rules?.markets?.length ? tile(`${base}/reports/${rules.run?.id || lastDone.id}`, 'Laws where you sell', (() => { const ms = rules.markets.filter((m) => !m.pending); const met = ms.reduce((a, m) => a + m.met, 0), tot = ms.reduce((a, m) => a + m.total, 0); return tot ? `<span class="${met === tot ? 'good' : 'mid'}">${met}/${tot}</span>` : '–'; })(), rules.markets.map((m) => `${esc(m.label)}${m.pending ? '' : ` ${m.met}/${m.total}`}`).join(' · ') + ' rules met') : '',
         tile(`${base}/publish`, 'Changes checked · 30 days', String(pb?.checked ?? 0), pb?.checked ? (pb.caught ? `${plural(pb.caught, 'risky change')} caught` : 'All safe to publish') : 'Check a design before publishing'),
       ].filter(Boolean).join('');
       body += `<section class="kpis" data-tour="scorecard">${tiles}</section>`;
@@ -1151,9 +1153,9 @@
       <div class="form-section"><div><h3>Store details</h3><p class="explain">The name is how this store appears in Tharam and in alerts.</p></div>
         <div class="controls"><div class="field"><label for="nm">Store name</label><input id="nm" name="name" value="${esc(s.name || '')}" required maxlength="80"></div>
         <div class="field"><label for="ad">Store address</label><input id="ad" value="${esc(s.url)}" readonly><p class="hint">To test a different address, add it as a new store.</p></div></div></div>
-      <div class="form-section"><div><h3>Where you sell</h3><p class="explain">We add the checks for the laws in these countries, such as the German legal notice, EU cookie consent and US accessibility. Checks only; not legal advice.</p></div>
+      ${feat('laws') ? `<div class="form-section"><div><h3>Where you sell</h3><p class="explain">We add the checks for the laws in these countries, such as the German legal notice, EU cookie consent and US accessibility. Checks only; not legal advice.</p></div>
         <div class="controls"><div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${s.config.markets.includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div>
-          <p class="hint" id="mk-hint"></p></div></div>
+          <p class="hint" id="mk-hint"></p></div></div>` : ''}
       <div class="form-section"><div><h3>Sales <span class="muted" style="font-weight:400">(optional)</span></h3><p class="explain">Your average sales per day. We use it only to show how much revenue was at risk while customers couldn’t buy.</p></div>
         <div class="controls"><div class="inline-row"><div class="field" style="flex:1;margin:0"><label for="ds">Average daily sales</label><input id="ds" name="dailySales" type="number" min="0" step="1" inputmode="numeric" value="${esc(s.config.dailySales ?? '')}" placeholder="e.g. 50000"></div>
           <div class="field" style="width:120px;margin:0"><label for="cur">Currency</label><select id="cur" name="currency">${['', 'INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'].map((c) => `<option value="${c}" ${c === (s.config.currency || '') ? 'selected' : ''}>${c || 'Store’s'}</option>`).join('')}</select></div></div></div></div>
@@ -1167,7 +1169,7 @@
     const mark = savebar($('.main-inner', ctx.main), {
       onSave: async () => {
         const fd = new FormData(form);
-        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null, markets: fd.getAll('market') } };
+        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null, ...(feat('laws') ? { markets: fd.getAll('market') } : {}) } };
         if (fd.get('clearpw')) body.password = '';
         else if (fd.get('password')) body.password = fd.get('password');
         await api(`/api/stores/${s.id}`, { method: 'PATCH', body });
@@ -1179,6 +1181,7 @@
     form.addEventListener('input', mark);
     form.addEventListener('change', mark);
     const packs = () => {
+      if (!$('#mk-hint')) return;
       const sel = $$('input[name=market]:checked', form).map((i) => i.value);
       const on = S.catalog.groups.filter((g) => g.markets?.some((m) => sel.includes(m))).map((g) => g.label);
       $('#mk-hint').innerHTML = on.length ? `Adds to your full check: ${on.map(esc).join(' · ')}. <a href="#/s/${s.id}/suite">Test suite</a>` : sel.length ? 'No extra legal checks for these countries yet. Your other checks still run.' : '';
@@ -1721,8 +1724,8 @@
         ${f.locked ? `<div class="onb-block ${locked ? 'need' : 'ok'}"><h3>${locked ? `${icon('lock', 16)} Your store has a password` : `${icon('check', 16)} Password works`}</h3>
           ${locked ? `<p>Shoppers (and our test browser) need it to see your store. Find it in Shopify under <b>Online Store → Preferences → Password protection</b>.</p>
           <form id="pwf" class="inline-row" novalidate><input name="password" type="password" autocomplete="off" placeholder="Storefront password" aria-label="Storefront password" required><button class="btn secondary" type="submit">Check password</button></form><p class="error-msg" id="pw-err" role="alert"></p>` : '<p>We’ll use it only to open your store for testing, and never show it again.</p>'}</div>` : ''}
-        <div class="onb-block"><h3>Where do you sell?</h3><p>We add checks for the rules in these countries, like legal pages, cookie consent and accessibility.</p>
-          <div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${o.markets.includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div></div>
+        ${feat('laws') ? `<div class="onb-block"><h3>Where do you sell?</h3><p>We add checks for the rules in these countries, like legal pages, cookie consent and accessibility.</p>
+          <div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${o.markets.includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div></div>` : ''}
         ${f.catalog?.length ? `<div class="onb-block"><h3>Product used in tests</h3><p>Each test adds one to a fresh cart and goes to checkout, then empties the cart. Pick something usually in stock.</p>
           <select id="tp"><option value="">Choose automatically (recommended)</option>${f.catalog.map((p) => `<option value="${esc(p.handle)}" ${p.handle === o.testProduct ? 'selected' : ''}>${esc(p.title)}${p.variants > 1 ? ` (${p.variants} variants)` : ''}</option>`).join('')}</select></div>` : ''}`}`,
         `<button class="btn ghost" id="b">Back</button><button class="btn" id="n" ${looking || locked ? 'disabled' : ''}>Continue ${icon('arrow', 16)}</button>`);
@@ -2072,7 +2075,7 @@
   const METHODS = { bank: 'Bank transfer', upi: 'UPI', card: 'Card', razorpay: 'Razorpay', stripe: 'Stripe', shopify: 'Shopify billing', cash: 'Cash', other: 'Other' };
   const CURS = ['USD', 'EUR', 'INR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'];
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(v) === String(cur ?? '') ? 'selected' : ''}>${esc(l)}</option>`;
-  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed', 'store.sale': 'Sale mode' };
+  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed', 'store.sale': 'Sale mode', 'feature.change': 'Feature switched' };
   function auditText(a) {
     const d = a.detail_json ? JSON.parse(a.detail_json) : {};
     if (a.action === 'note') return esc(d.text);
@@ -2080,6 +2083,7 @@
     if (a.action === 'license.update') return Object.entries(d).map(([k, v]) => `${esc(k.replace('_', ' '))}: ${esc(v.before ?? '–')} → <b>${esc(v.after ?? '–')}</b>`).join(' · ');
     if (a.action === 'license.create') return `${esc(d.plan)}, ${d.seats} store${d.seats === 1 ? '' : 's'}${d.expires_at ? `, until ${esc(d.expires_at)}` : ''}`;
     if (a.action === 'store.sale') return `${esc(d.store)}: ${d.after ? `on until ${esc(d.after)}` : 'off'}`;
+    if (a.action === 'feature.change') return `${esc(d.label || d.key)}: <b>${d.after ? 'on' : 'off'}</b>`;
     if (a.action === 'setting.change') return `${esc(d.key)}: ${esc(d.before)} → <b>${esc(d.after)}</b>`;
     if (a.action.startsWith('plan.')) return esc(d.key);
     return '';
@@ -2090,13 +2094,14 @@
     if (!S.admin) { location.hash = '#/'; return; }
     const tab = ctx.r.a;
     const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder console</h1><div class="meta">Customers, plans and revenue · only visible to founders</div></div></div>`
-      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['leads', 'Leads and free checks']], tab);
+      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['features', 'Features'], ['leads', 'Leads and free checks']], tab);
     if (tab === 'customers' && ctx.r.b) return adminCustomer(ctx, head, ctx.r.b);
     if (tab === 'customers') return adminCustomers(ctx, head);
     if (tab === 'plans') return adminPlans(ctx, head);
     if (tab === 'payments') return adminPayments(ctx, head);
     if (tab === 'audit') return adminAudit(ctx, head);
     if (tab === 'settings') return adminSettings(ctx, head);
+    if (tab === 'features') return adminFeatures(ctx, head);
     if (tab === 'leads') return adminLeads(ctx, head);
     const d = await api('/api/admin/billing');
     if (!ctx.alive()) return;
@@ -2289,6 +2294,27 @@
     rowsLink(ctx.main);
   }
 
+  async function adminFeatures(ctx, head) {
+    const d = await api('/api/admin/features');
+    if (!ctx.alive()) return;
+    const areas = [...new Set(d.features.map((f) => f.area))];
+    ctx.main.innerHTML = `<div class="main-inner">${head}<p class="muted">Switch features on or off for every customer. A feature that is off is hidden everywhere and its checks don’t run. Changes are recorded in the audit log.</p>
+      ${d.features.length ? areas.map((area) => `<section class="suite-area"><h3>${esc(area)}</h3><div class="rows">${d.features.filter((f) => f.area === area).map((f) => `<label class="check-row ${f.on ? '' : 'off'}">
+        <span class="switch"><input type="checkbox" name="feat" value="${esc(f.key)}" ${f.on ? 'checked' : ''} aria-label="${esc(f.label)}"><span></span></span>
+        <span><b>${esc(f.label)}</b><p>${esc(f.about)}</p>${f.changed ? `<p class="muted" style="font-size:12.5px">Changed ${time(f.changed.at)} by ${esc(f.changed.by || '')}</p>` : ''}</span>
+        <span class="when">${f.core ? 'Basic' : 'Extra'}</span></label>`).join('')}</div></section>`).join('') : '<p class="muted">No features to switch yet.</p>'}</div>`;
+    ctx.main.querySelectorAll('input[name=feat]').forEach((el) => el.addEventListener('change', async () => {
+      el.disabled = true;
+      try {
+        await api(`/api/admin/features/${encodeURIComponent(el.value)}`, { method: 'PATCH', body: { on: el.checked } });
+        el.closest('.check-row').classList.toggle('off', !el.checked);
+        if (el.checked) S.features.add(el.value); else S.features.delete(el.value);
+        toast(`${el.closest('.check-row').querySelector('b').textContent} is ${el.checked ? 'on' : 'off'}`);
+      } catch (ex) { el.checked = !el.checked; toast(ex.message); }
+      el.disabled = false;
+    }));
+  }
+
   async function adminSettings(ctx, head) {
     const d = await api('/api/admin/settings');
     if (!ctx.alive()) return;
@@ -2392,8 +2418,8 @@
         ${shopify || f.blocked ? '' : `<div class="notice info"><p>${esc(f.platform?.label || 'This platform')} is detected. Add to cart and checkout tests run on Shopify today; speed, SEO, accessibility, links and errors are fully tested.</p></div>`}
         <form id="w2">
         ${shopify && f.catalog?.length ? `<div class="field" style="margin-bottom:28px"><label for="wtp">Product used in tests</label><select id="wtp"><option value="">Choose automatically (recommended)</option>${f.catalog.map((p) => `<option value="${esc(p.handle)}" ${p.handle === w.testProduct ? 'selected' : ''}>${esc(p.title)}${p.variants > 1 ? ` (${p.variants} variants)` : ''}</option>`).join('')}</select><p class="hint">Each test adds one to a fresh cart, opens checkout, then empties the cart. No orders are created.</p></div>` : ''}
-        <div class="field" style="margin-bottom:24px"><label>Where do you sell?</label><div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${(w.markets || []).includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div>
-          <p class="hint">We add checks for the laws in these countries. You can change this later in Store settings.</p></div>
+        ${feat('laws') ? `<div class="field" style="margin-bottom:24px"><label>Where do you sell?</label><div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${(w.markets || []).includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div>
+          <p class="hint">We add checks for the laws in these countries. You can change this later in Store settings.</p></div>` : ''}
         <div id="w-suite">${suiteRows(S.catalog.groups, w.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: w.markets || [] })}</div>
         <div class="wiz-actions"><button class="btn secondary" type="button" id="back">Back</button><div class="right"><button class="btn" type="submit">Continue</button></div></div></form>`);
       const form = $('#w2');
@@ -2403,7 +2429,7 @@
         w.markets = $$('input[name=market]:checked', form).map((x) => x.value);
         $('#w-suite').innerHTML = suiteRows(S.catalog.groups, w.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: w.markets });
       }));
-      const save = () => { w.markets = $$('input[name=market]:checked', form).map((x) => x.value); w.disabled = readDisabled(form).concat(shopify ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key)); w.testProduct = $('#wtp')?.value || ''; };
+      const save = () => { if (feat('laws')) w.markets = $$('input[name=market]:checked', form).map((x) => x.value); w.disabled = readDisabled(form).concat(shopify ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key)); w.testProduct = $('#wtp')?.value || ''; };
       $('#back').onclick = () => { save(); w.step = 1; wizardStep(ctx); };
       form.onsubmit = (e) => { e.preventDefault(); save(); w.step = 3; wizardStep(ctx); };
       return;
@@ -2472,7 +2498,7 @@
     try {
       const sec = location.pathname.replace(/^\/shopify\/?/, '').split('/')[0] || 'overview';
       const sess = await api('/shopify/api/session', { method: 'POST', body: { welcome: sec === 'welcome' } });
-      const me = await api('/api/me'); S.me = me.user; S.admin = false;
+      const me = await api('/api/me'); S.me = me.user; S.admin = false; S.features = new Set(me.features || []);
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
         const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
@@ -2498,7 +2524,7 @@
         if (r.confirmed) S.flash = 'Your email is confirmed. You can now sign in to Tharam in any browser.';
       } catch (ex) { return authView('link', ex.message); }
     }
-    try { const r = await api('/api/me'); S.me = r.user; S.admin = r.admin; }
+    try { const r = await api('/api/me'); S.me = r.user; S.admin = r.admin; S.features = new Set(r.features || []); }
     catch { return authView(location.hash === '#signup' ? 'signup' : 'login'); }
     shell();
     if (location.hash === '#signup') location.replace('#/');

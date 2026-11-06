@@ -8,10 +8,11 @@ import { settleRelease } from './release.js';
 import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
+import { offChecks } from './features.js';
 
 /** Groups switched off for this run: the store's choices, markets, and anything the owner's plan doesn't include. */
 function planDisabled(store, cfg, picked) {
-  const base = effectiveDisabled(cfg, picked);
+  const base = [...new Set([...effectiveDisabled(cfg, picked), ...offChecks()])];
   if (!store) return base;
   return [...new Set([...base, ...lockedGroups(entitlements(store.user_id))])];
 }

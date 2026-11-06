@@ -15,6 +15,7 @@ import { scorecard, weekBuyability } from './scorecard.js';
 import crypto from 'node:crypto';
 import { entitlements, has, blockReason, licenseView, ensureLicense, notIncluded, plansWith, FEATURES, envAllowed, listPlans } from './license.js';
 import { adminRoutes } from './admin.js';
+import { enabledKeys, checkOn } from './features.js';
 import * as shopify from './shopify.js';
 import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
 import { paymentRoutes, razorpayWebhook } from './payments.js';
@@ -267,7 +268,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', requireUser, (req, res) => {
-  res.json({ user: req.user, admin: isAdmin(req.user), license: licenseView(req.user.id) });
+  res.json({ user: req.user, admin: isAdmin(req.user), license: licenseView(req.user.id), features: enabledKeys() });
 });
 
 // The customer's own plan and payment history.
@@ -291,7 +292,7 @@ app.post('/api/account/password', requireUser, async (req, res) => {
 
 // ---------- Test suite catalog ----------
 app.get('/api/catalog', (req, res) => {
-  res.json({ groups: GROUPS, markets: MARKETS, features: FEATURES.map((f) => ({ key: f.key, label: f.label, groups: f.groups || [], plans: plansWith(f.key) })), intervals: INTERVALS, fullIntervals: FULL_INTERVALS, aiEnabled: aiEnabled(), defaults: { journeyIntervalMin: config.journeyIntervalMin, fullIntervalMin: config.fullScanIntervalMin } });
+  res.json({ groups: GROUPS.filter((g) => checkOn(g.key)), markets: MARKETS, features: FEATURES.map((f) => ({ key: f.key, label: f.label, groups: f.groups || [], plans: plansWith(f.key) })), intervals: INTERVALS, fullIntervals: FULL_INTERVALS, aiEnabled: aiEnabled(), defaults: { journeyIntervalMin: config.journeyIntervalMin, fullIntervalMin: config.fullScanIntervalMin } });
 });
 
 // Looks at a store before it is added: platform, products, collections, password lock.

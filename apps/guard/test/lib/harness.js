@@ -95,6 +95,8 @@ export async function startProduct({ env = {}, mock: mockOpts = {} } = {}) {
     RAZORPAY_API_BASE: `${fake.base}/rzp`,
     AI_API_KEY: '',
     ANTHROPIC_API_KEY: '',
+    // Tests see every feature; test/features.test.js checks the real defaults.
+    FEATURES_DEFAULT: 'on',
     ...env,
   });
   try { await waitFor(`${base}/healthz`); } catch (e) { mock.stop(); fake.stop(); server.stop(); throw new Error(`${e.message}\n${server.log()}`); }
