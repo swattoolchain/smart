@@ -52,9 +52,17 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
   mctx.setDefaultTimeout(20000);
   // Stopping a run closes both browser contexts; any Playwright call in flight then rejects at once.
   const onAbort = () => { ctx.close().catch(() => {}); mctx.close().catch(() => {}); };
+  // A run stopped while the browser was still starting must not open pages on contexts that are closing
+  // (Playwright can wait forever there): stop at once instead.
+  const stopped = signal ? new Promise((_, rej) => {
+    if (signal.aborted) rej(new Error('cancelled'));
+    else signal.addEventListener('abort', () => rej(new Error('cancelled')), { once: true });
+  }) : null;
+  stopped?.catch(() => {});
+  const unlessStopped = (p) => (stopped ? Promise.race([p, stopped]) : p);
   if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort); }
-  const page = await ctx.newPage();
-  const mobilePage = await mctx.newPage();
+  const page = await unlessStopped(ctx.newPage());
+  const mobilePage = await unlessStopped(mctx.newPage());
   let info;
   let theme = null;
   try {
