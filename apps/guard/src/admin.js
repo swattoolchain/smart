@@ -5,6 +5,7 @@ import {
   stateOf, mrrOf, priceOf, ensureLicense, setting, setSetting, audit, blockReason,
 } from './license.js';
 import { sendReceipt } from './billing-mail.js';
+import { flagList, setFlag } from './features.js';
 
 const SETTINGS = ['signup_plan', 'trial_days', 'grace_days', 'payment_note'];
 
@@ -131,6 +132,12 @@ export function adminRoutes(app, { requireUser, isAdmin }) {
   });
   app.get('/api/admin/audit', admin, (req, res) => {
     res.json({ audit: db.prepare('SELECT a.*, u.email FROM audit a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 500').all() });
+  });
+  // Feature switches: what the product shows to every customer.
+  app.get('/api/admin/features', admin, (req, res) => res.json({ features: flagList() }));
+  app.patch('/api/admin/features/:key', admin, (req, res) => {
+    if (typeof req.body?.on !== 'boolean') return res.status(400).json({ error: 'Say on or off' });
+    try { setFlag(actor(req), req.params.key, req.body.on); res.json({ ok: true, features: flagList() }); } catch (e) { res.status(404).json({ error: e.message }); }
   });
   app.get('/api/admin/settings', admin, (req, res) => {
     res.json({ settings: Object.fromEntries(SETTINGS.map((k) => [k, setting(k)])), plans: listPlans().map((p) => ({ key: p.key, name: p.name, kind: p.kind })) });

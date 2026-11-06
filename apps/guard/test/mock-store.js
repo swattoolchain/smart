@@ -1,12 +1,16 @@
 /**
  * A small fake Shopify storefront for testing Store Guard offline.
  * Mirrors Dawn-theme markup and Shopify's public endpoints.
- * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password
+ * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
+ *   hijack (checkout sends shoppers to a look-alike checkout on another site, like the October 2026 app compromises)
  */
 import http from 'node:http';
 import { URL } from 'node:url';
 
 const PORT = Number(process.env.MOCK_PORT || 4100);
+// A look-alike checkout on a different site. 127.0.0.1 is a different host from localhost, so it stands in for
+// an attacker's domain without needing the network; the page looks exactly like the real checkout.
+const HIJACK = `http://127.0.0.1:${PORT}/checkouts/cn/fake-pay`;
 const BREAK = new Set((process.env.MOCK_BREAK || '').split(',').filter(Boolean));
 // A draft theme opened with ?preview_theme_id=… (Shopify keeps it for the session via a cookie).
 const DRAFT_BREAK = new Set([...BREAK, ...(process.env.MOCK_DRAFT_BREAK ?? 'theme,atc').split(',').filter(Boolean)]);
@@ -179,13 +183,13 @@ const server = http.createServer(async (req, res) => {
     const items = cartFor(req, res);
     const btn = B.has('checkout') ? '' : '<form action="/cart" method="post"><button type="submit" name="checkout">Check out</button></form>';
     if (req.method === 'POST') {
-      res.writeHead(302, { Location: B.has('checkout') ? '/cart' : '/checkouts/cn/abc123' });
+      res.writeHead(302, { Location: B.has('checkout') ? '/cart' : B.has('hijack') ? HIJACK : '/checkouts/cn/abc123' });
       return res.end();
     }
     return send(res, 200, layout('Your cart', `<h1>Your cart</h1>${items.map((i) => `<a href="/products/${i.handle}">${i.title}</a> x${i.quantity}`).join('<br>')}${btn}`));
   }
   if (p === '/checkout') {
-    res.writeHead(302, { Location: B.has('checkout') ? '/cart' : '/checkouts/cn/abc123' });
+    res.writeHead(302, { Location: B.has('checkout') ? '/cart' : B.has('hijack') ? HIJACK : '/checkouts/cn/abc123' });
     return res.end();
   }
   if (p.startsWith('/checkouts/')) return send(res, 200, layout('Checkout', '<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>'));

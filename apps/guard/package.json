@@ -7,10 +7,13 @@
   "scripts": {
     "start": "node src/server.js",
     "mock": "node test/mock-store.js",
-    "test": "node test/run-tests.js",
-    "verify": "node src/verify.js"
+    "test": "node --test --test-concurrency=1 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./test/lib/reporter.js --test-reporter-destination=test-results/reporter.log \"test/*.test.js\"",
+    "verify": "node src/verify.js",
+    "test:engine": "node --test --test-reporter=spec test/engine.test.js"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@axe-core/playwright": "4.14.0",
     "bcryptjs": "^2.4.3",
