@@ -167,6 +167,26 @@ if (EXTRA.includes('zero')) products[0].variants[1].price = '0.00';
 if (EXTRA.includes('cut')) for (const p of products) for (const v of p.variants) v.price = (Number(v.price) / 10).toFixed(2);
 if (EXTRA.includes('swap')) Object.assign(products[1], { title: 'Prepaid Gift Card Bundle', body_html: '<p>Instant delivery gift cards. Pay by crypto only.</p>', images: [{ src: '/img/g.png' }, { src: '/img/g2.png' }] });
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
+// MOCK_SALE (JSON): a sale that switches on by itself at a set moment, like a scheduled sale on a real store.
+//   { at: ms since 1970, prices: { variantId: salePrice }, banner, themeId, soldOut: [variantId] }
+// Before `at` the store is as usual. From `at`: new prices (the old one becomes the compare-at price), the banner
+// on every page, the sale theme live (window.Shopify.theme), and the listed variants sold out. GET /__sale starts it now.
+const SALE = process.env.MOCK_SALE ? JSON.parse(process.env.MOCK_SALE) : null;
+let saleOn = false;
+let saleEnded = false; // GET /__sale?end=1: the sale was ended properly (prices back, banner and theme off, BF20 expired)
+function endSale() {
+  if (!saleOn || saleEnded) return;
+  saleEnded = true; saleOn = false;
+  for (const id of Object.keys(SALE.prices || {})) { const hit = byId.get(Number(id)); if (hit && hit.v.compare_at_price) { hit.v.price = hit.v.compare_at_price; hit.v.compare_at_price = null; } }
+  for (const id of SALE.soldOut || []) { const hit = byId.get(Number(id)); if (hit) hit.v.available = true; }
+}
+function saleClock() {
+  if (saleEnded) return;
+  if (!SALE || saleOn || Date.now() < SALE.at) return;
+  saleOn = true;
+  for (const [id, price] of Object.entries(SALE.prices || {})) { const hit = byId.get(Number(id)); if (hit) { hit.v.compare_at_price = hit.v.price; hit.v.price = Number(price).toFixed(2); } }
+  for (const id of SALE.soldOut || []) { const hit = byId.get(Number(id)); if (hit) hit.v.available = false; }
+}
 
 function cartFor(req, res) {
   const m = /cart=([a-z0-9]+)/.exec(req.headers.cookie || '');
@@ -184,7 +204,7 @@ const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
 function cartJson(items) {
   const original = items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0);
   const code = items.discount;
-  const rule = code && !(B.has('discount') && code === 'BF20') ? CODES[code] : null;
+  const rule = code && !(B.has('discount') && code === 'BF20') && !(saleEnded && code === 'BF20') ? CODES[code] : null;
   const applicable = !!rule && original >= rule.min;
   const off = applicable ? Math.round((original * rule.pct) / 100) : 0;
   return {
@@ -206,9 +226,9 @@ function layout(title, body, { noindex = false } = {}) {
 ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta name="description" content="Handmade Indian clothing and decor from small artisans.">
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
-${AB ? '<script>window._vwo_code={version:2};</script>' : ''}${CONVERT ? `<script>window.convert={currentData:{experiences:{"100":{variation:{id:"${CONVV}",name:"${CONV_NAMES[CONVV]}"}}}},data:{}};</script>` : ''}${OPTIMIZELY ? `<script>window.optimizely={get:function(k){if(k==='data')return{experiments:{"200":{id:"200",name:"Price test",audienceIds:[],variations:[{id:"2001",name:"Original",actions:[]},{id:"2002",name:"Lower price",actions:[]}]},"300":{id:"300",name:"Personal greeting",variations:[{id:"3001",name:"Greeting",actions:[]}]}},campaigns:{}};if(k==='visitor')return{visitorId:'v1'};return null;},current:"${OPTV}"};</script>` : ''}<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
+${AB ? '<script>window._vwo_code={version:2};</script>' : ''}${CONVERT ? `<script>window.convert={currentData:{experiences:{"100":{variation:{id:"${CONVV}",name:"${CONV_NAMES[CONVV]}"}}}},data:{}};</script>` : ''}${OPTIMIZELY ? `<script>window.optimizely={get:function(k){if(k==='data')return{experiments:{"200":{id:"200",name:"Price test",audienceIds:[],variations:[{id:"2001",name:"Original",actions:[]},{id:"2002",name:"Lower price",actions:[]}]},"300":{id:"300",name:"Personal greeting",variations:[{id:"3001",name:"Greeting",actions:[]}]}},campaigns:{}};if(k==='visitor')return{visitorId:'v1'};return null;},current:"${OPTV}"};</script>` : ''}<script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : saleOn && SALE.themeId ? `{id:${Number(SALE.themeId)},name:'Dawn – Sale',role:'main'}` : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}<script src="/assets/theme.js?v=111"></script>${scriptTags()}
-${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}${B.has('restyle') ? '<style>body{background:#111;color:#eee} a{color:#9cf}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
+${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}${B.has('restyle') ? '<style>body{background:#111;color:#eee} a{color:#9cf}</style>' : ''}</head><body>${saleOn && SALE.banner && !DRAFT ? `<div class="announcement">${SALE.banner}</div>` : ''}${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
 <main id="MainContent">${body}</main>${formBox()}${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}${frameTags()}${B.has('spam') ? '<div style="position:absolute;left:-9999px;top:0"><a href="https://best-casino-bonus.example/">online casino</a> <a href="https://pills.example/buy">cheap viagra</a></div><p style="display:none">replica watches and payday loans at low prices</p>' : ''}${B.has('cloaked') ? '<a href="https://link-farm.example/" style="font-size:0">partner</a>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${US ? ' <a href="/pages/data-sharing-opt-out">Your privacy choices</a>' : ''}${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
 }
 function send(res, status, body, type = 'text/html; charset=utf-8') {
@@ -236,6 +256,7 @@ const server = http.createServer(async (req, res) => {
   const previewId = u.searchParams.get('preview_theme_id');
   if (previewId) res.setHeader('Set-Cookie', `preview_theme=${previewId}; Path=/`);
   DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
+  saleClock();
   B = DRAFT ? DRAFT_BREAK : BREAK;
   REQ_PATH = u.pathname;
   ABV = '';
@@ -283,6 +304,7 @@ const server = http.createServer(async (req, res) => {
     } finally { INFLIGHT--; }
   }
   if (p === '/__carts') return send(res, 200, { carts: [...carts.values()].map((c) => c.length) }, 'application/json');
+  if (p === '/__sale') { if (SALE) { if (u.searchParams.get('end')) endSale(); else { SALE.at = 0; saleClock(); } } return send(res, 200, { on: saleOn, ended: saleEnded }, 'application/json'); } // tests: start (or end) the sale now
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   // Every request the store received (method, path, user agent), for tests that limit how a visitor behaves.
   if (p === '/__requests') return send(res, 200, { requests: REQUESTS }, 'application/json');

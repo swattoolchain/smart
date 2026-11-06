@@ -1131,3 +1131,27 @@ ui-nav-menu { display: none !important; }
 .theme-restore:empty { display: none; }
 .theme-restore .tr-confirm { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; }
 .theme-restore .tr-confirm p { margin: 0 0 8px; }
+/* Sale plans */
+.facts { margin: 10px 0 0; display: grid; gap: 12px; }
+.facts dt { font-size: 11.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+.facts dd { margin: 0; font-size: 13.5px; }
+.sale-rule { display: grid; grid-template-columns: 130px 110px 130px minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+.sale-rule input[hidden] { display: none; }
+.sale-markets { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.sale-markets label.check { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; font-size: 13.5px; margin: 0; }
+@media (max-width: 640px) { .sale-rule { grid-template-columns: 1fr 1fr; } }
+
+/* Sale live (go-live burst) */
+.sale-sub { font-size: 14px; color: var(--muted); margin: 18px 0 10px; }
+.sale-live-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: center; text-decoration: none; color: inherit; border-left: 4px solid var(--line, #ddd); }
+.sale-live-card.healthy { border-left-color: #22a35a; } .sale-live-card.warning { border-left-color: #e19a1b; } .sale-live-card.critical { border-left-color: #e5484d; }
+.sale-live-card b { display: block; font-size: 15.5px; margin: 1px 0 2px; } .sale-live-card small { color: var(--muted); font-size: 13px; }
+.sale-live-card .pv-kicker { display: block; }
+.sale-live-card .st-ic { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--soft, #f1f1f4); color: var(--muted); }
+.sale-live-card.healthy .st-ic { background: #e7f6ec; color: #1a7f45; } .sale-live-card.warning .st-ic { background: #fdf3e1; color: #a86a00; } .sale-live-card.critical .st-ic { background: #fdecec; color: #c4262c; }
+.sale-suggest { display: flex; gap: 14px; align-items: center; justify-content: space-between; }
+.sale-suggest p { margin: 0; }
+.sale-day-form { flex-wrap: wrap; gap: 8px; margin-top: 10px; } .sale-day-form input[name=name] { flex: 1 1 180px; }
+.sale-day-form label.check { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; font-size: 13.5px; margin: 0; }
+#sale-cal td.go { white-space: nowrap; text-align: right; }
+@media (max-width: 640px) { .sale-suggest { flex-direction: column; align-items: flex-start; } }

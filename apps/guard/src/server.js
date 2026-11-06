@@ -44,6 +44,9 @@ import { recoveryPacket } from './recovery-packet.js';
 import { incidentView, startIncident, updateIncident, endIncident, incidentBrief, startEmail as incidentStartEmail, endEmail as incidentEndEmail } from './incident.js';
 import { warningsFor } from './early-warning.js';
 import { cspMiddleware, cspReportRoute } from './csp.js';
+import { salePlanRoutes } from './sale-plans.js';
+import { saleLiveRoutes } from './sale-live.js';
+import { saleCalendarRoutes } from './sale-calendar-routes.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -1100,6 +1103,13 @@ app.post('/api/stores/:id/approve-visual', requireUser, (req, res) => {
   const n = approveBaseline(path.join(config.dataDir, 'shots', `run-${run.id}`), path.join(config.dataDir, 'baselines', `store-${s.id}`));
   res.json({ ok: true, approved: n });
 });
+
+// ---------- Sale plans and the sale rehearsal ----------
+// Sale plans, go-live checks and the sale calendar answer only while the feature is switched on.
+app.use(['/api/stores/:id/sale-plans', '/api/stores/:id/sale-calendar'], requireFeature('sale_plans'));
+salePlanRoutes(app, { requireUser, ownStore, refuse });
+saleLiveRoutes(app, { requireUser, ownStore, refuse });
+saleCalendarRoutes(app, { requireUser, ownStore, refuse });
 
 // ---------- Founder console: customers, licences, payments, plans ----------
 adminRoutes(app, { requireUser, isAdmin });

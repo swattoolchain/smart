@@ -34,6 +34,7 @@ export const FLAGS = [
   { key: 'theme_watch', area: 'Security watch', label: 'Theme code changes', about: 'Fingerprints every file of the live Shopify theme on each full check and shows changed lines.', checks: ['security.theme'] },
   { key: 'variant_sweep', area: 'Checks', label: 'Every variant can be added to the cart', about: 'Each full check adds every variant once through the cart and reports broken or unpublished ones.', checks: ['catalog.variants'] },
   { key: 'failure_video', area: 'Reports', label: 'Video replay of failures', about: 'Owners can record a video when a shopping check fails; kept 7 days, owner-only.' },
+  { key: 'sale_plans', area: 'Sales', label: 'Sale plans and rehearsal', about: 'Sale plans for any sale day: pre-check and rehearsal, checks every few minutes at go-live (codes per market, free shipping), end check, and a sale calendar by market.' },
   { key: 'sale_traffic', area: 'Sales', label: 'Sale traffic test', about: 'Opt-in: up to 5 shoppers at once during the full check, to show slowdowns before a sale.', checks: ['sale.traffic'] },
   { key: 'ai_shopper', area: 'AI', label: 'AI shopper', about: 'A goal-driven shopper that browses and buys on any theme and reports friction, also on draft themes in Safe to publish. Needs the AI key.', checks: ['ai.shopper'] },
   { key: 'teams', area: 'Accounts', label: 'Team members (agencies)', about: 'Website accounts invite team members with roles. Members already invited can still switch back and leave while this is off.' },
