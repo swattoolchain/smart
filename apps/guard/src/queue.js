@@ -21,6 +21,7 @@ import { attributeFailures } from './attribution.js';
 import { aiEnabled } from './ai.js';
 import { fullCheckInputs } from './runner-files.js';
 import { usesAi, mainRunner, listRunners, healthy, chooseRunner, byPriority, wantedTags, L, leaseAge, LEASE_LIMIT_MS, revokeRunner } from './runners.js';
+import { testsForRun } from './custom-tests.js';
 
 /** Groups switched off for this run: the store's choices, markets, and anything the owner's plan doesn't include. */
 function planDisabled(store, cfg, picked) {
@@ -202,6 +203,8 @@ async function prepare(job) {
     previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
     testProduct: cfg.testProduct || null, discountCodes: codes, shopifyCodes, preview: preview || null, captureOnly: !!captureOnly,
     // Price rules the owner set, as many as the plan allows.
+    // The owner's own tests (Your tests), as many as the plan allows; never on publish checks.
+    customTests: store && !release && isOn('custom_tests') ? testsForRun(store.id, kind, entitlements(store.user_id)) : [],
     // A/B test versions the owner listed (Test suite → A/B tests).
     abVariants: isOn('ab_tests') ? cfg.abVariants || [] : [],
     priceRules: store && isOn('price_checks') ? (cfg.priceRules || []).slice(0, entitlements(store.user_id).limits.priceRules) : [],

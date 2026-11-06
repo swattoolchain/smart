@@ -16,6 +16,9 @@ import { sendChecklistReminders } from './security-checklist.js';
 import { checkCapacityAlerts, sqlTime } from './capacity.js';
 import { queueDepth } from './queue.js';
 import { pruneVideos } from './video.js';
+import { dueSaleRehearsals } from './sale-plans.js';
+import { isOn } from './features.js';
+import { dueSaleBursts, dueSaleEndChecks } from './sale-live.js';
 
 export function minutesSince(ts) {
   if (!ts) return Infinity;
@@ -102,6 +105,11 @@ export function startScheduler() {
     // Incident mode ends by itself after 48 hours; owner and team get the summary.
     try { for (const row of expiredIncidents()) { const st = q.storeById.get(row.store_id); if (st) sendMail(incidentEndEmail(st, row)).catch(() => {}); } } catch (e) { console.error('incident expiry failed', e); }
     try { dueEnvironmentChecks(); } catch (e) { console.error('environment checks failed', e); }
+    if (isOn('sale_plans')) {
+    try { dueSaleRehearsals(); } catch (e) { console.error('sale rehearsals failed', e); }
+    try { dueSaleBursts(); } catch (e) { console.error('sale live checks failed', e); }
+    try { dueSaleEndChecks(); } catch (e) { console.error('sale end checks failed', e); }
+    }
     sendLicenseNotices().catch((e) => console.error('licence notices failed', e));
     // Security checklist reminders: at most one a month per store, only while something is open.
     sendChecklistReminders({ isShopify: (st) => !!shopForStore(st.id) || /shopify/i.test(st.platform || '') }).catch((e) => console.error('checklist reminders failed', e));

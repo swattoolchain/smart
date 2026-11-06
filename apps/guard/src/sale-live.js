@@ -1,0 +1,433 @@
+/**
+ * Sale rehearsal, part 2: the go-live burst.
+ *
+ * When a planned sale starts, we check it often: every 5 minutes for the first hour, then every 15 minutes
+ * (less often on plans without Safe to publish). Each check looks at the live store the way a shopper would:
+ * is the sale theme live, does every product in the sale show its sale price, is the banner there, do the
+ * codes take the right amount off in a real cart, and is free shipping set up. Each check also starts the
+ * store's shopping journey (checkout included) when nothing else is running for the store.
+ * The owner gets an email (and Slack) within minutes when something breaks, and again when it's fixed.
+ *
+ * Part 3: the end check. Shortly after the sale ends, the same check runs the other way round: prices back to
+ * normal, codes stopped, banner gone, sale theme no longer live. The owner gets "ended cleanly" or what is still
+ * on; if something is still on, it is checked again every 2 hours (3 times at most).
+ */
+import { storePassword } from './secret.js';
+import { db, q } from './db.js';
+import { config } from './config.js';
+import { newContext, gotoStore, settle, themeOf } from './engine/browser.js';
+import { runDiscounts, codesByMarket } from './engine/discount.js';
+import { freeShippingByMarket } from './engine/shipping.js';
+import { MARKETS } from './engine/catalog.js';
+import { entitlements, has, blockReason } from './license.js';
+import { sendMail, sendSlack } from './alerts.js';
+import * as shopify from './shopify.js';
+import { parse, phase, storeProducts, collectionIds, scheduledDiscounts } from './sale-plans.js';
+import { automaticFor, compareDiscounts, burstDue, burstEvery, livePrices, endPrices, endCheckDue, baselineFrom, liveChanges, utcToZoned } from './sale-math.js';
+
+const Q = {
+  plan: db.prepare('SELECT * FROM sale_plans WHERE id = ?'),
+  live: db.prepare('SELECT * FROM sale_plans WHERE starts_at <= ? AND ends_at > ? ORDER BY starts_at'),
+  insert: db.prepare('INSERT INTO sale_live_checks (plan_id, store_id, trigger) VALUES (?, ?, ?)'),
+  finish: db.prepare("UPDATE sale_live_checks SET status = ?, verdict = ?, run_id = ?, summary_json = ?, finished_at = datetime('now') WHERE id = ?"),
+  byId: db.prepare('SELECT * FROM sale_live_checks WHERE id = ?'),
+  last: db.prepare('SELECT * FROM sale_live_checks WHERE plan_id = ? ORDER BY id DESC LIMIT 1'),
+  lastDone: db.prepare("SELECT * FROM sale_live_checks WHERE plan_id = ? AND status = 'done' AND trigger NOT IN ('end', 'end-manual') ORDER BY id DESC LIMIT 1"),
+  lastEnd: db.prepare("SELECT * FROM sale_live_checks WHERE plan_id = ? AND status = 'done' AND trigger IN ('end', 'end-manual') ORDER BY id DESC LIMIT 1"),
+  endCount: db.prepare("SELECT COUNT(*) AS n, MAX(created_at) AS last FROM sale_live_checks WHERE plan_id = ? AND trigger = 'end'"),
+  ended: db.prepare('SELECT * FROM sale_plans WHERE ends_at <= ? AND ends_at > ? ORDER BY ends_at'),
+  endList: db.prepare("SELECT * FROM sale_live_checks WHERE plan_id = ? AND trigger IN ('end', 'end-manual') ORDER BY id DESC LIMIT 10"),
+  list: db.prepare('SELECT * FROM sale_live_checks WHERE plan_id = ? ORDER BY id DESC LIMIT ?'),
+  manualToday: db.prepare("SELECT COUNT(*) AS n FROM sale_live_checks WHERE store_id = ? AND trigger IN ('manual', 'end-manual') AND created_at > datetime('now', '-1 day')"),
+  // Normal prices from the last pre-check that worked them out (before the sale started).
+  baseline: db.prepare("SELECT summary_json FROM sale_rehearsals WHERE plan_id = ? AND status = 'done' AND summary_json LIKE '%\"rows\"%' ORDER BY id DESC LIMIT 1"),
+};
+const MANUAL_PER_DAY = 30;
+const END_AFTER = 10 * 60000;        // the first end check, 10 minutes after the sale ends
+const END_AGAIN = 2 * 3600000;       // again every 2 hours while something is still on
+const END_MAX = 3;                   // automatic end checks at most
+const END_WINDOW = 3 * 86400000;     // the owner can check the end for 3 days
+const isEnd = (trigger) => trigger === 'end' || trigger === 'end-manual';
+const running = new Set(); // plan ids being checked in this process
+const sqlMs = (s) => (s ? new Date(s.replace(' ', 'T') + 'Z').getTime() : null);
+const burstKind = (ent) => (has(ent, 'publish') ? 'full' : 'basic');
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const listOf = (rows, fmt) => rows.slice(0, 5).map(fmt).join('; ') + (rows.length > 5 ? `; and ${rows.length - 5} more` : '');
+const label = (x) => `${x.product}${x.variant ? ` (${x.variant})` : ''}`;
+
+export function liveView(r, { full = false } = {}) {
+  if (!r) return null;
+  const sum = r.summary_json ? JSON.parse(r.summary_json) : null;
+  const v = { id: r.id, trigger: r.trigger, status: r.status, verdict: r.verdict, runId: r.run_id, createdAt: r.created_at, finishedAt: r.finished_at, counts: sum?.counts || null, error: sum?.error || null };
+  if (full) v.summary = sum;
+  return v;
+}
+
+const marketName = (m) => MARKETS.find((x) => x.code === m)?.label || m;
+/** Findings from the codes tried in each market: one line per market, and one per code that fails there. */
+export function marketFindings(plan, byMarket) {
+  const out = [];
+  const f = (key, level, title, detail = '', fix = null) => out.push({ key, area: 'markets', level, title, detail, fix });
+  if (!byMarket) { f('markets', 'warn', 'We couldn’t try your codes in each market', 'The store didn’t answer in time. The next check tries again.'); return out; }
+  for (const m of byMarket) {
+    const name = marketName(m.market);
+    const key = `market.${m.market.toLowerCase()}`;
+    if (!m.ok) { f(key, 'warn', `We couldn’t switch your store to ${name}`, `Your store didn’t change to ${name} when a shopper picks it, so codes weren’t tried there.`, `If you sell in ${name}, check it is a market in Shopify admin → Settings → Markets, with the country picker on your theme. If you don’t, take it out of the sale plan.`); continue; }
+    const cur = m.currency ? ` (${m.currency})` : '';
+    const bad = m.codes.filter((c) => c.status === 'fail'), odd = m.codes.filter((c) => c.status === 'warn' || c.status === 'skip');
+    for (const c of bad) {
+      const want = plan.codes.find((x) => x.code === c.code)?.percent;
+      const wrongPct = c.off > 0 && want != null;
+      f(`${key}.code.${c.code.toLowerCase()}`, 'fail', wrongPct ? `Discount code ${c.code} takes ${c.pct}% off in ${name}, not ${want}%` : `Discount code ${c.code} doesn’t work for shoppers in ${name}`, c.detail,
+        wrongPct ? 'Check the discount’s value for this market in Shopify → Discounts, and any market price adjustments in Settings → Markets.' : `Check the discount in Shopify → Discounts is available in ${name} (its markets, or “all customers”), and that it applies to products sold there.`);
+    }
+    for (const c of odd) f(`${key}.code.${c.code.toLowerCase()}`, 'warn', c.status === 'warn' ? `Discount code ${c.code} needs a bigger cart in ${name}` : `We couldn’t try discount code ${c.code} in ${name}`, c.detail);
+    if (!bad.length && !odd.length && m.codes.length) f(key, 'pass', `Your ${m.codes.length === 1 ? 'code works' : `${m.codes.length} codes work`} for shoppers in ${name}${cur}`, m.codes.map((c) => `${c.code}: ${c.pct}% off`).join(' · '));
+  }
+  return out;
+}
+
+/**
+ * Findings from free shipping in a real cart. The plan's first market is where the amount is set (the store's
+ * own currency): not free there above the amount is a fail. Other markets may convert the amount or not offer
+ * free shipping on purpose, so there it is a warning.
+ */
+export function shippingFindings(plan, shipping) {
+  const out = [];
+  const f = (key, level, title, detail = '', fix = null) => out.push({ key, area: 'shipping', level, title, detail, fix });
+  const amt = plan.freeShipping;
+  if (!shipping) { f('shipping.cart', 'warn', 'We couldn’t make a cart to check free shipping', `No product in stock adds up to ${amt}.`); return out; }
+  if (shipping.error) { f('shipping.cart', 'warn', 'We couldn’t check free shipping at checkout', 'The store didn’t answer in time. The next check tries again.'); return out; }
+  const { carts } = shipping;
+  shipping.markets.forEach((m, i) => {
+    const name = marketName(m.market);
+    const key = `shipping.cart.${m.market.toLowerCase()}`;
+    const rates = (x) => (x?.rates || []).join('; ');
+    if (!m.above?.reached) { f(key, 'warn', `We couldn’t check free shipping at checkout for ${name}`, m.above?.why || '', 'Try a cart over the amount yourself and go to the shipping step. If checkout asks for more than an address first, this check can’t reach it.'); return; }
+    if (!m.above.free) {
+      f(key, i === 0 ? 'fail' : 'warn', i === 0 ? `Free shipping doesn’t start at ${amt} for ${name}` : `No free shipping for shoppers in ${name}`,
+        `A cart of ${carts.above.total} (${carts.above.quantity} × ${carts.item}) gets: ${rates(m.above)}.`,
+        i === 0 ? 'Check the free shipping discount (Shopify admin → Discounts) or the free rate in Settings → Shipping and delivery: its minimum order, dates and countries.' : `If free shipping should apply in ${name}, add the country to the free shipping discount or rate. The amount may also be converted to the local currency.`);
+      return;
+    }
+    if (m.below?.reached && m.below.free) { f(key, 'warn', `Free shipping starts below ${amt} in ${name}`, `A cart of ${carts.below.total} already ships free: ${rates(m.below)}.`, 'If that isn’t intended, raise the minimum order on the free shipping discount or rate.'); return; }
+    f(key, 'pass', `Free shipping starts at ${amt} for ${name}`, `A cart of ${carts.above.total} ships free at checkout${m.below?.reached ? `; ${carts.below.total} doesn’t` : ''}.`);
+  });
+  return out;
+}
+
+// ---------- one live check ----------
+async function checkLive(store, plan, { trigger }) {
+  const end = isEnd(trigger);
+  const findings = [];
+  const add = (key, area, level, title, detail = '', fix = null) => findings.push({ key, area, level, title, detail, fix });
+  const now = Date.now();
+  const shop = shopify.shopForStore(store.id);
+
+  let discounts = null;
+  if (shop) {
+    try { discounts = await scheduledDiscounts(shop.shop); } catch { add('shopify', 'codes', 'warn', 'We couldn’t read your discounts from Shopify', 'Shopify didn’t answer just now. The next check tries again.'); }
+  }
+
+  let prices = null, isShopify = !!shop, byMarket = null, shipping = null;
+  const ctx = await newContext({ mobile: true });
+  try {
+    // The live homepage, on a phone: which theme is live, and is the banner there.
+    const page = await ctx.newPage();
+    let homeText = '', theme = null, locked = false;
+    try {
+      const nav = await gotoStore(page, store.url, { password: storePassword(store) });
+      locked = !!nav.locked;
+      if (!locked) {
+        await settle(page, 500);
+        homeText = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
+        theme = await themeOf(page);
+        if (theme) isShopify = true;
+      }
+    } catch { /* reported below */ }
+    if (locked) add('locked', 'store', 'fail', 'Your store asks shoppers for a password', 'The sale has started, but the store is still password protected, so shoppers can’t get in.', 'Remove the password in Online Store → Preferences, or add the storefront password in Store settings if this is intended.');
+    else if (!homeText) add('home', 'store', 'warn', 'We couldn’t open your homepage', 'It didn’t load in time. The next check tries again.');
+    else {
+      const saleTheme = theme && String(theme.id) === String(plan.themeId);
+      if (plan.themeId && !theme) add('theme', 'theme', 'warn', 'We couldn’t tell which theme is live', 'Your store doesn’t say which theme it shows.');
+      else if (plan.themeId && end) {
+        if (saleTheme) add('end.theme', 'theme', 'fail', 'Your sale theme is still live', `Shoppers still see “${theme.name || `theme ${theme.id}`}” after the sale ended.`, 'Publish your normal theme again in Online Store → Themes.');
+        else add('end.theme', 'theme', 'pass', 'Your normal theme is back', theme.name ? `Shoppers see “${theme.name}”.` : '');
+      } else if (plan.themeId) {
+        if (saleTheme) add('theme', 'theme', 'pass', 'Your sale theme is live', theme.name ? `Shoppers see “${theme.name}”.` : '');
+        else add('theme', 'theme', 'fail', 'Your sale theme isn’t live', `Shoppers still see “${theme.name || `theme ${theme.id}`}”, not the sale theme.`, 'Publish the sale theme in Online Store → Themes, or check the app that was meant to publish it at the start.');
+      }
+      if (plan.banner) {
+        const want = plan.banner.toLowerCase().replace(/\s+/g, ' ');
+        const shown = homeText.toLowerCase().replace(/\s+/g, ' ').includes(want);
+        if (end) {
+          if (shown) add('end.banner', 'banner', 'fail', 'The sale banner is still showing', `Shoppers still see “${plan.banner}” on your homepage after the sale ended.`, 'Turn the banner off in the theme editor, or change its text.');
+          else add('end.banner', 'banner', 'pass', 'The sale banner is gone', '');
+        } else if (shown) add('banner', 'banner', 'pass', 'The sale banner is on your homepage', `“${plan.banner}”.`);
+        else add('banner', 'banner', 'fail', 'The sale banner is missing', `Shoppers on a phone don’t see “${plan.banner}” on your homepage.`, 'Turn on the banner in the theme editor, or correct the text in the sale plan.');
+      }
+    }
+
+    // Every product in the sale: does it show the sale price now?
+    if (plan.rules.length && !locked) {
+      const products = await storeProducts(ctx.request, store.url);
+      if (!products.length) add('products', 'prices', 'warn', 'We couldn’t read your products', 'Your store’s product list didn’t answer, so sale prices weren’t checked this time.');
+      else {
+        const cols = new Map();
+        for (const r of plan.rules.filter((x) => x.scope === 'collection')) {
+          const h = r.target.toLowerCase();
+          if (!cols.has(h)) cols.set(h, await collectionIds(ctx.request, store.url, h));
+        }
+        const viaCart = new Set();
+        plan.rules.forEach((r, i) => { if (discounts && automaticFor(r, plan, discounts)) viaCart.add(i); });
+        let baseline = new Map();
+        try { baseline = baselineFrom(JSON.parse(Q.baseline.get(plan.id)?.summary_json || '{}').prices?.rows || []); } catch {}
+        prices = livePrices(products, plan.rules, (h, id) => !!cols.get(h)?.has(id), baseline, end ? new Set() : viaCart);
+        const by = (s) => prices.rows.filter((x) => x.state === s);
+        if (end) {
+          // After the sale: back to normal, still at the sale price, or something else (changed during the sale).
+          prices = endPrices(prices);
+          const still = prices.rows.filter((x) => x.state === 'still'), other = prices.rows.filter((x) => x.state === 'changed'), back = prices.rows.filter((x) => x.state === 'back');
+          if (still.length) add('end.prices', 'prices', 'fail', `${plural(still.length, 'price')} still at the sale price`, listOf(still, (x) => `${label(x)}: ${x.shown}, normally ${x.normal}`), 'Put these prices back, or check the app or bulk edit that was meant to end the sale.');
+          if (other.length) add('end.changed', 'prices', 'warn', `${plural(other.length, 'price')} not back to the price before the sale`, listOf(other, (x) => `${label(x)}: ${x.shown}, before the sale ${x.normal}`), 'If you didn’t mean to change these prices, set them back.');
+          if (!still.length && back.length) add('end.prices', 'prices', 'pass', `Prices are back to normal on ${plural(new Set(back.map((x) => x.handle)).size, 'product')}`, `${plural(back.length, 'price')} checked.`);
+          const autos = (discounts || []).filter((d) => d.kind === 'automatic' && plan.rules.some((r) => automaticFor(r, plan, [d])) && (!d.endsAt || new Date(d.endsAt).getTime() > now) && (!d.startsAt || new Date(d.startsAt).getTime() <= now));
+          for (const d of autos) add(`end.auto.${d.title.toLowerCase()}`, 'prices', 'fail', `Shopify discount “${d.title}” is still running`, d.endsAt ? `It runs until ${utcToZoned(new Date(d.endsAt).getTime(), plan.timeZone).replace('T', ' ')} (${plan.timeZone}).` : 'It has no end date.', 'End it in Shopify admin → Discounts, or set its end date.');
+        }
+        if (!end) {
+        const normal = by('normal'), wrong = by('wrong'), sold = by('soldout'), cart = by('cart');
+        if (normal.length) add('prices.normal', 'prices', 'fail', `${plural(normal.length, 'price')} still at the normal price`, listOf(normal, (x) => `${label(x)}: ${x.shown}, should be ${x.expected}`), 'The sale price didn’t switch on for these. Check the price change, the discount, or the app that was meant to start the sale.');
+        if (wrong.length) add('prices.wrong', 'prices', 'fail', `${plural(wrong.length, 'price')} different from your plan`, listOf(wrong, (x) => `${label(x)}: shows ${x.shown}, your plan says ${x.expected}`), 'Correct these prices, or the discount in your plan if the plan is out of date.');
+        if (!normal.length && !wrong.length && by('ok').length) add('prices', 'prices', 'pass', `Sale prices are right on ${plural(new Set(by('ok').map((x) => x.handle)).size, 'product')}`, `${plural(by('ok').length, 'price')} checked against your plan.`);
+        if (cart.length) add('prices.cart', 'prices', 'pass', `${plural(cart.length, 'price')} taken off in the cart by Shopify`, 'An automatic Shopify discount gives these their sale price at checkout, so the product page keeps the normal price.');
+        if (sold.length) add('soldout', 'prices', 'warn', `${plural(sold.length, 'sale item')} sold out`, listOf(sold, label), 'Restock them, or take them out of sale collections and ads so shoppers don’t land on them.');
+        }
+      }
+    }
+
+    // Codes: tried in a real cart, the way a shopper would.
+    if (plan.codes.length && !locked) {
+      if (discounts && !end) {
+        for (const c of plan.codes) {
+          const d = discounts.find((x) => x.codes?.some((k) => k.toLowerCase() === c.code.toLowerCase()));
+          const s = d?.startsAt ? new Date(d.startsAt).getTime() : null, e = d?.endsAt ? new Date(d.endsAt).getTime() : null;
+          if (d && ((s && s > now) || (e && e <= now))) add(`code.${c.code.toLowerCase()}.dates`, 'codes', 'fail', `Discount code ${c.code} isn’t active in Shopify`, s && s > now ? `It starts at ${utcToZoned(s, plan.timeZone).replace('T', ' ')} (${plan.timeZone}), after your sale started.` : 'It has already ended.', 'Change its dates in Shopify admin → Discounts.');
+        }
+      }
+      const out = [];
+      const rec = { step() {}, add(c) { out.push(c); } };
+      const tryPage = await ctx.newPage();
+      try {
+        await gotoStore(tryPage, store.url, { password: storePassword(store) });
+        const list = (await storeProducts(ctx.request, store.url)).slice(0, 6).map((p) => ({ handle: p.handle }));
+        await runDiscounts({ page: tryPage, rec, origin: new URL(tryPage.url()).origin, info: { isShopify, products: list }, password: storePassword(store), codes: plan.codes.slice(0, 5), shot: async () => null });
+      } catch { /* each code is reported below */ }
+      finally { await tryPage.close().catch(() => {}); }
+      for (const c of plan.codes.slice(0, 5)) {
+        const r = out.find((x) => x.title === `Discount code ${c.code} works`);
+        const key = `code.${c.code.toLowerCase()}`;
+        if (!r || r.status === 'skip') add(end ? `end.${key}` : key, 'codes', 'warn', `We couldn’t try discount code ${c.code}`, r?.detail || 'The cart didn’t answer. The next check tries again.');
+        else if (end) {
+          // After the sale a code that still takes money off is the problem.
+          if (r.status === 'fail' && !/You expected/.test(r.detail || '')) add(`end.${key}`, 'codes', 'pass', `Discount code ${c.code} has stopped`, 'It no longer reduces the price in a cart.');
+          else add(`end.${key}`, 'codes', 'fail', `Discount code ${c.code} still works after the sale`, r.detail, 'End it in Shopify admin → Discounts, or set its end date to the end of the sale.');
+        } else if (r.status === 'pass') add(key, 'codes', 'pass', `Discount code ${c.code} works`, r.detail);
+        else add(key, 'codes', r.status === 'warn' ? 'warn' : 'fail', r.status === 'warn' ? `Discount code ${c.code} needs a bigger cart` : `Discount code ${c.code} doesn’t work`, r.detail, r.fix || null);
+      }
+      // Each code in each market of the plan, in that market's currency (Shopify Markets, via the country picker).
+      // Only while the sale runs: after it ends, the codes are expected to stop (checked above).
+      if (isShopify && plan.markets.length && !end) {
+        const mPage = await ctx.newPage();
+        try {
+          await gotoStore(mPage, store.url, { password: storePassword(store) });
+          const list = (await storeProducts(ctx.request, store.url)).slice(0, 6).map((p) => ({ handle: p.handle }));
+          byMarket = await codesByMarket({ page: mPage, origin: new URL(mPage.url()).origin, products: list, codes: plan.codes, markets: plan.markets });
+        } catch { byMarket = null; }
+        finally { await mPage.close().catch(() => {}); }
+        for (const f of marketFindings(plan, byMarket)) findings.push(f);
+      }
+    }
+
+    // Free shipping in a real cart: just above the amount it should be free at checkout's shipping step,
+    // just below it shouldn't. Shopify and other stores alike; nothing is bought.
+    if (plan.freeShipping != null && plan.freeShipping > 0 && !locked) {
+      let mk = plan.markets;
+      if (!mk.length) { try { mk = (JSON.parse(store.config_json || '{}').markets || []).slice(0, 1); } catch { mk = []; } }
+      if (!mk.length) mk = ['US'];
+      const sPage = await ctx.newPage();
+      try {
+        await gotoStore(sPage, store.url, { password: storePassword(store) });
+        const products = await storeProducts(ctx.request, store.url);
+        shipping = await freeShippingByMarket({ page: sPage, origin: new URL(sPage.url()).origin, products, amount: plan.freeShipping, markets: mk });
+      } catch { shipping = { error: true, markets: [] }; }
+      finally { await sPage.close().catch(() => {}); }
+      for (const f of shippingFindings(plan, shipping)) findings.push(f);
+    }
+  } finally {
+    await ctx.close().catch(() => {});
+  }
+
+  // Free shipping: is a Shopify free-shipping discount running at the planned amount.
+  if (discounts && plan.freeShipping != null && !end) {
+    for (const f of compareDiscounts({ ...plan, codes: [] }, discounts, { now })) findings.push({ ...f, key: 'shipping' });
+  }
+
+  // The shopping journey on the live store (checkout included), unless something is already running.
+  let runId = null;
+  if (!q.activeRunForStore.get(store.id)) {
+    const { startRun } = await import('./scheduler.js');
+    runId = startRun({ storeId: store.id, origin: store.url, kind: 'journeys', password: storePassword(store), trigger: 'sale' });
+  }
+
+  const counts = { fail: findings.filter((f) => f.level === 'fail').length, warn: findings.filter((f) => f.level === 'warn').length, pass: findings.filter((f) => f.level === 'pass').length };
+  const verdict = counts.fail ? 'fail' : counts.warn ? 'warn' : 'ok';
+  const summary = { verdict, mode: end ? 'end' : 'live', counts, findings, markets: byMarket, shipping, journey: runId ? 'started' : 'busy', prices: prices ? { counts: prices.counts, rows: prices.rows.slice(0, 300), more: Math.max(0, prices.rows.length - 300) } : null, trigger };
+  return { verdict, runId, summary };
+}
+
+// ---------- alerts: only when something breaks or gets fixed ----------
+function liveMail(store, plan, changes, checkId) {
+  const name = store.name || new URL(store.url).host;
+  const link = `${config.baseUrl}/app#/s/${store.id}/sales/${plan.id}`;
+  const line = (f) => `- ${f.title}${f.detail ? `\n  ${f.detail}` : ''}${f.fix ? `\n  What to do: ${f.fix}` : ''}`;
+  const { broke, fixed, still } = changes;
+  const subject = broke.length
+    ? `Sale problem on ${name}: ${broke[0].title}${broke.length > 1 ? ` (+${broke.length - 1} more)` : ''}`
+    : `Fixed during ${plan.name} on ${name}: ${fixed.map((f) => f.title).join(', ')}`;
+  const text = [
+    `${plan.name} is live on ${name}. ${broke.length ? 'Something shoppers rely on broke:' : 'Good news: this is working again.'}`,
+    broke.length ? broke.map(line).join('\n') : '',
+    fixed.length ? `\nFixed now:\n${fixed.map((f) => `- ${f.title}`).join('\n')}` : '',
+    still.length ? `\nStill to fix:\n${still.map((f) => `- ${f.title}`).join('\n')}` : '',
+    `\nSee the sale live: ${link}`,
+    '\nWe keep checking the sale every few minutes during its first hours, and email you only when something changes.',
+  ].filter(Boolean).join('\n');
+  return { subject, text };
+}
+
+function endMail(store, plan, summary, changes, first) {
+  const name = store.name || new URL(store.url).host;
+  const link = `${config.baseUrl}/app#/s/${store.id}/sales/${plan.id}`;
+  const line = (f) => `- ${f.title}${f.detail ? `\n  ${f.detail}` : ''}${f.fix ? `\n  What to do: ${f.fix}` : ''}`;
+  const fails = summary.findings.filter((f) => f.level === 'fail'), warns = summary.findings.filter((f) => f.level === 'warn');
+  const subject = fails.length ? `Still on after ${plan.name} on ${name}: ${fails[0].title}${fails.length > 1 ? ` (+${fails.length - 1} more)` : ''}` : `${plan.name} ended cleanly on ${name}`;
+  const text = [
+    fails.length ? `${plan.name} has ended on ${name}, but some of it is still on:` : `${plan.name} has ended on ${name}, and everything is back to normal.`,
+    fails.length ? fails.map(line).join('\n') : '',
+    !first && changes.fixed.length ? `\nBack to normal now:\n${changes.fixed.map((f) => `- ${f.title}`).join('\n')}` : '',
+    warns.length ? `\nHave a look:\n${warns.map(line).join('\n')}` : '',
+    summary.counts.pass ? `\n${summary.counts.pass} thing${summary.counts.pass === 1 ? ' is' : 's are'} back to normal.` : '',
+    `\nThe end-of-sale report: ${link}`,
+    fails.length ? '\nWe check again in 2 hours.' : '',
+  ].filter(Boolean).join('\n');
+  return { subject, text };
+}
+
+/** Starts a live check of a running sale. Returns its id; the work carries on in the background. */
+export function startLiveCheck(store, planRow, trigger = 'schedule') {
+  const plan = parse(planRow);
+  const id = Number(Q.insert.run(plan.id, store.id, trigger).lastInsertRowid);
+  running.add(plan.id);
+  (async () => {
+    try {
+      const end = isEnd(trigger);
+      const prev = end ? Q.lastEnd.get(plan.id) : Q.lastDone.get(plan.id);
+      const prevFails = prev?.summary_json ? JSON.parse(prev.summary_json).findings.filter((f) => f.level === 'fail').map((f) => ({ key: f.key, title: f.title })) : [];
+      const { verdict, runId, summary } = await checkLive(store, plan, { trigger });
+      Q.finish.run('done', verdict, runId, JSON.stringify(summary), id);
+      const changes = liveChanges(prevFails, summary.findings);
+      // Live: only on change. End: the first end report always, later ones on change.
+      if (changes.broke.length || changes.fixed.length || (end && !prev)) {
+        const fresh = q.storeById.get(store.id);
+        if (fresh) {
+          const { subject, text } = end ? endMail(fresh, plan, summary, changes, !prev) : liveMail(fresh, plan, changes, id);
+          const to = fresh.alert_email || q.userById.get(fresh.user_id)?.email;
+          const slack = has(entitlements(fresh.user_id), 'slack') ? fresh.slack_webhook : null;
+          await Promise.allSettled([sendMail({ to, subject, text }), sendSlack(slack, `*${subject}*\n${text}`)]);
+        }
+      }
+    } catch (e) {
+      console.error('sale live check failed', e);
+      Q.finish.run('error', null, null, JSON.stringify({ error: 'The check could not finish. The next one tries again.' }), id);
+    } finally { running.delete(plan.id); }
+  })();
+  return id;
+}
+
+/** Called by the scheduler every 5 minutes: the go-live burst for every sale that is running. */
+export function dueSaleBursts(now = Date.now()) {
+  const started = [];
+  for (const row of Q.live.all(now, now)) {
+    if (running.has(row.id)) continue;
+    const store = q.storeById.get(row.store_id);
+    if (!store || !store.monitoring) continue;
+    const ent = entitlements(store.user_id);
+    if (blockReason(ent, store.id)) continue;
+    const last = Q.last.get(row.id);
+    if (last?.status === 'running') continue;
+    if (burstDue(parse(row), sqlMs(last?.created_at), now, burstKind(ent))) started.push(startLiveCheck(store, row, 'schedule'));
+  }
+  return started;
+}
+
+/** Called by the scheduler: the end check, 10 minutes after a sale ends, and again every 2 hours while something is still on. */
+export function dueSaleEndChecks(now = Date.now()) {
+  const started = [];
+  for (const row of Q.ended.all(now - END_AFTER, now - END_WINDOW)) {
+    if (running.has(row.id)) continue;
+    const store = q.storeById.get(row.store_id);
+    if (!store || !store.monitoring || blockReason(entitlements(store.user_id), store.id)) continue;
+    const c = Q.endCount.get(row.id);
+    const last = Q.lastEnd.get(row.id);
+    if (endCheckDue({ count: c.n, lastAt: sqlMs(c.last), lastVerdict: last?.verdict || 'fail' }, now, { again: END_AGAIN, max: END_MAX })) started.push(startLiveCheck(store, row, 'end'));
+  }
+  return started;
+}
+
+// ---------- routes ----------
+export function saleLiveRoutes(app, { requireUser, ownStore, refuse }) {
+  const ownPlan = (req, res) => {
+    const s = ownStore(req, res);
+    if (!s) return null;
+    const row = Q.plan.get(Number(req.params.pid));
+    if (!row || row.store_id !== s.id) { res.status(404).json({ error: 'Sale plan not found.' }); return null; }
+    return { s, row };
+  };
+  app.get('/api/stores/:id/sale-plans/:pid/live', requireUser, (req, res) => {
+    const o = ownPlan(req, res);
+    if (!o) return;
+    const p = parse(o.row);
+    const ent = entitlements(o.s.user_id);
+    const kind = burstKind(ent);
+    const every = burstEvery(p, Date.now(), kind);
+    const last = Q.last.get(p.id);
+    res.json({
+      phase: phase(p), every, kind,
+      nextInMin: every && last ? Math.max(0, Math.round(every - (Date.now() - sqlMs(last.created_at)) / 60000)) : every ? 0 : null,
+      latest: liveView(Q.lastDone.get(p.id), { full: true }), running: last?.status === 'running' ? liveView(last) : null,
+      history: Q.list.all(p.id, 40).map((r) => liveView(r)),
+      end: liveView(Q.lastEnd.get(p.id), { full: true }), endHistory: Q.endList.all(p.id).map((r) => liveView(r)),
+      canCheckEnd: phase(p) === 'ended' && Date.now() - p.endsAt < END_WINDOW,
+    });
+  });
+  app.post('/api/stores/:id/sale-plans/:pid/live-check', requireUser, (req, res) => {
+    const o = ownPlan(req, res);
+    if (!o) return;
+    const why = blockReason(entitlements(o.s.user_id), o.s.id);
+    if (why) return refuse(res, why);
+    const p = parse(o.row);
+    const ph = phase(p);
+    if (ph === 'upcoming') return res.status(400).json({ error: 'The sale hasn’t started yet. Rehearse it instead.' });
+    if (ph === 'ended' && Date.now() - p.endsAt >= END_WINDOW) return res.status(400).json({ error: 'This sale ended more than 3 days ago.' });
+    if (running.has(p.id)) return res.status(409).json({ error: 'The sale is being checked right now.' });
+    if (Q.manualToday.get(o.s.id).n >= MANUAL_PER_DAY) return refuse(res, `You’ve checked sales for this store ${MANUAL_PER_DAY} times in the last 24 hours, the most allowed. The automatic checks keep running.`, 429);
+    res.json({ id: startLiveCheck(o.s, o.row, ph === 'ended' ? 'end-manual' : 'manual'), mode: ph === 'ended' ? 'end' : 'live' });
+  });
+  app.get('/api/stores/:id/sale-plans/:pid/live-checks/:cid', requireUser, (req, res) => {
+    const o = ownPlan(req, res);
+    if (!o) return;
+    const r = Q.byId.get(Number(req.params.cid));
+    if (!r || r.plan_id !== o.row.id) return res.status(404).json({ error: 'Check not found.' });
+    res.json(liveView(r, { full: true }));
+  });
+}
