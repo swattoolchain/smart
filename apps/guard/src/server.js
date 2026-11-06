@@ -18,7 +18,7 @@ import { adminRoutes } from './admin.js';
 import * as shopify from './shopify.js';
 import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
 import { paymentRoutes, razorpayWebhook } from './payments.js';
-import { webAccessRoutes, sessionValid, sessionEpoch, emailTaken } from './web-access.js';
+import { webAccessRoutes, sessionValid, sessionEpoch, bumpSessionEpoch, emailTaken } from './web-access.js';
 import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './release.js';
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
@@ -110,11 +110,14 @@ app.post('/api/scan', async (req, res) => {
     return res.status(400).json({ error: e.message });
   }
   const cached = q.recentFreeRunForUrl.get(origin);
-  if (cached) return res.json({ runId: cached.id, cached: true });
+  if (cached) return res.json({ runId: cached.public_id, cached: true });
   if (q.recentFreeRunsByIp.get(ip(req)).n >= config.freeScansPerIpPerHour)
     return res.status(429).json({ error: 'You have reached the free scan limit for this hour. Create a free account to keep monitoring.' });
-  const runId = startRun({ origin, kind: 'free', ip: ip(req), trigger: 'free' });
-  res.json({ runId });
+  const id = startRun({ origin, kind: 'free', ip: ip(req), trigger: 'free' });
+  const publicId = crypto.randomBytes(16).toString('hex');
+  q.setPublicId.run(publicId, id);
+  // The report link is random: /scan/<publicId>. The run number is never shown for free checks.
+  res.json({ runId: publicId });
 });
 
 /** The signed-in user: a login cookie on the website, or a Shopify session token inside Shopify admin. */
@@ -157,15 +160,35 @@ app.use((req, res, next) => {
   next();
 });
 function runVisibleTo(run, req) {
-  if (run.kind === 'free') return true;
+  // Free checks are opened only by their random link (see /api/runs/:id); their screenshots by signed links.
+  if (run.kind === 'free') return false;
   const uid = currentUserId(req);
   const store = run.store_id && q.storeById.get(run.store_id);
   return !!(uid && store && store.user_id === uid);
 }
 
+/** A free check's screenshots, signed for this answer only (the report page asks again every few seconds while it runs). */
+function signFreeShots(obj, runId) {
+  const exp = Math.floor(Date.now() / 1000) + 6 * 3600;
+  const re = new RegExp(`^/shots/run-${runId}/[\\w.-]+$`);
+  return JSON.parse(JSON.stringify(obj), (k, v) => (typeof v === 'string' && re.test(v) ? `${v}?t=${fileSig(v, exp)}.${exp}` : v));
+}
+
 app.get('/api/runs/:id', (req, res) => {
-  const run = q.runById.get(Number(req.params.id));
-  if (!run || !runVisibleTo(run, req)) return res.status(404).json({ error: 'Report not found' });
+  const key = String(req.params.id);
+  const byLink = /^[a-f0-9]{32}$/.test(key);
+  const run = byLink ? q.runByPublicId.get(key) : /^\d{1,12}$/.test(key) ? q.runById.get(Number(key)) : null;
+  if (!run || !(byLink || runVisibleTo(run, req))) return res.status(404).json({ error: 'Report not found' });
+  if (byLink) {
+    const result = run.result_json ? signFreeShots(JSON.parse(run.result_json), run.id) : null;
+    return res.json({
+      id: run.public_id, url: run.url, kind: run.kind, status: run.status, score: run.score, verdict: run.verdict, error: run.error,
+      created_at: run.created_at, finished_at: run.finished_at,
+      position: run.status === 'queued' ? db.prepare("SELECT COUNT(*) AS n FROM runs WHERE status IN ('queued') AND id < ?").get(run.id).n : 0,
+      live: run.status === 'queued' || run.status === 'running' ? signFreeShots(liveView(run.id), run.id) : null,
+      result,
+    });
+  }
   const ahead = run.status === 'queued' ? db.prepare("SELECT COUNT(*) AS n FROM runs WHERE status IN ('queued') AND id < ?").get(run.id).n : 0;
   res.json({
     id: run.id,
@@ -189,7 +212,9 @@ app.get('/api/runs/:id', (req, res) => {
 app.post('/api/leads', (req, res) => {
   const { email, runId, url, source } = req.body || {};
   if (!isEmail(email)) return res.status(400).json({ error: 'Enter a valid email' });
-  q.insertLead.run(email.toLowerCase(), String(url || '').slice(0, 300), Number(runId) || null, String(source || 'scan').slice(0, 40));
+  // Reports send their random link; it is stored as the run it belongs to.
+  const leadRun = /^[a-f0-9]{32}$/.test(String(runId || '')) ? q.runByPublicId.get(String(runId))?.id || null : null;
+  q.insertLead.run(email.toLowerCase(), String(url || '').slice(0, 300), leadRun, String(source || 'scan').slice(0, 40));
   if (config.adminEmail) sendMail({ to: config.adminEmail, subject: `New lead: ${email}`, text: `${email}\n${url || ''}\nRun ${runId || '-'}` }).catch(() => {});
   res.json({ ok: true });
 });
@@ -261,7 +286,11 @@ app.post('/api/auth/login', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Logging out ends every browser session of the account, not just this one, so a cookie copied
+// from another computer stops working too. Inside Shopify admin nothing changes (no cookies there).
 app.post('/api/auth/logout', (req, res) => {
+  const uid = req.session?.uid;
+  if (uid && sessionValid(req, uid).ok) bumpSessionEpoch(uid);
   req.session = null;
   res.json({ ok: true });
 });
@@ -286,6 +315,9 @@ app.post('/api/account/password', requireUser, async (req, res) => {
   if (!(await bcrypt.compare(String(current || ''), u.password_hash))) return res.status(400).json({ error: 'Current password is incorrect' });
   if (typeof next !== 'string' || next.length < 8) return res.status(400).json({ error: 'Use a new password of at least 8 characters' });
   q.updatePassword.run(await bcrypt.hash(next, 10), u.id);
+  // A new password signs out every other browser; this one stays signed in.
+  const ep = bumpSessionEpoch(u.id);
+  if (req.session?.uid === u.id) req.session.ep = ep;
   res.json({ ok: true });
 });
 
@@ -770,7 +802,7 @@ app.get('/api/admin/overview', requireUser, (req, res) => {
     stores: db.prepare('SELECT COUNT(*) AS n FROM stores').get().n,
     freeScans24h: db.prepare("SELECT COUNT(*) AS n FROM runs WHERE kind='free' AND created_at > datetime('now','-1 day')").get().n,
     leads: db.prepare('SELECT * FROM leads ORDER BY id DESC LIMIT 200').all(),
-    recentScans: db.prepare("SELECT id, url, score, verdict, status, created_at FROM runs WHERE kind='free' ORDER BY id DESC LIMIT 100").all(),
+    recentScans: db.prepare("SELECT id, public_id, url, score, verdict, status, created_at FROM runs WHERE kind='free' ORDER BY id DESC LIMIT 100").all(),
     signups: db.prepare('SELECT u.id, u.email, u.name, u.created_at, (SELECT GROUP_CONCAT(url) FROM stores WHERE user_id=u.id) AS stores FROM users u ORDER BY id DESC LIMIT 200').all(),
     queue: queueDepth(),
   });

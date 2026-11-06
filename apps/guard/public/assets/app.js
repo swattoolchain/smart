@@ -2054,7 +2054,7 @@
       <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))"><div class="figure"><b>${d.users}</b><span>accounts</span></div><div class="figure"><b>${d.stores}</b><span>stores added</span></div><div class="figure"><b>${d.freeScans24h}</b><span>free checks, 24 h</span></div><div class="figure"><b>${d.queue.active} / ${d.queue.waiting}</b><span>running / waiting</span></div></div>
       <section class="panel"><h2>Signups</h2>${t(d.signups, [['email', 'Email'], ['name', 'Name'], ['stores', 'Stores'], ['created_at', 'Joined']], (r, c) => (c === 'created_at' ? time(r[c]) : esc(r[c] ?? '')))}</section>
       <section class="panel"><h2>Leads</h2>${t(d.leads, [['email', 'Email'], ['store_url', 'Store'], ['source', 'Source'], ['created_at', 'When']], (r, c) => (c === 'created_at' ? time(r[c]) : esc(r[c] ?? '')))}</section>
-      <section class="panel"><h2>Free checks</h2>${t(d.recentScans, [['url', 'Store'], ['score', 'Score'], ['verdict', 'Result'], ['created_at', 'When'], ['id', 'Report']], (r, c) => (c === 'created_at' ? time(r[c]) : c === 'id' ? `<a href="/scan/${r.id}" target="_blank" rel="noopener">Open</a>` : c === 'verdict' ? esc(VERDICT[r.verdict] || r.status) : esc(r[c] ?? '')))}</section></div>`;
+      <section class="panel"><h2>Free checks</h2>${t(d.recentScans, [['url', 'Store'], ['score', 'Score'], ['verdict', 'Result'], ['created_at', 'When'], ['id', 'Report']], (r, c) => (c === 'created_at' ? time(r[c]) : c === 'id' ? (r.public_id ? `<a href="/scan/${esc(r.public_id)}" target="_blank" rel="noopener">Open</a>` : '') : c === 'verdict' ? esc(VERDICT[r.verdict] || r.status) : esc(r[c] ?? '')))}</section></div>`;
   };
 
   // ---------- Founder console ----------
