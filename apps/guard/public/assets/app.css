@@ -1210,3 +1210,8 @@ pre.yt-code { background: #f6f7fa; border: 1px solid var(--line); border-radius:
 .yt-ai textarea { width: 100%; resize: vertical; font: inherit; }
 .yt-ai .tag.ai { vertical-align: middle; margin-left: 6px; }
 .yt-ai #yt-ai-out .notice { margin-top: 10px; }
+.yt-tpl .tag { margin-bottom: 6px; display: inline-block; }
+.yt-tpl details { margin: 10px 0 4px; }
+.yt-tpl details summary { cursor: pointer; font-size: 13.5px; }
+.yt-tpl-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; margin-top: 10px; }
+.yt-tpl-fields .check-row { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; font-size: 14px; }

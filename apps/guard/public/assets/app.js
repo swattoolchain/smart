@@ -1238,14 +1238,14 @@
     const d = await api(`/api/stores/${s.id}/custom-tests`);
     if (!ctx.alive()) return;
     const base = `#/s/${s.id}/tests`;
-    const tab = ['file', 'history', 'help', 'edit'].includes(ctx.r.a) ? ctx.r.a : null;
+    const tab = ['file', 'history', 'help', 'edit', 'templates'].includes(ctx.r.a) ? ctx.r.a : null;
     const tests = (d.file?.tests || []).map(ytPlain);
     const ids = (d.file?.tests || []).map((t) => t.id);
     const format = d.file?.format || 'yaml';
     const used = `${tests.length} of ${d.limits.tests} test${d.limits.tests === 1 ? '' : 's'} on your plan`;
     const actions = `<button type="button" class="btn secondary" id="yt-upload">${icon('arrow', 16)}Upload file</button>${d.file ? `<button type="button" class="btn secondary" id="yt-download">Download file</button>` : ''}${tests.length < d.limits.tests ? `<a class="btn" href="${base}/edit/new">${icon('add', 16)}New test</a>` : ''}<input type="file" id="yt-file" accept=".yaml,.yml,.json,.txt,application/json,text/yaml" hidden>`;
     const head = storeHead(s, 'Your tests', { actions, meta: esc(used) }) + `<p class="lede-sm">Add tests for things only your store has, like a delivery checker or a size guide. We run them like a shopper, on your store only, and stop before payment.</p>`
-      + tabs(base, [[null, 'Tests', tests.length], ['file', 'File'], ['history', 'History', d.history.length], ['help', 'Help and examples']], tab === 'edit' ? null : tab);
+      + tabs(base, [[null, 'Tests', tests.length], ['file', 'File'], ['history', 'History', d.history.length], ['templates', 'Templates'], ['help', 'Help and examples']], tab === 'edit' ? null : tab);
     // Every change is saved as a new version of the file; nothing is ever lost.
     const saveList = async (list, msg) => {
       await api(`/api/stores/${s.id}/custom-tests`, { method: 'PUT', body: { tests: list, format } });
@@ -1327,6 +1327,35 @@
       return;
     }
 
+    if (tab === 'templates') {
+      // Ready-made tests: fill in the blanks (or keep the defaults) and add in one click.
+      const full = tests.length >= d.limits.tests;
+      const card = (x) => {
+        const added = tests.some((t) => t.name === x.test.name);
+        return `<section class="panel yt-tpl" data-tpl="${esc(x.key)}"><div class="yt-ex-head"><div><span class="tag">${esc(x.area)}</span><h2>${esc(x.title)}</h2><p class="sub">${esc(x.why)}</p></div>
+          <button type="button" class="btn ${added ? 'secondary' : ''} small" data-add="${esc(x.key)}" ${full ? 'disabled' : ''}>${added ? 'Add again' : 'Add to my tests'}</button></div>
+          <details><summary>Fill in for your store <span class="muted">(optional: the defaults suit most themes)</span></summary><div class="yt-tpl-fields">
+            ${x.fill.map((f) => f.kind === 'flag' ? `<label class="check-row"><input type="checkbox" data-v="${esc(f.key)}"> ${esc(f.label)}${f.hint ? `<span class="muted"> · ${esc(f.hint)}</span>` : ''}</label>` : `<div class="field"><label for="tpl-${esc(x.key)}-${esc(f.key)}">${esc(f.label)}</label><input id="tpl-${esc(x.key)}-${esc(f.key)}" data-v="${esc(f.key)}" placeholder="${esc(f.default)}" maxlength="200" spellcheck="false">${f.hint ? `<p class="hint">${esc(f.hint)}</p>` : ''}</div>`).join('')}
+          </div></details>
+          <ol class="yt-ex-steps">${x.test.steps.map((st) => `<li>${esc(ytSay(st))}</li>`).join('')}</ol></section>`;
+      };
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
+        <p class="sub">Tests for features many stores have. Add one, then press Try it now in the editor to see it work on your store.${full ? ` <b>Your plan allows ${d.limits.tests} tests per store; delete one to add another.</b>` : ''}</p>
+        ${d.templates.map(card).join('')}</div>`;
+      bindHead();
+      $$('[data-add]', ctx.main).forEach((b) => (b.onclick = async () => {
+        const box = b.closest('[data-tpl]');
+        const values = Object.fromEntries($$('[data-v]', box).map((i) => [i.dataset.v, i.type === 'checkbox' ? i.checked : i.value.trim()]));
+        const done = busy(b, 'Adding');
+        try {
+          const r = await api(`/api/stores/${s.id}/custom-tests/templates/${encodeURIComponent(b.dataset.add)}`, { method: 'POST', body: { values } });
+          toast(`“${r.name}” added. Try it now to see it work on your store.`);
+          location.hash = `${base}/edit/${r.index}`;
+        } catch (ex) { done(); toast(ex.message, 'error'); }
+      }));
+      return;
+    }
+
     if (tab === 'help') {
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
         <section class="panel"><h2>How your tests work</h2>
@@ -1367,7 +1396,7 @@
           <td class="row-actions"><button type="button" class="btn small secondary" data-try="${i}">${icon('play', 14)}Try it now</button><a class="icon-btn" href="${base}/edit/${i}" aria-label="Edit “${esc(t.name)}”" data-tip="Edit">${icon('edit', 16)}</a><button type="button" class="icon-btn" data-dup="${i}" aria-label="Duplicate “${esc(t.name)}”" data-tip="Duplicate">${icon('copy', 16)}</button><button type="button" class="icon-btn" data-del="${i}" aria-label="Delete “${esc(t.name)}”" data-tip="Delete">${icon('trash', 16)}</button></td></tr>
           <tr class="yt-try-row" id="yt-try-${i}" hidden><td colspan="4"></td></tr>`).join('')}
         </tbody></table></div></section>`
-      : `<div class="empty panel"><h2>No tests of your own yet</h2><p>Build one step by step, start from an example, or upload a file.</p><div class="inline-row" style="justify-content:center"><a class="btn" href="${base}/edit/new">${icon('add', 16)}New test</a><a class="btn secondary" href="${base}/help">See examples</a></div></div>`}
+      : `<div class="empty panel"><h2>No tests of your own yet</h2><p>Build one step by step, start from an example, or upload a file.</p><div class="inline-row" style="justify-content:center"><a class="btn" href="${base}/edit/new">${icon('add', 16)}New test</a><a class="btn secondary" href="${base}/templates">Start from a template</a><a class="btn secondary" href="${base}/help">See examples</a></div></div>`}
       </div>`;
     bindHead();
     const root = $('#yt-root');
