@@ -145,6 +145,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     let trafficOut = null;
     let ai = null;
     let scripts = null;
+    let abTests = null; // A/B tools found and the result per test version (shown on App health)
     let shopper = null;
     phase('journey');
     // With video replay on, the journey runs in the recorded window; the script, form and widget watchers follow it.
@@ -196,7 +197,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind === 'full' && on('sale.discount') && priceOffers.length && info.isShopify) await runOffers({ page, rec, origin, offers: priceOffers });
       if (kind === 'full' && info.isShopify && on('sale.abtest')) {
         phase('abtest');
-        await runAbTests({ page, rec, origin, info, password, variants: abVariants, shot }).catch((e) => rec.add(check('ab.tools', 'functional', 'A/B tests on your store', 'skip', { severity: 'minor', detail: `The A/B test check could not finish: ${shortErr(e)}` })));
+        abTests = await runAbTests({ page, rec, origin, info, password, variants: abVariants, shot }).catch((e) => { rec.add(check('ab.tools', 'functional', 'A/B tests on your store', 'skip', { severity: 'minor', detail: `The A/B test check could not finish: ${shortErr(e)}` })); return null; });
       }
       // The owner's own tests, each in its own browser window (never on free checks or draft-theme checks).
       if (customTests.length && on('custom') && kind !== 'free' && !preview) {
@@ -305,6 +306,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       traffic: trafficOut,
       ai,
       scripts,
+      abTests,
       shopper,
       testedProduct: info.products[0] ? { title: info.products[0].title, handle: info.products[0].handle } : null,
       notes: info.notes,
