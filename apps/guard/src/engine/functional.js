@@ -1,6 +1,7 @@
 import { check, shortErr, plural } from './checks.js';
 import { gotoStore, settle, settleChallenge } from './browser.js';
 import { searchTermFrom } from './discover.js';
+import { errorSource } from './apps.js';
 
 const ATC_SELECTORS = [
   'form[action*="/cart/add"] button[type="submit"][name="add"]',
@@ -72,7 +73,7 @@ async function dismissOverlays(page) {
 
 export async function runFunctional({ page, rec, origin, info, password, shot, on = () => true }) {
   const pageErrors = [];
-  page.on('pageerror', (e) => pageErrors.push({ url: page.url(), message: shortErr(e) }));
+  page.on('pageerror', (e) => pageErrors.push({ url: page.url(), message: shortErr(e), source: errorSource(e) }));
 
   // 1. Homepage
   rec.step('Open homepage');
@@ -395,6 +396,7 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
       );
 
       rec.step('Proceed to checkout (stops before payment)');
+      const shopDomain = await page.evaluate(() => (window.Shopify && window.Shopify.shop) || '').catch(() => '');
       const cbtn = await firstVisible(page, CHECKOUT_SELECTORS);
       if (cbtn) {
         await Promise.all([
@@ -407,7 +409,10 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
       }
       await settle(page, 2000);
       const url = page.url();
-      const reached = /\/checkouts?\//.test(url) || /checkout\.shopify\.com|shop\.app\/checkout/.test(url);
+      // Checkout must stay on the store's own site or Shopify's. A look-alike checkout elsewhere is how
+      // hijacked apps stole card details in 2026, and it looks exactly like the real one.
+      const offsite = !trustedCheckout(url, origin, shopDomain);
+      const reached = !offsite && (/\/checkouts?\//.test(url) || /checkout\.shopify\.com|shop\.app\/checkout/.test(url));
       const hasForm = await page
         .locator('input[type="email"], input[name="email"], input[autocomplete="email"], input[type="tel"], input[name="phone"]')
         .first()
@@ -416,7 +421,11 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
       const challenged = /challenge|captcha|throttle|queue/i.test(url) || (await page.locator('iframe[src*="captcha"]').count()) > 0;
       let status = 'fail';
       let detail = '';
-      if (reached && hasForm) {
+      let fix = 'Check the cart template checkout button, checkout apps, and Settings → Checkout. Test a manual order on a phone.';
+      if (offsite) {
+        detail = `Checkout sent shoppers to a different website (${hostOf(url)}) instead of your store's Shopify checkout. Card details entered there do not reach you.`;
+        fix = 'Treat this as urgent. Check which app or theme code changed recently (Online Store → Themes → Edit code, and your recently updated apps), remove it, and contact Shopify support. Pause the app that added the redirect until it is fixed.';
+      } else if (reached && hasForm) {
         status = 'pass';
         detail = 'Checkout opens with the contact form. (Test stopped before any payment details.)';
       } else if (challenged) {
@@ -434,8 +443,8 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
         check('fn.checkout', 'functional', 'Checkout opens', status, {
           severity: 'critical',
           detail,
-          evidence: status === 'pass' ? null : { screenshot: await shot(page, 'checkout'), url },
-          fix: status === 'fail' ? 'Check the cart template checkout button, checkout apps, and Settings → Checkout. Test a manual order on a phone.' : '',
+          evidence: status === 'pass' ? null : { screenshot: await shot(page, 'checkout'), url, ...(offsite ? { offsite: hostOf(url) } : {}) },
+          fix: status === 'fail' ? fix : '',
         })
       );
     } catch (e) {
@@ -447,4 +456,20 @@ export async function runFunctional({ page, rec, origin, info, password, shot, o
   }
 
   return { pageErrors };
+}
+
+const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ''; } };
+const baseOf = (h) => h.replace(/^www\./, '');
+
+/** Whether a checkout address belongs to the store or to Shopify. */
+export function trustedCheckout(url, origin, shopDomain = '') {
+  const h = hostOf(url);
+  if (!h) return false;
+  const store = baseOf(hostOf(origin));
+  if (h === hostOf(origin) || baseOf(h) === store || h.endsWith(`.${store}`)) return true;
+  if (shopDomain && h === String(shopDomain).toLowerCase()) return true;
+  if (/(^|\.)(checkout|pay)\.shopify\.com$/.test(h) || h === 'shop.app' || h.endsWith('.shop.app')) return true;
+  // A preview or share link can move to the store's .myshopify.com address.
+  if (/\.myshopify\.com$/.test(h) && /\.myshopify\.com$/.test(hostOf(origin))) return h === hostOf(origin);
+  return false;
 }

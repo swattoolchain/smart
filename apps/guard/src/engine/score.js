@@ -14,6 +14,11 @@ const PROBLEM = {
   'nf.seo.noindex.home': 'your homepage is hidden from Google',
   'nf.seo.noindex.product': 'product pages are hidden from Google',
   'cat.pricing': 'some products have pricing mistakes (a zero price or a fake discount)',
+  'sec.scripts.bad': 'a script from a known malicious website is running on your store',
+  'sec.redirect': 'your store is sending shoppers to another website',
+  'sec.mining': "a script is using shoppers' devices to mine cryptocurrency",
+  'sec.frames': 'your store loads a hidden page from a known malicious website',
+  'sec.scripts.forms': 'a script is reading what shoppers type and sending it to another website',
 };
 
 export function scoreChecks(checks) {
@@ -37,7 +42,7 @@ export function scoreChecks(checks) {
   }
   let score = weight ? Math.round(total / weight) : 0;
   // Legal rule checks are reported as "rules met" and never change the health score or verdict.
-  const scored = checks.filter((c) => !CATEGORIES[c.category]?.rules);
+  const scored = checks.filter((c) => !CATEGORIES[c.category]?.rules && !c.notice);
   const criticalFails = scored.filter((c) => c.status === 'fail' && c.severity === 'critical');
   const majorFails = scored.filter((c) => c.status === 'fail' && c.severity === 'major');
   const locked = checks.some((c) => c.id === 'fn.home' && c.status === 'warn');
@@ -59,6 +64,9 @@ export function summarize(checks, verdict) {
   const fails = checks.filter((c) => c.status === 'fail');
   const warns = checks.filter((c) => c.status === 'warn');
   if (verdict === 'critical') {
+    // A hijacked checkout comes first: it means shoppers' card details may be going to someone else.
+    const hijack = fails.find((f) => f.id === 'fn.checkout' && f.evidence?.offsite);
+    if (hijack) return `Urgent: checkout is sending shoppers to another website (${hijack.evidence.offsite}). Their card details may be stolen.`;
     const c = fails.find((f) => f.severity === 'critical');
     return `Customers may not be able to buy: ${PROBLEM[c.id] || c.title.toLowerCase()}.`;
   }

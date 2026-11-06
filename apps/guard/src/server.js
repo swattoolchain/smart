@@ -15,6 +15,7 @@ import { scorecard, weekBuyability } from './scorecard.js';
 import crypto from 'node:crypto';
 import { entitlements, has, blockReason, licenseView, ensureLicense, notIncluded, plansWith, FEATURES, envAllowed, listPlans } from './license.js';
 import { adminRoutes } from './admin.js';
+import { enabledKeys, checkOn, isOn, requireFeature } from './features.js';
 import * as shopify from './shopify.js';
 import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
 import { paymentRoutes, razorpayWebhook } from './payments.js';
@@ -23,10 +24,14 @@ import { previewUrlFor, startRelease, settleRelease, cleanEnvironment } from './
 import { comparePair } from './compare.js';
 import * as site from './site/pages.js';
 import { approveBaseline } from './engine/visual.js';
+import { seal, storePassword } from './secret.js';
 import { sendMail, sendSlack } from './alerts.js';
+import { webhookOf, resolveFormat, checkWebhookUrl, newSecret, FORMATS as WEBHOOK_FORMATS, deliver as deliverWebhook, recentDeliveries } from './webhooks.js';
 import { buildComparison, reportList, SHOT_KEYS } from './compare.js';
 import { aiEnabled, explainDiff } from './ai.js';
 import { catalogReport } from './catalog-report.js';
+import { saleReadiness, emailSaleReadiness, saleRecipients, saleGroups } from './sale-readiness.js';
+import { appHealth } from './app-health.js';
 import { runnerRoutes } from './runner-routes.js';
 
 const app = express();
@@ -92,7 +97,7 @@ function ownStore(req, res) {
   return s;
 }
 function publicStore(s) {
-  const { storefront_password, config_json, ...rest } = s;
+  const { storefront_password, config_json, webhook_json, ...rest } = s;
   return { ...rest, has_password: !!storefront_password };
 }
 // ADMIN_EMAIL may list several founders, separated by commas.
@@ -268,7 +273,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', requireUser, (req, res) => {
-  res.json({ user: req.user, admin: isAdmin(req.user), license: licenseView(req.user.id) });
+  res.json({ user: req.user, admin: isAdmin(req.user), license: licenseView(req.user.id), features: enabledKeys() });
 });
 
 // The customer's own plan and payment history.
@@ -292,7 +297,7 @@ app.post('/api/account/password', requireUser, async (req, res) => {
 
 // ---------- Test suite catalog ----------
 app.get('/api/catalog', (req, res) => {
-  res.json({ groups: GROUPS, markets: MARKETS, features: FEATURES.map((f) => ({ key: f.key, label: f.label, groups: f.groups || [], plans: plansWith(f.key) })), intervals: INTERVALS, fullIntervals: FULL_INTERVALS, aiEnabled: aiEnabled(), defaults: { journeyIntervalMin: config.journeyIntervalMin, fullIntervalMin: config.fullScanIntervalMin } });
+  res.json({ groups: GROUPS.filter((g) => checkOn(g.key)), markets: MARKETS, features: FEATURES.map((f) => ({ key: f.key, label: f.label, groups: f.groups || [], plans: plansWith(f.key) })), intervals: INTERVALS, fullIntervals: FULL_INTERVALS, aiEnabled: aiEnabled(), defaults: { journeyIntervalMin: config.journeyIntervalMin, fullIntervalMin: config.fullScanIntervalMin } });
 });
 
 // Looks at a store before it is added: platform, products, collections, password lock.
@@ -361,6 +366,8 @@ function storeView(s) {
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
     failing: q.failingChecks.all(s.id),
+    // Owner only (storeView is only ever sent to the store's owner): the signing secret is needed to check signatures.
+    webhook: webhookOf(s) ? { url: webhookOf(s).url, format: webhookOf(s).format || 'auto', sendsAs: resolveFormat(webhookOf(s).url, webhookOf(s).format), secret: webhookOf(s).secret } : null,
   };
 }
 
@@ -395,7 +402,7 @@ app.post('/api/stores', requireUser, async (req, res) => {
   let cfg;
   try { cfg = normalizeConfig(req.body?.config || {}); } catch (e) { return res.status(400).json({ error: e.message }); }
   const info = q.insertStore.run(
-    req.user.id, origin, String(name || new URL(origin).host).slice(0, 80), password || null,
+    req.user.id, origin, String(name || new URL(origin).host).slice(0, 80), seal(password || null),
     alertEmail || req.user.email, slack || null, JSON.stringify(cfg), platform ? String(platform).slice(0, 60) : null, monitoring ? 1 : 0
   );
   const id = Number(info.lastInsertRowid);
@@ -409,11 +416,54 @@ app.get('/api/stores/:id', requireUser, (req, res) => {
   res.json({ store: storeView(s) });
 });
 
-app.patch('/api/stores/:id', requireUser, (req, res) => {
+/**
+ * Where alerts go when the owner clears the alert email. Website accounts: their account email. Shopify accounts
+ * sign in as their myshopify domain, which is not an address: use the confirmed browser-access email, else the
+ * shop's contact email from Shopify, else nothing (the caller asks for one).
+ */
+async function fallbackAlertEmail(store) {
+  const user = q.userById.get(store.user_id);
+  const shop = shopify.shopForStore(store.id) || shopify.shopForUser(store.user_id);
+  if (!shop) return user && isEmail(user.email) ? user.email : null;
+  if (user?.login_email && isEmail(user.login_email)) return user.login_email;
+  if (shop.uninstalled_at) return null;
+  try {
+    const d = await shopify.gql(shop.shop, '{ shop { email contactEmail } }');
+    return [d.shop?.contactEmail, d.shop?.email].find((e) => e && isEmail(e)) || null;
+  } catch { return null; }
+}
+
+app.patch('/api/stores/:id', requireUser, async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   const b = req.body || {};
+  // Webhook alerts: { url, format } to set, null or '' to remove; webhookSecret: 'new' makes a new signing secret.
+  let hook;
+  if (b.webhook !== undefined || b.webhookSecret !== undefined) {
+    if (!isOn('webhooks')) return res.status(400).json({ error: 'Webhook alerts are not available.' });
+    const cur = webhookOf(s);
+    if (b.webhook === null || b.webhook === '' || (b.webhook && !String(b.webhook.url || '').trim())) hook = null;
+    else if (b.webhook) {
+      if (!has(entitlements(req.user.id), 'slack')) return refuse(res, notIncluded('slack', 'Webhook alerts'));
+      const format = b.webhook.format || 'auto';
+      if (!WEBHOOK_FORMATS.includes(format)) return res.status(400).json({ error: `Choose a format: ${WEBHOOK_FORMATS.join(', ')}` });
+      let url;
+      try { url = await checkWebhookUrl(b.webhook.url); } catch (e) { return res.status(400).json({ error: e.message }); }
+      hook = { url, format, secret: cur?.secret || newSecret() };
+    } else hook = cur;
+    if (b.webhookSecret !== undefined) {
+      if (b.webhookSecret !== 'new') return res.status(400).json({ error: 'webhookSecret can only be "new"' });
+      if (!hook) return res.status(400).json({ error: 'Add a webhook address first.' });
+      hook = { ...hook, secret: newSecret() };
+    }
+  }
   if (b.alertEmail && !isEmail(b.alertEmail)) return res.status(400).json({ error: 'Alert email is not valid' });
+  // Clearing the alert email falls back to an address that can receive mail (never a myshopify domain).
+  let alertEmail = b.alertEmail === undefined ? s.alert_email : b.alertEmail || null;
+  if (b.alertEmail !== undefined && !b.alertEmail) {
+    alertEmail = await fallbackAlertEmail(s);
+    if (!alertEmail) return res.status(400).json({ error: 'Enter an email address for alerts. We need one to tell you when something breaks.' });
+  }
   if (b.slack && !/^https:\/\/hooks\.slack\.com\//.test(b.slack)) return res.status(400).json({ error: 'Slack webhook must start with https://hooks.slack.com/' });
   if (b.name !== undefined && !String(b.name).trim()) return res.status(400).json({ error: 'Give the store a name' });
   const ent = entitlements(req.user.id);
@@ -422,8 +472,8 @@ app.patch('/api/stores/:id', requireUser, (req, res) => {
   if (b.config?.fullIntervalMin && Number(b.config.fullIntervalMin) < ent.limits.fullMinInterval) return refuse(res, 'Your plan doesn\'t include full checks this often.');
   q.updateStoreSettings.run(
     b.name === undefined ? s.name : String(b.name).trim().slice(0, 80),
-    b.password === undefined ? s.storefront_password : b.password || null,
-    b.alertEmail === undefined ? s.alert_email : b.alertEmail || q.userById.get(s.user_id).email,
+    b.password === undefined ? s.storefront_password : seal(b.password || null),
+    alertEmail,
     b.slack === undefined ? s.slack_webhook : b.slack || null,
     b.monitoring === undefined ? s.monitoring : b.monitoring ? 1 : 0,
     s.id
@@ -433,6 +483,7 @@ app.patch('/api/stores/:id', requireUser, (req, res) => {
     try { next = normalizeConfig(b.config, storeConfig(s)); } catch (e) { return res.status(400).json({ error: e.message }); }
     q.updateStoreConfig.run(JSON.stringify(next), s.id);
   }
+  if (hook !== undefined) db.prepare('UPDATE stores SET webhook_json = ? WHERE id = ?').run(hook ? JSON.stringify(hook) : null, s.id);
   res.json({ ok: true, store: storeView(q.storeById.get(s.id)) });
 });
 
@@ -469,7 +520,7 @@ app.post('/api/stores/:id/run', requireUser, (req, res) => {
     disabled = GROUPS.filter((g) => !chosen.has(g.key)).map((g) => g.key);
     kind = GROUPS.some((g) => g.run === 'full' && chosen.has(g.key)) ? 'full' : 'journeys';
   }
-  res.json({ runId: startRun({ storeId: s.id, origin: s.url, kind, password: s.storefront_password, trigger: 'manual', disabled }), kind });
+  res.json({ runId: startRun({ storeId: s.id, origin: s.url, kind, password: storePassword(s), trigger: 'manual', disabled }), kind });
 });
 
 app.post('/api/stores/:id/run/:runId/cancel', requireUser, (req, res) => {
@@ -644,7 +695,7 @@ app.post('/api/stores/:id/discover', requireUser, async (req, res) => {
   if (!s) return;
   if (!entitlements(s.user_id).usable) return refuse(res, blockReason(entitlements(s.user_id)));
   try {
-    res.json(await discoverStore(s.url, s.storefront_password));
+    res.json(await discoverStore(s.url, storePassword(s)));
   } catch {
     res.status(502).json({ error: 'We could not look at this store right now. Try again in a minute.' });
   }
@@ -662,11 +713,19 @@ app.post('/api/stores/:id/test-alert', requireUser, async (req, res) => {
   if (!s) return;
   const name = s.name || new URL(s.url).host;
   const text = `This is a test alert for ${name} from Tharam Store Guard. Real alerts look like this, with what broke, how to fix it, and a link to the report.\n\n${config.baseUrl}/app#/s/${s.id}`;
-  const [mail, slack] = await Promise.all([
+  const chat = has(entitlements(s.user_id), 'slack');
+  const [mail, slack, webhook] = await Promise.all([
     sendMail({ to: s.alert_email, subject: `Test alert for ${name}`, text }).catch(() => false),
-    s.slack_webhook && has(entitlements(s.user_id), 'slack') ? sendSlack(s.slack_webhook, `*Test alert for ${name}*\n${text}`).catch(() => false) : Promise.resolve(null),
+    s.slack_webhook && chat ? sendSlack(s.slack_webhook, `*Test alert for ${name}*\n${text}`).catch(() => false) : Promise.resolve(null),
+    chat && isOn('webhooks') ? deliverWebhook(s, { event: 'test', subject: `Test alert for ${name}`, text }, { retry: false }).catch(() => ({ ok: false, error: 'Could not send' })) : Promise.resolve(null),
   ]);
-  res.json({ email: mail, slack, emailConfigured: !!config.smtp.host });
+  res.json({ email: mail, slack, webhook, emailConfigured: !!config.smtp.host });
+});
+
+app.get('/api/stores/:id/webhook-deliveries', requireUser, requireFeature('webhooks'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json({ deliveries: recentDeliveries(s.id, 20) });
 });
 
 app.get('/api/stores/:id/visual', requireUser, (req, res) => {
@@ -728,6 +787,32 @@ app.get('/api/stores/:id/catalog', requireUser, (req, res) => {
   const data = catalogReport(s.id, req.query.run ? Number(req.query.run) : null, String(req.query.base || 'prev'));
   if (!data) return res.status(404).json({ error: 'No catalog snapshot yet. Run a full check first.' });
   res.json(data);
+});
+
+// Sale readiness: one report before a sale, from the latest full check (or ?run=), and as an email.
+app.get('/api/stores/:id/sale-readiness', requireUser, requireFeature('sale_report'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const r = saleReadiness(s, req.query.run ? Number(req.query.run) || -1 : null);
+  if (!r) return res.status(404).json({ error: 'No full check yet. Run a sale readiness check first.', groups: saleGroups(s), recipient: saleRecipients(s) });
+  res.json({ ...r, groups: saleGroups(s), recipient: saleRecipients(s) });
+});
+
+app.post('/api/stores/:id/sale-readiness/email', requireUser, requireFeature('sale_report'), async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const r = saleReadiness(s, req.body?.run ? Number(req.body.run) || -1 : null);
+  if (!r) return res.status(404).json({ error: 'No full check yet. Run a sale readiness check first.' });
+  const to = saleRecipients(s);
+  if (!to) return res.status(400).json({ error: 'Add an alert email under Alerts first.' });
+  try { res.json(await emailSaleReadiness(s, r, to)); } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'The email could not be sent. Try again in a minute.' }); }
+});
+
+// App Health: every app and service seen on the storefront, from the latest checks.
+app.get('/api/stores/:id/apps', requireUser, requireFeature('app_health'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(appHealth(s));
 });
 
 app.post('/api/stores/:id/explain-change', requireUser, async (req, res) => {

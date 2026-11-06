@@ -117,7 +117,7 @@ const DEFAULT_PLANS = [
     prices: { USD: { month: 9900, year: 99000 }, EUR: { month: 8900, year: 89000 }, INR: { month: 799900, year: 7999000 } },
     features: ALL, limits: { journeyMinInterval: 30, fullMinInterval: 720, environments: 10, maxStores: null }, public: 1, highlight: 0, sort: 4 },
 ];
-const DEFAULT_SETTINGS = { signup_plan: 'beta', trial_days: '14', grace_days: '7', payment_note: 'To pay or upgrade, write to hello@tharam.store. We accept bank transfer, UPI and cards, and send an invoice for every payment.' };
+const DEFAULT_SETTINGS = { browser_hour_cost: '0.01', cost_currency: 'EUR', signup_plan: 'beta', trial_days: '14', grace_days: '7', payment_note: 'To pay or upgrade, write to hello@tharam.store. We accept bank transfer, UPI and cards, and send an invoice for every payment.' };
 
 const insPlan = db.prepare('INSERT OR IGNORE INTO plans (key, name, tagline, kind, prices_json, features_json, limits_json, public, highlight, sort) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
 for (const p of DEFAULT_PLANS) insPlan.run(p.key, p.name, p.tagline, p.kind, JSON.stringify(p.prices), JSON.stringify(p.features), JSON.stringify(p.limits), p.public, p.highlight, p.sort);

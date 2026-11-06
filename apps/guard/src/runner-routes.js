@@ -10,9 +10,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { config } from './config.js';
+import { q } from './db.js';
+import { readBaseline, readPreviousCatalog, saveFirstBaseline, saveCatalogSnapshot } from './runner-files.js';
 import { audit } from './license.js';
 import { createJoinToken, joinWithToken, authRunner, touchRunner, updateRunner, runnerById, L } from './runners.js';
-import { workerCheckIn, workerComplete, workerProgress, holdsLease, runnerStates, removeRunner } from './queue.js';
+import { workerCheckIn, workerComplete, workerProgress, holdsLease, runnerStates, currentChecks, removeRunner } from './queue.js';
+import { runnerReport, recentRuns } from './usage.js';
 
 export const RUNNER_TYPE = 'application/vnd.tharam.runner+json';
 
@@ -59,6 +62,48 @@ export function runnerRoutes(app, { requireUser, isAdmin }) {
     res.json({ ok: true });
   });
 
+  // ---- full checks: files from and to the main server (src/runner-files.js) ----
+  /** The store of a check this worker holds right now, or null (and the response is sent). */
+  const heldStore = (req, res) => {
+    const runId = Number(req.params.id);
+    if (!holdsLease(req.runner, runId)) { res.status(409).json({ error: 'This check is not yours (any more).' }); return null; }
+    const run = q.runById.get(runId);
+    if (!run?.store_id || run.kind !== 'full') { res.status(400).json({ error: 'Only full checks of a store use these files.' }); return null; }
+    return run;
+  };
+
+  app.get('/api/runner/runs/:id/baselines/:file', worker, (req, res) => {
+    const run = heldStore(req, res);
+    if (!run) return;
+    const f = readBaseline(run.store_id, req.params.file);
+    if (!f) return res.status(404).json({ error: 'No such baseline' });
+    res.type('image/png').sendFile(f);
+  });
+
+  app.get('/api/runner/runs/:id/catalog-previous', worker, (req, res) => {
+    const run = heldStore(req, res);
+    if (!run) return;
+    const prev = readPreviousCatalog(run.store_id, run.id);
+    if (!prev) return res.status(404).json({ error: 'No earlier catalog snapshot' });
+    res.set('x-tharam-catalog-run', String(prev.runId)).type('application/json').send(prev.text);
+  });
+
+  app.post('/api/runner/runs/:id/baselines/:file', worker, express.raw({ type: 'image/png', limit: '10mb' }), (req, res) => {
+    const run = heldStore(req, res);
+    if (!run) return;
+    const r = saveFirstBaseline(run.store_id, req.params.file, req.body);
+    if (r !== 'saved' && r !== 'kept') return res.status(400).json({ error: r });
+    res.json({ ok: true, [r]: true });
+  });
+
+  app.post('/api/runner/runs/:id/catalog', worker, big, (req, res) => {
+    const run = heldStore(req, res);
+    if (!run) return;
+    const r = saveCatalogSnapshot(run.store_id, run.id, req.body);
+    if (r !== 'saved') return res.status(400).json({ error: r });
+    res.json({ ok: true });
+  });
+
   app.post('/api/runner/runs/:id/complete', worker, big, async (req, res) => {
     const { result, error } = req.body || {};
     if (!error && (!result || typeof result !== 'object' || !Array.isArray(result.checks))) return res.status(400).json({ error: 'Send a result with checks, or an error' });
@@ -71,10 +116,21 @@ export function runnerRoutes(app, { requireUser, isAdmin }) {
   const admin = (req, res, next) => requireUser(req, res, () => (isAdmin(req.user) ? next() : res.status(403).json({ error: 'Forbidden' })));
 
   app.get('/api/admin/runners', admin, (req, res) => {
-    const runners = runnerStates().map((r) => ({
-      id: r.id, name: r.name, kind: r.kind, slots: r.slots, used: r.used, tags: r.tags, status: r.status, healthy: r.healthy, lastSeen: r.kind === 'main' ? null : r.last_seen, createdAt: r.created_at,
-    }));
-    res.json({ runners });
+    const days = Math.min(30, Math.max(1, Number(req.query.days) || 7));
+    const stats = new Map(runnerReport({ days, states: runnerStates(), current: currentChecks() }).map((r) => [r.id, r]));
+    const runners = runnerStates().map((r) => {
+      const st = stats.get(r.id) || {};
+      return {
+        id: r.id, name: r.name, kind: r.kind, slots: r.slots, used: r.used, tags: r.tags, status: r.status, healthy: r.healthy, lastSeen: r.kind === 'main' ? null : r.last_seen, createdAt: r.created_at,
+        current: st.current || [], today: st.today || null, totals: st.totals || null, days: st.days || [],
+      };
+    });
+    res.json({ days, runners, recent: recentRuns({ limit: 30 }) });
+  });
+
+  /** The latest checks with the runner that ran them, wait and duration (optionally one runner's). */
+  app.get('/api/admin/runs', admin, (req, res) => {
+    res.json({ runs: recentRuns({ limit: req.query.limit, runnerId: req.query.runner || null }) });
   });
 
   app.post('/api/admin/runners/join-tokens', admin, (req, res) => {

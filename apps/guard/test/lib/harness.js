@@ -5,7 +5,7 @@
  *   - the Tharam server, on a free port, with a fresh temporary database
  * Nothing touches real services, the network, or the developer's data folder.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -95,6 +95,8 @@ export async function startProduct({ env = {}, mock: mockOpts = {} } = {}) {
     RAZORPAY_API_BASE: `${fake.base}/rzp`,
     AI_API_KEY: '',
     ANTHROPIC_API_KEY: '',
+    // Tests see every feature; test/features.test.js checks the real defaults.
+    FEATURES_DEFAULT: 'on',
     ...env,
   });
   try { await waitFor(`${base}/healthz`); } catch (e) { mock.stop(); fake.stop(); server.stop(); throw new Error(`${e.message}\n${server.log()}`); }
@@ -187,6 +189,20 @@ export async function signup(product, email = `owner-${crypto.randomUUID().slice
   const r = await s.post('/api/auth/signup', { email, password, name: 'Test Owner' });
   if (r.status !== 200) throw new Error(`signup failed ${r.status} ${r.text}`);
   s.email = email; s.password = password;
+  return s;
+}
+
+/**
+ * Creates the founder account the way the server does (scripts/create-user.js, never by signing up)
+ * and returns its signed-in session. Safe to call more than once per product.
+ */
+export async function founderSession(product, password = 'founder-test-password') {
+  const r = spawnSync(process.execPath, ['scripts/create-user.js', FOUNDER, password, 'Founder'], { cwd: ROOT, env: { ...process.env, DATA_DIR: product.dataDir }, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`create-user failed: ${r.stderr || r.stdout}`);
+  const s = product.session();
+  const l = await s.post('/api/auth/login', { email: FOUNDER, password });
+  if (l.status !== 200) throw new Error(`founder login failed ${l.status} ${l.text}`);
+  s.email = FOUNDER;
   return s;
 }
 

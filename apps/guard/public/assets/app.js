@@ -4,8 +4,17 @@
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
   const esc = window.escHtml;
+  // Theme code changes (sec.theme): the files that changed and their changed lines.
+  function themeDiff(ev) {
+    if (!ev || !Array.isArray(ev.files) || !ev.files.length) return '';
+    const label = { changed: 'changed', added: 'new file', removed: 'deleted' };
+    return `<div class="theme-diff">${ev.files.map((f, i) => `<details${i < 3 ? ' open' : ''}><summary><code>${esc(f.filename)}</code> <span class="muted">${esc(label[f.change] || f.change)}${f.added || f.removed ? ` · <span class="d-add">+${f.added}</span> <span class="d-del">−${f.removed}</span>` : ''}</span></summary>
+      ${f.lines && f.lines.length ? `<pre class="diff">${f.lines.map((l) => `<span class="${l.t === '+' ? 'd-add' : 'd-del'}">${l.t} ${String(l.n).padStart(4, ' ')}  ${esc(l.s)}</span>`).join('')}${f.more ? `<span class="muted" style="display:block">… ${f.more} more changed lines</span>` : ''}</pre>` : `<p class="muted" style="margin:6px 0">${f.text === false ? 'Not a text file, so there are no lines to show.' : 'No lines to show.'}</p>`}</details>`).join('')}${ev.moreFiles ? `<p class="muted">… and ${ev.moreFiles} more files</p>` : ''}</div>`;
+  }
 
-  const S = { me: null, admin: false, stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
+  const S = { me: null, admin: false, features: new Set(), stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
+  /** Whether a feature is switched on in the founder console (the server enforces it too). */
+  const feat = (k) => S.features.has(k);
 
   // ---------- Helpers ----------
   // Inside Shopify admin (the Shopify app) there are no cookies: each request carries a fresh Shopify session token.
@@ -147,6 +156,7 @@
     account: '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5"/>',
     reports: '<path d="M7 3.5h7l4.5 4.5V20a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z"/><path d="M14 3.5V8h4.5"/><path d="M9.5 17v-3M12.5 17v-5M15.5 17v-2"/>',
     catalog: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><path d="M4 15h16M4 19h16"/>',
+    apps: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/><path d="M16.5 4v6M13.5 7h6M4 16.5h7"/>',
     founder: '<path d="M12 3.5 14.4 9l5.6.5-4.3 3.8 1.3 5.7L12 16l-5 3 1.3-5.7L4 9.5 9.6 9z"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     chevron: '<path d="m8 10 4 4 4-4"/>',
@@ -337,6 +347,8 @@
       ${item(`${base}/publish`, 'publish', 'Safe to publish', at('publish'))}
       ${item(`${base}/catalog`, 'catalog', 'Catalog', at('catalog'))}
       ${item(`${base}/visual`, 'visual', 'Visual changes', at('visual'))}
+      ${feat('sale_report') ? item(`${base}/sale`, 'sparkle', 'Sale readiness', at('sale')) : ''}
+      ${feat('app_health') ? item(`${base}/apps`, 'apps', 'App health', at('apps')) : ''}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
@@ -419,7 +431,9 @@
       const main = $('#main');
       if (!silent) { main.innerHTML = skeleton(); window.scrollTo(0, 0); }
       const ctx = { alive, main, r };
-      if (r.store) await (STORE_PAGES[r.module] || STORE_PAGES.overview)(ctx, S.stores.find((s) => s.id === r.store));
+      // Pages of features that are switched off open the overview instead.
+      const PAGE_FEATURE = { sale: 'sale_report', apps: 'app_health' };
+      if (r.store) await ((!PAGE_FEATURE[r.module] || feat(PAGE_FEATURE[r.module])) && STORE_PAGES[r.module] || STORE_PAGES.overview)(ctx, S.stores.find((s) => s.id === r.store));
       else await PAGES[r.page](ctx);
       if (!silent && alive()) { const h1 = main.querySelector('h1'); document.title = `${h1 ? h1.textContent + ' – ' : ''}Tharam`; }
     } catch (e) {
@@ -612,10 +626,16 @@
     const runs = data.runs;
     const active = runs.find((r) => r.status === 'queued' || r.status === 'running');
     const lastDone = runs.find((r) => r.status === 'done');
-    const [latest, activeRun, sc] = await Promise.all([lastDone ? api('/api/runs/' + lastDone.id) : null, active ? api('/api/runs/' + active.id) : null, api(`/api/stores/${s.id}/scorecard`).catch(() => null), S.catalog ? null : api('/api/catalog').then((c) => (S.catalog = c))]);
+    // A quick journey check doesn't look at products, speed or SEO: keep showing what the last full check found there.
+    const lastFull = runs.find((r) => r.status === 'done' && r.kind === 'full' && r.trigger !== 'release');
+    const [latest, activeRun, sc, fullRun] = await Promise.all([lastDone ? api('/api/runs/' + lastDone.id) : null, active ? api('/api/runs/' + active.id) : null, api(`/api/stores/${s.id}/scorecard`).catch(() => null), lastFull && lastFull.id !== lastDone?.id ? api('/api/runs/' + lastFull.id).catch(() => null) : null, S.catalog ? null : api('/api/catalog').then((c) => (S.catalog = c))]);
     if (!ctx.alive()) return;
     const res = latest?.result;
-    const problems = problemsFrom(res);
+    const tested = new Set((res?.checks || []).map((c) => c.id));
+    const problems = problemsFrom({ checks: [
+      ...problemsFrom(res).map((c) => ({ ...c, runId: lastDone.id })),
+      ...problemsFrom(fullRun?.result).filter((c) => !tested.has(c.id)).map((c) => ({ ...c, runId: fullRun.id })),
+    ] });
     const fails = problems.filter((c) => c.status === 'fail'), warns = problems.filter((c) => c.status === 'warn');
     const base = `#/s/${s.id}`;
     let body = '';
@@ -626,7 +646,8 @@
     if (res) {
       // 1. The answer to "can customers buy right now?"
       const tone = { healthy: 'ok', warning: 'warn', critical: 'bad', locked: 'warn', blocked: 'warn' }[res.verdict] || 'warn';
-      const headline = { healthy: 'Customers can buy', warning: 'Customers can buy', critical: 'Customers may not be able to buy', locked: 'We couldn’t get into your store', blocked: 'We were stopped at the door' }[res.verdict] || VERDICT[res.verdict];
+      const hijacked = res.checks.some((c) => c.id === 'fn.checkout' && c.status === 'fail' && c.evidence?.offsite);
+      const headline = hijacked ? 'Checkout is going to another website' : { healthy: 'Customers can buy', warning: 'Customers can buy', critical: 'Customers may not be able to buy', locked: 'We couldn’t get into your store', blocked: 'We were stopped at the door' }[res.verdict] || VERDICT[res.verdict];
       body += `<section class="panel status ${tone}" data-tour="hero">
         <span class="st-ic">${icon(tone === 'ok' ? 'check' : tone === 'bad' ? 'stop' : 'alerts', 24)}</span>
         <div class="st-main"><h2>${esc(headline)}</h2><p>${esc(res.summary)}</p>
@@ -644,28 +665,28 @@
       const b = sc?.buyability, t = sc?.timeToFix, rr = sc?.revenueAtRisk, cat = sc?.catalog, pb = sc?.publishing, rules = sc?.rules;
       const bars = b ? b.daily.slice(-14).map((d) => `<i class="${d.pct == null ? 'none' : toneOf(d.pct)}" style="--h:${d.pct ?? 8}" title="${esc(d.day)}: ${d.pct == null ? 'no checks' : d.pct + '%'}"></i>`).join('') : '';
       const speed = sc?.speed?.ms ?? null;
-      const sp = speed ? Math.round(speed / 100) / 10 : null;
+      const sp = speed ? Math.max(0.1, Math.round(speed / 100) / 10) : null;
       const tile = (href, label, value, sub, cls = '', extra = '') => `<a class="kpi ${cls}" href="${href}"><span class="k-l">${label}</span><b class="k-v">${value}</b><span class="k-s">${sub}</span>${extra}</a>`;
       const tiles = [
         tile(`${base}/reports`, 'Customers could buy · 7 days', `<span class="${toneOf(b?.week.pct)}">${pct(b?.week.pct)}</span>`, b ? `Today ${pct(b.day.pct)} · 30 days ${pct(b.month.pct)}` : 'After a few checks', 'lead', `<div class="sc-bars">${bars}</div>`),
         tile(`${base}/reports/${lastDone.id}`, 'Needs fixing', `<span class="${fails.length ? 'bad' : 'good'}">${fails.length}</span>`, warns.length ? `${plural(warns.length, 'more thing')} worth a look` : fails.length ? 'Nothing else to look at' : 'Nothing to fix'),
         tile(`${base}/settings`, 'Money at risk · 30 days', rr?.amount != null ? moneyTxt(rr.amount, rr.currency) : `${rr?.hours ?? 0} h`, rr?.amount != null ? `${rr.hours} h when customers couldn’t buy` : rr?.hours ? 'when customers couldn’t buy · add daily sales' : 'No lost buying time'),
-        tile(`${base}/reports/${sc?.speed?.run || lastDone.id}`, 'Homepage on phones', sp != null ? `<span class="${sp <= 2.5 ? 'good' : sp <= 4 ? 'mid' : 'bad'}">${sp} s</span>` : '–', sp == null ? 'After a full check' : sp <= 2.5 ? 'Fast' : sp <= 4 ? 'A little slow' : 'Slow: shoppers may leave'),
+        tile(`${base}/reports/${sc?.speed?.run || lastDone.id}`, 'Homepage on phones', sp != null ? `<span class="${sp <= 2.5 ? 'good' : sp <= 4 ? 'mid' : 'bad'}">${speed < 100 ? '&lt;0.1' : sp} s</span>` : '–', sp == null ? 'After a full check' : sp <= 2.5 ? 'Fast' : sp <= 4 ? 'A little slow' : 'Slow: shoppers may leave'),
         tile(`${base}/catalog`, 'Products', cat ? `<span class="${cat.withIssues ? 'mid' : 'good'}">${cat.withIssues}</span>` : '–', cat ? (cat.withIssues ? `of ${cat.products} need fixing` : `All ${cat.products} look right`) : 'After a full check'),
         tile(`${base}/alerts`, 'Time to fix', durTxt(t?.medianMinutes), t?.open ? `<span class="t-fail">${plural(t.open, 'problem')} still open</span>` : t?.incidents ? `typical, ${plural(t.incidents, 'incident')}` : 'No buying problems'),
-        rules?.markets?.length ? tile(`${base}/reports/${rules.run?.id || lastDone.id}`, 'Laws where you sell', (() => { const ms = rules.markets.filter((m) => !m.pending); const met = ms.reduce((a, m) => a + m.met, 0), tot = ms.reduce((a, m) => a + m.total, 0); return tot ? `<span class="${met === tot ? 'good' : 'mid'}">${met}/${tot}</span>` : '–'; })(), rules.markets.map((m) => `${esc(m.label)}${m.pending ? '' : ` ${m.met}/${m.total}`}`).join(' · ') + ' rules met') : '',
+        feat('laws') && rules?.markets?.length ? tile(`${base}/reports/${rules.run?.id || lastDone.id}`, 'Laws where you sell', (() => { const ms = rules.markets.filter((m) => !m.pending); const met = ms.reduce((a, m) => a + m.met, 0), tot = ms.reduce((a, m) => a + m.total, 0); return tot ? `<span class="${met === tot ? 'good' : 'mid'}">${met}/${tot}</span>` : '–'; })(), rules.markets.map((m) => `${esc(m.label)}${m.pending ? '' : ` ${m.met}/${m.total}`}`).join(' · ') + ' rules met') : '',
         tile(`${base}/publish`, 'Changes checked · 30 days', String(pb?.checked ?? 0), pb?.checked ? (pb.caught ? `${plural(pb.caught, 'risky change')} caught` : 'All safe to publish') : 'Check a design before publishing'),
       ].filter(Boolean).join('');
       body += `<section class="kpis" data-tour="scorecard">${tiles}</section>`;
     }
     if (res || runs.length) {
       // 3. What to do today, and the things owners do most.
-      const attention = problems.slice(0, 5).map((c) => `<li><a class="row" href="${base}/reports/${lastDone.id}" data-focus="${esc(c.id)}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fix' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.fix || c.detail)}</span></span>${icon('right', 15)}</a></li>`).join('');
+      const attention = problems.slice(0, 5).map((c) => `<li><a class="row" href="${base}/reports/${c.runId}" data-focus="${esc(c.id)}"><span class="sev ${c.status}">${c.status === 'fail' ? 'Fix' : 'Check'}</span><span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.fix || c.detail)}</span></span>${icon('right', 15)}</a></li>`).join('');
       const action = (href, ic, t, d, attrs = '') => `<a class="qa" href="${href}" ${attrs}><span class="qa-ic">${icon(ic, 18)}</span><span><b>${t}</b><small>${d}</small></span>${icon('right', 15)}</a>`;
       const actions = [
         action(`${base}/run`, 'play', 'Run a check now', 'Shopping journey, full suite or pick checks'),
         action(`${base}/publish`, 'publish', 'Check a design before publishing', 'Your draft themes, side by side with live'),
-        action(`${base}/run`, 'sparkle', 'Sale readiness check', 'Before Black Friday or a big sale', 'data-preset="sale"'),
+        feat('sale_report') ? action(`${base}/sale`, 'sparkle', 'Sale readiness', 'Before Black Friday or a big sale') : '',
         action(`${base}/suite/codes`, 'catalog', 'Test discount codes', s.config.discountCodes?.length ? `${plural(s.config.discountCodes.length, 'code')} checked daily` : 'Make sure your sale codes work'),
         action(`${base}/alerts`, 'alerts', 'Alerts', `Sent to ${esc(s.alert_email || 'your email')}`),
       ].join('');
@@ -727,9 +748,9 @@
     const PRESETS = [
       { key: 'quick', title: 'Quick journey', desc: 'Can customers find a product, add it to the cart and reach checkout?', keys: keys(usable.filter((g) => g.run === 'journeys')) },
       { key: 'suite', title: 'Your test suite', desc: 'Everything switched on for scheduled full checks of this store.', keys: suite, tag: 'Recommended' },
-      { key: 'sale', title: 'Sale readiness', desc: 'Before Black Friday or a big sale: buying on a phone, every price, discount codes, speed, app errors and how the store looks.', keys: keys(usable.filter((g) => ['journey.core', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount', 'catalog', 'speed', 'visual', 'law.cookies'].includes(g.key) && (g.key !== 'law.cookies' || inMarket(g, s.config.markets)))) },
+      { key: 'sale', title: 'Sale readiness', desc: 'Before Black Friday or a big sale: buying on a phone, every price, discount codes, speed, app errors and how the store looks.', keys: keys(usable.filter((g) => ['journey.core', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount', 'catalog', 'speed', 'visual', 'law.cookies', 'law.de', 'access.law', 'law.us'].includes(g.key) && (!g.markets || inMarket(g, s.config.markets)))) },
       { key: 'all', title: 'Everything', desc: 'Every validation available, including ones switched off in your suite.', keys: keys(usable) },
-    ].filter((p, i, all) => p.key !== 'all' || !same(p.keys, all[1].keys));
+    ].filter((p, i, all) => (p.key !== 'all' || !same(p.keys, all[1].keys)) && (p.key !== 'sale' || feat('sale_report')));
     let sel = [...suite];
     if (S.runPreset) { const p = PRESETS.find((x) => x.key === S.runPreset); if (p) sel = [...p.keys]; S.runPreset = null; }
     let saveSuite = false;
@@ -1067,15 +1088,43 @@
           <div class="controls"><div class="field"><label for="ae">Alert email</label><input id="ae" name="alertEmail" type="email" value="${esc(s.alert_email || '')}" autocomplete="email"></div></div></div>
         <div class="form-section"><div><h3>Slack</h3><p class="explain">Post alerts to a Slack channel. In Slack, open Apps, add <b>Incoming Webhooks</b>, choose a channel, and paste the webhook URL here.</p></div>
           <div class="controls"><div class="field"><label for="sl">Slack webhook URL <span class="muted" style="font-weight:400">(optional)</span></label><input id="sl" name="slack" placeholder="https://hooks.slack.com/services/…" value="${esc(s.slack_webhook || '')}" ${can('slack') ? '' : 'disabled'}>${can('slack') ? '' : `<p class="hint">${icon('lock', 12)} Slack alerts are in the ${esc(plansFor('slack'))} plans. <a href="#/account/billing">See plans</a></p>`}</div></div></div>
-        <div class="form-section"><div><h3>Test your setup</h3><p class="explain">Sends a sample alert to the saved email and Slack channel.</p></div>
+        ${feat('webhooks') ? `<div class="form-section"><div><h3>Webhook</h3><p class="explain">Send alerts to Zapier, Make, Microsoft Teams, Discord or your own system. We post once when something breaks and once when it's fixed, and try again for 30 minutes if your side is down. Every request is signed with the secret below.</p></div>
+          <div class="controls">
+            <div class="field"><label for="wh">Webhook address <span class="muted" style="font-weight:400">(optional)</span></label><input id="wh" name="webhookUrl" placeholder="https://hooks.zapier.com/hooks/catch/…" value="${esc(s.webhook?.url || '')}" ${can('slack') ? '' : 'disabled'}>${can('slack') ? '' : `<p class="hint">${icon('lock', 12)} Webhook alerts come with Slack alerts in the ${esc(plansFor('slack'))} plans. <a href="#/account/billing">See plans</a></p>`}</div>
+            <div class="field"><label for="whf">Send as</label><select id="whf" name="webhookFormat" ${can('slack') ? '' : 'disabled'}>${[['auto', 'Pick from the address'], ['json', 'JSON (Zapier, Make, your own system)'], ['teams', 'Microsoft Teams'], ['discord', 'Discord']].map(([v, l]) => `<option value="${v}" ${(s.webhook?.format || 'auto') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>${s.webhook ? `<p class="hint">Sending as ${esc({ json: 'JSON', teams: 'a Microsoft Teams card', discord: 'a Discord message' }[s.webhook.sendsAs] || s.webhook.sendsAs)}.</p>` : ''}</div>
+            ${s.webhook ? `<div class="field"><label>Signing secret</label><div class="inline-row copy-row"><code id="wh-secret" style="user-select:all">${esc(s.webhook.secret)}</code><button type="button" class="btn small secondary" id="wh-new">New secret</button></div>
+              <p class="hint">Header <code>X-Tharam-Signature: t=…,v1=…</code> is the HMAC-SHA256 of <code>t.body</code> with this secret.</p></div>
+            <div id="wh-log"></div>` : ''}</div></div>` : ''}
+        <div class="form-section"><div><h3>Test your setup</h3><p class="explain">Sends a sample alert to the saved email, Slack channel and webhook.</p></div>
           <div class="controls"><div class="inline-row"><button type="button" class="btn secondary" id="test-alert">Send test alert</button><span id="test-result" class="muted" role="status"></span></div></div></div>
       </form></div>`;
       const form = $('#ch');
       const mark = savebar($('.main-inner', ctx.main), {
-        onSave: async () => { const fd = new FormData(form); await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { alertEmail: fd.get('alertEmail'), slack: fd.get('slack') } }); await loadStores(); },
+        onSave: async () => {
+          const fd = new FormData(form);
+          const body = { alertEmail: fd.get('alertEmail'), slack: fd.get('slack') };
+          const url = String(fd.get('webhookUrl') ?? s.webhook?.url ?? '').trim(), format = fd.get('webhookFormat') || 'auto';
+          if (url !== (s.webhook?.url || '') || (url && format !== (s.webhook?.format || 'auto'))) body.webhook = url ? { url, format } : null;
+          await api(`/api/stores/${s.id}`, { method: 'PATCH', body });
+          await loadStores();
+        },
         onDiscard: () => render(),
       });
       form.addEventListener('input', mark);
+      const loadHookLog = async () => {
+        const box = $('#wh-log');
+        if (!box) return;
+        const d = await api(`/api/stores/${s.id}/webhook-deliveries`).catch(() => null);
+        if (!d || !ctx.alive()) return;
+        const ST = { delivered: ['healthy', 'Delivered'], pending: ['warning', 'Trying again'], failed: ['critical', 'Not delivered'] };
+        const EV = { 'alert.failing': 'Something broke', 'alert.recovered': 'Fixed', test: 'Test' };
+        box.innerHTML = d.deliveries.length ? `<label>Latest deliveries</label><ul class="list" id="wh-deliveries">${d.deliveries.slice(0, 5).map((x) => { const [k, l] = ST[x.status] || ['', x.status]; return `<li><div class="row"><span class="pill ${k}">${l}</span><span><span class="t">${esc(EV[x.event] || x.event)}</span><span class="d">${x.attempts} attempt${x.attempts === 1 ? '' : 's'}${x.last_code ? ` · answered ${x.last_code}` : ''}${x.last_error && x.status !== 'delivered' ? ` · ${esc(x.last_error)}` : ''}</span></span><span class="r">${time(x.updated_at)}</span></div></li>`; }).join('')}</ul>` : '<p class="hint">Nothing sent yet. Send a test alert to try it.</p>';
+      };
+      if (s.webhook) loadHookLog();
+      if ($('#wh-new')) $('#wh-new').onclick = async () => {
+        if (!(await confirmDialog({ title: 'Make a new signing secret?', body: 'Requests are signed with the new secret from now on. Update it wherever you check signatures.', confirm: 'Make new secret' }))) return;
+        try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { webhookSecret: 'new' } }); await loadStores(); render(); toast('New secret made'); } catch (ex) { toast(ex.message, 'error'); }
+      };
       $('#test-alert').onclick = async (e) => {
         if (S.dirty) { toast('Save your changes first', 'error'); return; }
         const done = busy(e.target, 'Sending');
@@ -1084,6 +1133,8 @@
           const parts = [];
           parts.push(r.email ? `Email sent to ${s.alert_email}.` : r.emailConfigured ? 'Email could not be sent.' : 'Email sending is not set up on this server yet.');
           if (r.slack !== null) parts.push(r.slack ? 'Slack message sent.' : 'Slack rejected the message. Check the webhook URL.');
+          if (r.webhook) parts.push(r.webhook.ok ? 'Webhook delivered.' : `Webhook not delivered: ${r.webhook.error}.`);
+          if (s.webhook) loadHookLog();
           $('#test-result').textContent = parts.join(' ');
         } catch (ex) { toast(ex.message, 'error'); } finally { done(); }
       };
@@ -1103,6 +1154,99 @@
   };
 
   // Visual changes
+  // ---------- Sale readiness ----------
+  STORE_PAGES.sale = async (ctx, s) => {
+    const d = await api(`/api/stores/${s.id}/sale-readiness`).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+    if (!ctx.alive()) return;
+    const runBtn = `<a class="btn" href="#/s/${s.id}/run" data-preset="sale" id="sale-run">Run a sale readiness check</a>`;
+    const intro = '<p class="lede-sm">One report before a sale or Black Friday: can customers buy, is every price right, do your codes work, is the store fast on a phone, are apps breaking anything, are the laws where you sell met, and does it look right.</p>';
+    const wire = () => $$('[data-preset]', ctx.main).forEach((a) => a.addEventListener('click', () => (S.runPreset = a.dataset.preset)));
+    if (!d) {
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Sale readiness')}${intro}<div class="panel empty"><h2>No full check yet</h2><p>A sale readiness check takes a few minutes. Nothing is bought, and the cart is emptied afterwards.</p>${runBtn}</div></div>`;
+      wire();
+      return;
+    }
+    const V = { ready: 'healthy', partial: 'healthy', attention: 'warning', blocked: 'critical' };
+    const P = { ready: 'healthy', attention: 'warning', blocker: 'critical', not_checked: '' };
+    const sections = d.sections.map((x) => `<section class="panel sale-sec status-${x.status}" data-sec="${esc(x.key)}">
+      <header><h2>${esc(x.title)}</h2><span class="pill ${P[x.status]}">${esc(x.label)}</span></header>
+      <p class="sub">${esc(x.summary)}</p>
+      ${x.items.length ? `<ul class="sale-items">${x.items.map((i) => `<li><span class="sev ${i.status}">${i.status === 'fail' ? 'Fix' : 'Check'}</span><span><b>${esc(i.title)}</b><span class="d">${esc(i.detail)}</span>${i.fix ? `<span class="fix-inline">Fix: ${esc(i.fix)}</span>` : ''}</span></li>`).join('')}${x.more ? `<li class="muted">and ${x.more} more in the report</li>` : ''}</ul>` : ''}
+      ${x.key === 'codes' && x.status === 'not_checked' ? `<p><a href="#/s/${s.id}/suite/codes">Add your sale codes</a></p>` : ''}
+    </section>`).join('');
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Sale readiness', { actions: `<button class="btn secondary" id="sale-email">Email me this summary</button>${runBtn}` })}${intro}
+      <div class="panel sale-verdict sv-${d.verdict}"><span class="pill ${V[d.verdict]}">${d.verdict === 'blocked' ? 'Not ready' : d.verdict === 'attention' ? 'Almost ready' : 'Ready'}</span>
+        <h2>${esc(d.headline)}</h2>
+        <p class="muted">From the ${d.kind === 'full' ? 'full ' : ''}check ${time(d.checkedAt)}. <a href="#/s/${s.id}/reports/${d.runId}">Open the full report</a>${d.recipient ? ` · The summary email goes to ${esc(d.recipient)}.` : ''}</p>
+        <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+          <div class="figure"><b style="color:var(--pass)">${d.counts.ready}</b><span>ready</span></div>
+          <div class="figure"><b style="color:${d.counts.attention ? 'var(--warn)' : 'var(--ink)'}">${d.counts.attention}</b><span>need attention</span></div>
+          <div class="figure"><b style="color:${d.counts.blockers ? 'var(--fail)' : 'var(--ink)'}">${d.counts.blockers}</b><span>to fix before the sale</span></div>
+          <div class="figure"><b style="color:var(--ink)">${d.counts.notChecked}</b><span>not checked</span></div></div></div>
+      <div class="sale-grid">${sections}</div></div>`;
+    wire();
+    $('#sale-email').onclick = async (e) => {
+      const done = busy(e.currentTarget, 'Sending');
+      try { const r = await api(`/api/stores/${s.id}/sale-readiness/email`, { method: 'POST', body: { run: d.runId } }); toast(`Sent to ${r.to}`); } catch (ex) { toast(ex.message, 'error'); } finally { done(); }
+    };
+  };
+
+  // ---------- App health ----------
+  const kb = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : b >= 1024 ? `${Math.round(b / 1024)} KB` : b ? `${b} bytes` : '–');
+  STORE_PAGES.apps = async (ctx, s) => {
+    const d = await api(`/api/stores/${s.id}/apps`);
+    if (!ctx.alive()) return;
+    const intro = '<p class="lede-sm">Every app and outside service your store loads for shoppers: where it runs, what it costs on a phone, the errors it causes and when its code changes. Tharam is on the list too.</p>';
+    const PG = { home: 'Home', product: 'Product', cart: 'Cart', other: 'Other' };
+    const us = d.tharam;
+    const tharamRow = `<section class="panel app-us"><h2>Tharam's own footprint</h2>
+      <p>${us.scripts || us.sites.length ? `We found ${plural(us.scripts, 'Tharam script')} on your store${us.bytes ? ` (${kb(us.bytes)} on a phone)` : ''}. Tharam does not need any code on your storefront; you can remove it.` : '<b>No code on your store.</b> Tharam adds no scripts, no app blocks and no tracking to your storefront, so it costs your shoppers nothing in speed.'}
+      Our checks visit your store from outside, like a shopper: ${plural(us.visits7d, 'check')} in the last 7 days.</p></section>`;
+    if (!d.runId) {
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'App health')}${intro}<div class="panel empty"><h2>No apps recorded yet</h2><p>${s.config.disabled.includes('security.scripts') ? 'Script watch is switched off in the test suite, and App health is built from it.' : 'The next check records every app on your home, product and cart pages.'}</p>${s.config.disabled.includes('security.scripts') ? `<a class="btn" href="#/s/${s.id}/suite">Open test suite</a>` : runLink(s, 'Run validations')}</div>${tharamRow}</div>`;
+      return;
+    }
+    const STATUS = {
+      errors: ['critical', 'Causing errors'], widget: ['warning', 'Widget missing'], missing: ['warning', 'Stopped loading'], changed: ['warning', 'Code changed'], new: ['running', 'New'], ok: ['healthy', 'Healthy'],
+    };
+    const KIND = { theme: 'Your store\'s own files', app: 'App', tracking: 'Ads and analytics', service: 'Outside service', shopify: 'Shopify', unknown: 'Outside site' };
+    const shortUrl = (u) => { try { const x = new URL(u); return x.host + (x.pathname.length > 48 ? '…' + x.pathname.slice(-47) : x.pathname); } catch { return u; } };
+    const row = (a) => {
+      const [cls, label] = STATUS[a.status] || STATUS.ok;
+      const what = [];
+      if (a.status === 'missing') what.push(`Loaded on the ${a.pages.map((p) => PG[p] || p).join(', ').toLowerCase()} page${a.pages.length > 1 ? 's' : ''} last check ${time(a.lastSeenAt)}, not this time. If you didn't remove it, its widget may be missing for shoppers.`);
+      if (a.widget?.missingOn.length) what.push(`Loads on the ${a.widget.missingOn.map((p) => PG[p] || p).join(', ').toLowerCase()} page${a.widget.missingOn.length > 1 ? 's' : ''}, but shoppers don't see its widget there. Check the app is switched on under Online Store → Themes → Customize → App embeds.`);
+      for (const e of a.errors) what.push(`Error on the ${(PG[e.page] || e.page).toLowerCase()} page: “${esc(e.message)}”`);
+      if (a.changes.added.length) what.push(`New code: ${a.changes.added.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
+      if (a.changes.updated?.length) what.push(`Code updated at the same address: ${a.changes.updated.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
+      if (a.changes.removed.length && a.status !== 'missing') what.push(`Code removed: ${a.changes.removed.map((u) => `<code>${esc(shortUrl(u))}</code>`).join(', ')}`);
+      if (a.status === 'new') what.push(`First seen ${time(a.firstSeenAt)}.`);
+      return `<tr class="app-row status-${a.status}" data-app="${esc(a.key)}">
+        <td><span class="cell-main">${esc(a.name)}</span><div class="cell-sub">${esc(KIND[a.kind] || '')}</div></td>
+        <td><span class="pill ${cls}">${label}</span></td>
+        <td>${a.pages.map((p) => PG[p] || p).join(', ') || '–'}</td>
+        <td class="num">${a.phone.bytes ? `${kb(a.phone.bytes)}<div class="cell-sub">about ${a.phone.slowS < 0.1 ? '<0.1' : a.phone.slowS} s on slow 4G</div>` : '–'}</td>
+        <td class="num">${a.errors.length || '–'}</td>
+        <td>${a.changes.lastChangedAt ? time(a.changes.lastChangedAt) : '<span class="muted">No change seen</span>'}</td>
+        <td class="cell-sub">${a.sites.length ? a.sites.map(esc).join(', ') : '–'}</td>
+      </tr>${what.length ? `<tr class="app-detail status-${a.status}"><td colspan="7">${what.map((w) => `<div>${w}</div>`).join('')}</td></tr>` : ''}`;
+    };
+    const trouble = d.apps.filter((a) => ['errors', 'widget', 'missing'].includes(a.status));
+    const TROUBLE = { errors: 'is causing script errors', widget: 'loads, but shoppers don\'t see its widget', missing: 'stopped loading' };
+    const t = d.totals;
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'App health')}${intro}
+      <p class="muted" style="margin:-6px 0 14px">From the check ${time(d.checkedAt)}${d.compared ? `, compared with the one before (${time(d.comparedAt)})` : ''}.${d.phone ? ` Phone cost measured ${time(d.phone.at)}.` : ' Phone cost appears after the next full check.'}</p>
+      ${trouble.length ? `<div class="notice"><p>${trouble.map((a) => `<b>${esc(a.name)}</b> ${TROUBLE[a.status]}`).join('; ')}. Details below.</p></div>` : '<div class="notice ok"><p>No app is causing errors, every app from the last check still loads, and app widgets show for shoppers.</p></div>'}
+      <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+        <div class="figure"><b>${t.apps}</b><span>apps and outside services</span></div>
+        <div class="figure"><b>${kb(t.phoneBytes)}</b><span>they add to a page on a phone</span></div>
+        <div class="figure"><b style="color:${t.errors ? 'var(--fail)' : 'inherit'}">${t.errors}</b><span>script errors</span></div></div>
+      <section class="panel"><div class="table-wrap flat"><table class="data apps-table"><thead><tr><th>App or service</th><th>Status</th><th>Loads on</th><th class="num">Phone cost per page</th><th class="num">Errors</th><th>Last code change</th><th>Talks to</th></tr></thead>
+        <tbody>${d.apps.map(row).join('')}</tbody></table></div>
+        ${d.unattributedErrors ? `<p class="muted" style="margin:10px 4px 0">${plural(d.unattributedErrors, 'script error')} could not be traced to one app. See the latest report's checks.</p>` : ''}</section>
+      ${tharamRow}</div>`;
+  };
+
   STORE_PAGES.visual = async (ctx, s) => {
     const d = await api(`/api/stores/${s.id}/visual`);
     if (!ctx.alive()) return;
@@ -1144,9 +1288,9 @@
       <div class="form-section"><div><h3>Store details</h3><p class="explain">The name is how this store appears in Tharam and in alerts.</p></div>
         <div class="controls"><div class="field"><label for="nm">Store name</label><input id="nm" name="name" value="${esc(s.name || '')}" required maxlength="80"></div>
         <div class="field"><label for="ad">Store address</label><input id="ad" value="${esc(s.url)}" readonly><p class="hint">To test a different address, add it as a new store.</p></div></div></div>
-      <div class="form-section"><div><h3>Where you sell</h3><p class="explain">We add the checks for the laws in these countries, such as the German legal notice, EU cookie consent and US accessibility. Checks only; not legal advice.</p></div>
+      ${feat('laws') ? `<div class="form-section"><div><h3>Where you sell</h3><p class="explain">We add the checks for the laws in these countries, such as the German legal notice, EU cookie consent and US accessibility. Checks only; not legal advice.</p></div>
         <div class="controls"><div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${s.config.markets.includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div>
-          <p class="hint" id="mk-hint"></p></div></div>
+          <p class="hint" id="mk-hint"></p></div></div>` : ''}
       <div class="form-section"><div><h3>Sales <span class="muted" style="font-weight:400">(optional)</span></h3><p class="explain">Your average sales per day. We use it only to show how much revenue was at risk while customers couldn’t buy.</p></div>
         <div class="controls"><div class="inline-row"><div class="field" style="flex:1;margin:0"><label for="ds">Average daily sales</label><input id="ds" name="dailySales" type="number" min="0" step="1" inputmode="numeric" value="${esc(s.config.dailySales ?? '')}" placeholder="e.g. 50000"></div>
           <div class="field" style="width:120px;margin:0"><label for="cur">Currency</label><select id="cur" name="currency">${['', 'INR', 'USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'].map((c) => `<option value="${c}" ${c === (s.config.currency || '') ? 'selected' : ''}>${c || 'Store’s'}</option>`).join('')}</select></div></div></div></div>
@@ -1160,7 +1304,7 @@
     const mark = savebar($('.main-inner', ctx.main), {
       onSave: async () => {
         const fd = new FormData(form);
-        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null, markets: fd.getAll('market') } };
+        const body = { name: fd.get('name'), config: { dailySales: fd.get('dailySales') || null, currency: fd.get('currency') || null, ...(feat('laws') ? { markets: fd.getAll('market') } : {}) } };
         if (fd.get('clearpw')) body.password = '';
         else if (fd.get('password')) body.password = fd.get('password');
         await api(`/api/stores/${s.id}`, { method: 'PATCH', body });
@@ -1172,6 +1316,7 @@
     form.addEventListener('input', mark);
     form.addEventListener('change', mark);
     const packs = () => {
+      if (!$('#mk-hint')) return;
       const sel = $$('input[name=market]:checked', form).map((i) => i.value);
       const on = S.catalog.groups.filter((g) => g.markets?.some((m) => sel.includes(m))).map((g) => g.label);
       $('#mk-hint').innerHTML = on.length ? `Adds to your full check: ${on.map(esc).join(' · ')}. <a href="#/s/${s.id}/suite">Test suite</a>` : sel.length ? 'No extra legal checks for these countries yet. Your other checks still run.' : '';
@@ -1246,7 +1391,7 @@
       ${b ? `<div class="change-counts"><button type="button" data-jump="changes" class="cc new"><b>${ch.new.length}</b><span>newly broken</span></button><button type="button" data-jump="changes" class="cc fixed"><b>${ch.fixed.length}</b><span>fixed</span></button><button type="button" data-jump="changes" class="cc still"><b>${ch.still.length}</b><span>still broken</span></button></div>`
         : `<div class="change-counts"><span class="cc still"><b>${ch.still.length}</b><span>to fix or check</span></span></div>`}
     </section>`;
-    const changeItem = (x, kind) => `<li><div class="row"><span class="sev ${kind === 'fixed' ? 'ok' : x.a === 'fail' ? 'fail' : 'warn'}">${kind === 'fixed' ? 'Fixed' : x.a === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(x.title)}</span><span class="d">${esc(kind === 'fixed' ? x.prevDetail : x.detail)}</span></span><span></span></div></li>`;
+    const changeItem = (x, kind) => `<li><div class="row"><span class="sev ${kind === 'fixed' ? 'ok' : x.a === 'fail' ? 'fail' : 'warn'}">${kind === 'fixed' ? 'Fixed' : x.a === 'fail' ? 'Fail' : 'Check'}</span><span><span class="t">${esc(x.title)}</span><span class="d">${esc(kind === 'fixed' ? x.prevDetail : x.detail)}</span>${kind !== 'fixed' && x.changes?.scripts?.length ? `<span class="started-after"><b>Started after:</b> ${x.changes.scripts.slice(0, 3).map((sc) => { let n = sc.url; try { const u = new URL(sc.url); n = `${u.pathname.split('/').pop() || u.host} from ${u.host}`; } catch {} return esc(n); }).join(', ')} <span class="tag-new">New script</span></span>` : ''}</span><span></span></div></li>`;
     const changes = b ? `<section class="panel" id="changes"><h2>What changed</h2><p class="sub">${compareLine}.</p>
       <div class="grid-2 tight"><div><h3 class="col-h">Newly broken</h3>${ch.new.length ? `<ul class="list">${ch.new.map((x) => changeItem(x, 'new')).join('')}</ul>` : '<p class="muted">Nothing new broke.</p>'}</div>
       <div><h3 class="col-h">Fixed</h3>${ch.fixed.length ? `<ul class="list">${ch.fixed.map((x) => changeItem(x, 'fixed')).join('')}</ul>` : '<p class="muted">Nothing was fixed since then.</p>'}</div></div>
@@ -1260,7 +1405,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -1279,6 +1424,28 @@
     })() : '';
     const aiPanel = c.ai && c.ai.findings && c.ai.findings.length ? `<section class="panel" id="ai"><h2>AI visual review</h2><p class="sub">What an AI reviewer noticed looking at your pages like a shopper.</p>
       <ul class="ai-findings" style="margin-left:0">${c.ai.findings.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul></section>` : '';
+    const sw = res && res.scripts && res.scripts.pages && Object.keys(res.scripts.pages).length ? res.scripts : null;
+    const scriptsPanel = sw ? (() => {
+      const added = new Set((sw.added || []).map((x) => x.url));
+      const PG = [['home', 'Home page'], ['product', 'Product page'], ['cart', 'Cart page']].filter(([k]) => sw.pages[k]);
+      const short = (u) => { try { const x = new URL(u); const p = x.pathname.length > 56 ? '…' + x.pathname.slice(-55) : x.pathname; return { host: x.host, path: p }; } catch { return { host: '', path: u }; } };
+      return `<section class="panel" id="scripts"><h2>Scripts and apps</h2>
+        <p class="sub">Every script and outside site your home, product and cart pages used during this check. New scripts since the last check are marked; we alert you about each one once.</p>
+        ${(sw.bad || []).length ? `<div class="callout fail" role="alert"><b>Known malicious site:</b> ${sw.bad.map(esc).join(', ')}. Remove whatever loads it now.</div>` : ''}
+        ${(() => { const fm = sw.forms; if (!fm || !(fm.readers || []).length) return ''; const PGN = { product: 'Product page', cart: 'Cart page' }; const leak = fm.readers.some((r) => r.sentTo.length || r.bad) || (fm.sentTo || []).length;
+          return `<div class="callout ${leak ? 'fail' : 'warn'}" ${leak ? 'role="alert"' : ''} id="form-readers"><b>${leak ? 'A script sends what shoppers type to another website.' : 'Outside scripts read what shoppers type.'}</b> ${leak ? 'Remove it now.' : 'Fine if it is an app you use; remove it if you don’t recognise it.'}
+            <div class="table-wrap flat" style="margin-top:8px"><table class="data"><thead><tr><th>Script</th><th>Page</th><th>Fields</th><th>Sent to</th></tr></thead><tbody>
+            ${fm.readers.map((r) => `<tr><td><span class="cell-main">${esc(r.script)}</span></td><td>${esc(PGN[r.page] || r.page)}</td><td class="cell-sub">${esc([...new Set([...r.reads, ...r.listens])].join(', '))}</td><td>${r.sentTo.length ? `<b>${esc(r.sentTo.join(', '))}</b>` : '<span class="muted">Nothing seen</span>'}</td></tr>`).join('')}
+            </tbody></table></div></div>`; })()}
+        <div class="figures" style="margin:0 0 14px"><div class="figure"><b>${sw.counts?.scripts ?? 0}</b><span>scripts</span></div><div class="figure"><b>${sw.counts?.sites ?? 0}</b><span>outside sites</span></div>
+          <div class="figure"><b>${sw.baseline ? '–' : (sw.added || []).length}</b><span>${sw.baseline ? 'first record' : 'new since last check'}</span></div></div>
+        ${PG.map(([k, l]) => { const pg = sw.pages[k]; return `<h3 class="col-h">${l} <span class="muted">· ${pg.scripts.length} script${pg.scripts.length === 1 ? '' : 's'} · ${pg.sites.length} outside site${pg.sites.length === 1 ? '' : 's'}</span></h3>
+          <div class="table-wrap flat"><table class="data scripts-table"><thead><tr><th>Script</th><th>From</th></tr></thead><tbody>
+          ${pg.scripts.map((x) => { const s2 = short(x.url); return `<tr class="${added.has(x.url) ? 'row-new' : ''}"><td><span class="cell-main">${esc(s2.path)}</span>${added.has(x.url) ? ' <span class="tag-new">New</span>' : ''}<div class="cell-sub">${esc(s2.host)}</div></td><td class="cell-sub">${x.outside ? 'Outside site' : 'Your store'}</td></tr>`; }).join('')}
+          </tbody></table></div>
+          ${pg.sites.length ? `<p class="muted" style="margin:8px 0 18px">Talks to: ${pg.sites.map(esc).join(', ')}</p>` : ''}`; }).join('')}
+      </section>`;
+    })() : '';
     const ta = c.timings.a.filter((x) => x.ms != null), tb = c.timings.b;
     const timings = ta.length ? `<section class="panel" id="timings"><h2>Journey step timings</h2><p class="sub">How long each step of the shopping journey took, including the page settling.</p>
       <div class="table-wrap flat"><table class="data"><thead><tr><th>Step</th><th class="num">This report</th>${b ? '<th class="num">Before</th>' : ''}</tr></thead><tbody>
@@ -1291,7 +1458,7 @@
       <div class="shots" id="dev-shots"></div></section>` : '';
     // One section at a time, as tabs: no long scrolling page. The chosen tab is remembered between reports.
     const issueCount = c.areas.reduce((n, a) => n + a.counts.fail + a.counts.warn, 0);
-    const tabsList = [['changes', 'What changed', changes], ['areas', 'All checks', areas, issueCount], ['catalog', 'Products', catPanel], ['ai', 'AI review', aiPanel], ['speed', 'Speed', metrics], ['devices', 'Screenshots', visual], ['timings', 'Step timings', timings]].filter((x) => x[2]);
+    const tabsList = [['changes', 'What changed', changes], ['areas', 'All checks', areas, issueCount], ['catalog', 'Products', catPanel], ['scripts', 'Scripts and apps', scriptsPanel, sw && !sw.baseline ? (sw.added || []).length : 0], ['ai', 'AI review', aiPanel], ['speed', 'Speed', metrics], ['devices', 'Screenshots', visual], ['timings', 'Step timings', timings]].filter((x) => x[2]);
     if (S.focus) S.reportTab = 'areas';
     const cur = tabsList.some((x) => x[0] === S.reportTab) ? S.reportTab : tabsList[0]?.[0];
     const tabBar = `<nav class="rtabs no-print" role="tablist" aria-label="Report sections">${tabsList.map(([id, l, , n]) => `<button type="button" role="tab" data-rtab="${id}" aria-selected="${id === cur}">${esc(l)}${n ? `<span class="tab-count">${n}</span>` : ''}</button>`).join('')}</nav>`;
@@ -1714,8 +1881,8 @@
         ${f.locked ? `<div class="onb-block ${locked ? 'need' : 'ok'}"><h3>${locked ? `${icon('lock', 16)} Your store has a password` : `${icon('check', 16)} Password works`}</h3>
           ${locked ? `<p>Shoppers (and our test browser) need it to see your store. Find it in Shopify under <b>Online Store → Preferences → Password protection</b>.</p>
           <form id="pwf" class="inline-row" novalidate><input name="password" type="password" autocomplete="off" placeholder="Storefront password" aria-label="Storefront password" required><button class="btn secondary" type="submit">Check password</button></form><p class="error-msg" id="pw-err" role="alert"></p>` : '<p>We’ll use it only to open your store for testing, and never show it again.</p>'}</div>` : ''}
-        <div class="onb-block"><h3>Where do you sell?</h3><p>We add checks for the rules in these countries, like legal pages, cookie consent and accessibility.</p>
-          <div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${o.markets.includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div></div>
+        ${feat('laws') ? `<div class="onb-block"><h3>Where do you sell?</h3><p>We add checks for the rules in these countries, like legal pages, cookie consent and accessibility.</p>
+          <div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${o.markets.includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div></div>` : ''}
         ${f.catalog?.length ? `<div class="onb-block"><h3>Product used in tests</h3><p>Each test adds one to a fresh cart and goes to checkout, then empties the cart. Pick something usually in stock.</p>
           <select id="tp"><option value="">Choose automatically (recommended)</option>${f.catalog.map((p) => `<option value="${esc(p.handle)}" ${p.handle === o.testProduct ? 'selected' : ''}>${esc(p.title)}${p.variants > 1 ? ` (${p.variants} variants)` : ''}</option>`).join('')}</select></div>` : ''}`}`,
         `<button class="btn ghost" id="b">Back</button><button class="btn" id="n" ${looking || locked ? 'disabled' : ''}>Continue ${icon('arrow', 16)}</button>`);
@@ -2103,6 +2270,9 @@
     const d = await api('/api/admin/runners');
     if (!ctx.alive()) return;
     const STAT = { active: ['healthy', 'Active'], draining: ['warning', 'Draining'], paused: ['', 'Paused'], removed: ['critical', 'Removed'] };
+    const RUNSTAT = { done: 'Finished', error: 'Didn’t finish', cancelled: 'Stopped', running: 'Running', queued: 'Waiting' };
+    const secs = (x) => (x < 90 ? `${x} s` : `${Math.round(x / 6) / 10} min`);
+    const now = d.runners.flatMap((r) => (r.current || []).map((c) => ({ ...c, runner: r.name })));
     const row = (r) => {
       const [cls, label] = STAT[r.status] || ['', r.status];
       const removed = r.status === 'removed';
@@ -2110,13 +2280,25 @@
       const btn = (st, txt) => (r.status === st ? '' : `<button type="button" class="btn small secondary" data-runner="${r.id}" data-status="${st}">${txt}</button>`);
       return `<tr class="runner-row" data-name="${esc(r.name)}"><td><span class="cell-main">${esc(r.name)}</span><div class="cell-sub">${r.kind === 'main' ? 'Main server · web, database, scheduler' : 'Worker'}</div></td>
         <td><span class="pill ${cls}">${label}</span></td><td>${health}</td><td class="num">${r.used} of ${r.slots}</td>
+        <td class="num">${r.today ? `${r.today.checks}<div class="cell-sub">${r.today.minutes} min</div>` : '–'}</td>
+        <td class="num">${r.totals ? `${r.totals.checks}<div class="cell-sub">${r.totals.minutes} min</div>` : '–'}</td>
+        <td class="num">${r.totals && r.totals.failed + r.totals.lost ? `<span class="pill ${r.totals.lost ? 'critical' : 'warning'}">${r.totals.failed} failed${r.totals.lost ? ` · ${r.totals.lost} lost` : ''}</span>` : '<span class="muted">0</span>'}</td>
         <td>${r.tags.length ? r.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join(' ') : '<span class="muted">–</span>'}</td>
         <td class="actions">${removed ? '' : `${btn('active', 'Activate')} ${btn('draining', 'Drain')} ${btn('paused', 'Pause')}${r.kind === 'main' ? '' : ` <button type="button" class="btn small danger" data-remove="${r.id}" data-rname="${esc(r.name)}">Remove</button>`}`}</td></tr>`;
     };
     ctx.main.innerHTML = `<div class="main-inner">${head}
-      <p class="lede-sm">Checks go to the active runner with the most free slots. Stores in sale mode prefer runners tagged <code>sale</code>, paid plans prefer their plan's tag (for example <code>pro</code>), and stores prefer their region's tag (<code>india</code>, <code>eu</code>, <code>us</code>). If no such runner has room, any runner takes the check. Workers take journey checks; full and publish checks run on the main server. A worker that stops checking in for a minute gets no new checks, and its unfinished checks are retried once elsewhere. <b>Drain</b> finishes current checks and takes no new ones. Pausing or draining the main server moves journey checks to workers; free, full and publish checks still run here. <b>Remove</b> cuts a worker off for good (its credentials stop working) and retries its unfinished checks elsewhere.</p>
-      <section class="panel"><div class="table-wrap flat"><table class="data" id="runners"><thead><tr><th>Runner</th><th>Status</th><th>Health</th><th class="num">Slots in use</th><th>Tags</th><th></th></tr></thead>
-        <tbody>${d.runners.map(row).join('')}</tbody></table></div></section>
+      <p class="lede-sm">Checks go to the active runner with the most free slots. Stores in sale mode prefer runners tagged <code>sale</code>, paid plans prefer their plan's tag (for example <code>pro</code>), and stores prefer their region's tag (<code>india</code>, <code>eu</code>, <code>us</code>). If no such runner has room, any runner takes the check. Workers take journey and full checks (a full check fetches the store’s approved screenshots and last product list from this server and sends new ones back). Publish checks, free website checks and full checks with AI review run on the main server. A worker that stops checking in for a minute gets no new checks, and its unfinished checks are retried once elsewhere. <b>Drain</b> finishes current checks and takes no new ones. Pausing or draining the main server moves journey and full checks to workers; free, publish and AI-reviewed checks still run here. <b>Remove</b> cuts a worker off for good (its credentials stop working) and retries its unfinished checks elsewhere.</p>
+      <section class="panel"><div class="table-wrap flat"><table class="data" id="runners"><thead><tr><th>Runner</th><th>Status</th><th>Health</th><th class="num">Slots in use</th><th class="num">Today</th><th class="num">Last ${d.days} days</th><th class="num">Problems, ${d.days} days</th><th>Tags</th><th></th></tr></thead>
+        <tbody>${d.runners.map(row).join('')}</tbody></table></div>
+        <p class="muted" style="margin-bottom:0">Checks and browser minutes go to the day a check started (UTC). <b>Failed</b>: checks that ended with an error on this runner. <b>Lost</b>: checks this runner stopped answering for; they were retried on another runner.</p></section>
+      <section class="panel"><h2>Running now</h2>${now.length ? `<div class="table-wrap flat"><table class="data" id="runners-now"><thead><tr><th>Runner</th><th>Store</th><th>Check</th><th>Since</th></tr></thead><tbody>
+        ${now.map((c) => `<tr><td>${esc(c.runner)}</td><td>${esc(c.store || 'Free website check')}</td><td>${esc(c.kind)}</td><td>${c.since ? time(c.since) : '<span class="muted">getting ready</span>'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted" style="margin:0">No checks running right now.</p>'}</section>
+      <section class="panel"><h2>Per day</h2><div class="table-wrap flat"><table class="data" id="runners-days"><thead><tr><th>Day (UTC)</th>${d.runners.map((r) => `<th class="num">${esc(r.name)}</th>`).join('')}</tr></thead><tbody>
+        ${(d.runners[0]?.days || []).map((x, i) => `<tr><td>${esc(x.date)}</td>${d.runners.map((r) => { const y = r.days[i]; return `<td class="num">${y.checks ? `${y.checks} · ${y.minutes} min` : '–'}${y.failed || y.lost ? `<div class="cell-sub">${y.failed} failed${y.lost ? `, ${y.lost} lost` : ''}</div>` : ''}</td>`; }).join('')}</tr>`).join('')}</tbody></table></div></section>
+      <section class="panel"><h2>Latest checks</h2><div class="table-wrap flat"><table class="data" id="runners-recent"><thead><tr><th>Check</th><th>Store</th><th>Runner</th><th>Queued</th><th class="num">Waited</th><th class="num">Took</th><th>Result</th></tr></thead><tbody>
+        ${d.recent.map((x) => `<tr><td>#${x.id} ${esc(x.kind)}<div class="cell-sub">${esc(x.trigger || '')}</div></td><td>${x.store ? `${esc(x.store.name)}<div class="cell-sub">${esc(x.store.account || '')}</div>` : '<span class="muted">Free website check</span>'}</td>
+          <td>${x.runner ? esc(x.runner) : '<span class="muted">–</span>'}${x.retried ? ' <span class="pill warning">Retried</span>' : ''}</td><td class="nowrap">${esc(exact(x.queuedAt))}</td>
+          <td class="num">${x.waitSec == null ? '–' : secs(x.waitSec)}</td><td class="num">${x.tookSec == null ? '–' : secs(x.tookSec)}</td><td>${esc(RUNSTAT[x.status] || x.status)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No checks yet.</td></tr>'}</tbody></table></div></section>
       <section class="panel"><h2>Add a worker</h2><p class="muted" style="margin-top:0">Creates a join token that works once, for 24 hours. Start the worker with it; the worker then gets its own credentials.</p>
         <form id="rjoin" class="inline-form"><div class="field"><label>Name</label><input name="name" required maxlength="40" placeholder="worker-1"></div>
           <div class="field"><label>Slots</label><input name="slots" type="number" min="1" max="16" value="2"></div>
@@ -2141,6 +2323,44 @@
     };
   }
 
+  // Browser minutes per store and account, by plan, with an estimated cost next to what each customer pays.
+  async function adminUsage(ctx, head) {
+    const qs = new URLSearchParams(location.hash.split('?')[1] || '');
+    const period = qs.get('period') === 'day' ? 'day' : 'month';
+    let d;
+    try { d = await api(`/api/admin/usage?period=${period}${qs.get('date') ? `&date=${encodeURIComponent(qs.get('date'))}` : ''}`); }
+    catch (ex) { if (ctx.alive()) ctx.main.innerHTML = `<div class="main-inner">${head}<p class="error-msg">${esc(ex.message)}</p></div>`; return; }
+    if (!ctx.alive()) return;
+    const cur = d.rate.currency;
+    const money = (v, c = cur) => (v == null ? '–' : v > 0 && v < 0.01 ? `&lt; ${esc(c)} 0.01` : `${esc(c)} ${v < 1 && v > 0 ? v.toFixed(2) : Math.round(v * 100) / 100}`);
+    const pct = (p) => (p == null ? '<span class="muted">–</span>' : `<span class="pill ${p > 50 ? 'critical' : p > 20 ? 'warning' : 'healthy'}">${p}%</span>`);
+    const pays = (a) => (a.pays ? `${money(a.pays.amount, a.pays.currency)}${a.pays.currency !== cur && a.pays.inCostCurrency != null ? `<div class="cell-sub">≈ ${money(a.pays.inCostCurrency)}</div>` : ''}` : '<span class="muted">Nothing</span>');
+    const label = period === 'day' ? d.date : new Date(d.date + '-01T00:00:00Z').toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    const plans = [...new Set(d.days.flatMap((x) => Object.keys(x.byPlan)))].sort();
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <form id="usage-pick" class="inline-form" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:16px">
+        <div class="field" style="margin:0"><label>Period</label><select name="period">${opt('month', 'Month', period)}${opt('day', 'Day', period)}</select></div>
+        <div class="field" style="margin:0"><label>${period === 'day' ? 'Day' : 'Month'}</label><input name="date" type="${period === 'day' ? 'date' : 'month'}" value="${esc(d.date)}"></div>
+        <div class="field" style="margin:0"><button class="btn secondary" type="submit">Show</button></div></form>
+      <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="figure"><b>${d.totals.minutes}</b><span>Browser minutes, ${esc(label)}</span></div>
+        <div class="figure"><b>${money(d.totals.cost)}</b><span>Estimated cost</span></div>
+        <div class="figure"><b>${d.totals.accounts}</b><span>Accounts with checks</span></div>
+        <div class="figure"><b>${d.freeChecks.minutes}</b><span>Minutes on free website checks (${d.freeChecks.checks})</span></div></div>
+      <p class="muted">Estimated at <b>${money(d.rate.perHour)}</b> per browser hour (change it in <a href="#/admin/settings">Settings</a>). ${period === 'day' ? 'For a day, “pays” is one day’s share of the monthly price.' : '“Pays” is the monthly price of active plans; yearly plans count as one twelfth.'} Prices in another currency are converted with rough rates, so treat the percentage as a guide.</p>
+      <section class="panel"><h2>By plan</h2><div class="table-wrap flat"><table class="data" id="usage-plans"><thead><tr><th>Plan</th><th class="num">Accounts</th><th class="num">Stores</th><th class="num">Checks</th><th class="num">Browser minutes</th><th class="num">Est. cost</th><th class="num">Customers pay</th><th class="num">Cost of price</th></tr></thead><tbody>
+        ${d.plans.map((p) => `<tr><td>${esc(p.plan)}</td><td class="num">${p.accounts}</td><td class="num">${p.stores}</td><td class="num">${p.checks}</td><td class="num"><b>${p.minutes}</b></td><td class="num">${money(p.cost)}</td><td class="num">${p.pays ? money(p.pays) : '<span class="muted">Nothing</span>'}</td><td class="num">${pct(p.costPct)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">No checks in this period.</td></tr>'}</tbody></table></div></section>
+      <section class="panel"><h2>By account and store</h2><div class="table-wrap flat"><table class="data" id="usage-accounts"><thead><tr><th>Account</th><th>Plan</th><th class="num">Checks</th><th class="num">Browser minutes</th><th class="num">Est. cost</th><th class="num">Pays</th><th class="num">Cost of price</th></tr></thead><tbody>
+        ${d.accounts.map((a) => `<tr class="link usage-account" data-href="#/admin/customers/${a.userId}" tabindex="0"><td><span class="cell-main">${esc(a.email)}</span></td><td>${esc(a.plan)}${a.billing === 'shopify' ? '<div class="cell-sub">Shopify billing</div>' : ''}</td><td class="num">${a.checks}</td><td class="num"><b>${a.minutes}</b></td><td class="num">${money(a.cost)}</td><td class="num">${pays(a)}</td><td class="num">${pct(a.costPct)}</td></tr>
+          ${a.stores.map((st) => `<tr class="usage-store"><td style="padding-left:28px"><span class="cell-sub">${esc(st.name)}</span></td><td></td><td class="num cell-sub">${st.checks}</td><td class="num cell-sub">${st.minutes}</td><td class="num cell-sub">${money(st.cost)}</td><td></td><td></td></tr>`).join('')}`).join('') || '<tr><td colspan="7" class="muted">No checks in this period.</td></tr>'}</tbody></table></div></section>
+      ${period === 'month' ? `<section class="panel"><h2>Per day</h2><div class="table-wrap flat"><table class="data" id="usage-days"><thead><tr><th>Day (UTC)</th>${plans.map((p) => `<th class="num">${esc(p)}</th>`).join('')}<th class="num">All</th></tr></thead><tbody>
+        ${d.days.filter((x) => x.minutes).map((x) => `<tr><td><a href="#/admin/usage?period=day&date=${esc(x.date)}">${esc(x.date)}</a></td>${plans.map((p) => `<td class="num">${x.byPlan[p] ?? '–'}</td>`).join('')}<td class="num"><b>${x.minutes}</b></td></tr>`).join('') || `<tr><td colspan="${plans.length + 2}" class="muted">No checks in this month.</td></tr>`}</tbody></table></div></section>` : ''}</div>`;
+    rowsLink(ctx.main);
+    const f = $('#usage-pick');
+    f.period.onchange = () => { location.hash = `#/admin/usage?period=${f.period.value}`; };
+    f.onsubmit = (e) => { e.preventDefault(); location.hash = `#/admin/usage?period=${f.period.value}&date=${encodeURIComponent(f.date.value)}`; };
+  }
+
   // ---------- Founder console ----------
   const STATE_PILL = (st) => { const [l, k] = STATE[st] || [st, '']; return `<span class="pill ${k}">${esc(l)}</span>`; };
   const sumMoney = (obj) => Object.entries(obj || {}).map(([c, v]) => minorMoney(v, c)).join(' + ') || '0';
@@ -2149,7 +2369,7 @@
   const METHODS = { bank: 'Bank transfer', upi: 'UPI', card: 'Card', razorpay: 'Razorpay', stripe: 'Stripe', shopify: 'Shopify billing', cash: 'Cash', other: 'Other' };
   const CURS = ['USD', 'EUR', 'INR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'];
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(v) === String(cur ?? '') ? 'selected' : ''}>${esc(l)}</option>`;
-  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed', 'store.sale': 'Sale mode' };
+  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed', 'store.sale': 'Sale mode', 'feature.change': 'Feature switched' };
   function auditText(a) {
     const d = a.detail_json ? JSON.parse(a.detail_json) : {};
     if (a.action === 'note') return esc(d.text);
@@ -2157,6 +2377,7 @@
     if (a.action === 'license.update') return Object.entries(d).map(([k, v]) => `${esc(k.replace('_', ' '))}: ${esc(v.before ?? '–')} → <b>${esc(v.after ?? '–')}</b>`).join(' · ');
     if (a.action === 'license.create') return `${esc(d.plan)}, ${d.seats} store${d.seats === 1 ? '' : 's'}${d.expires_at ? `, until ${esc(d.expires_at)}` : ''}`;
     if (a.action === 'store.sale') return `${esc(d.store)}: ${d.after ? `on until ${esc(d.after)}` : 'off'}`;
+    if (a.action === 'feature.change') return `${esc(d.label || d.key)}: <b>${d.after ? 'on' : 'off'}</b>`;
     if (a.action === 'setting.change') return `${esc(d.key)}: ${esc(d.before)} → <b>${esc(d.after)}</b>`;
     if (a.action.startsWith('plan.')) return esc(d.key);
     return '';
@@ -2167,16 +2388,18 @@
     if (!S.admin) { location.hash = '#/'; return; }
     const tab = ctx.r.a;
     const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder console</h1><div class="meta">Customers, plans and revenue · only visible to founders</div></div></div>`
-      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity'], ['runners', 'Runners']], tab);
+      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['features', 'Features'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity'], ['runners', 'Runners'], ['usage', 'Usage']], tab);
     if (tab === 'customers' && ctx.r.b) return adminCustomer(ctx, head, ctx.r.b);
     if (tab === 'customers') return adminCustomers(ctx, head);
     if (tab === 'plans') return adminPlans(ctx, head);
     if (tab === 'payments') return adminPayments(ctx, head);
     if (tab === 'audit') return adminAudit(ctx, head);
     if (tab === 'settings') return adminSettings(ctx, head);
+    if (tab === 'features') return adminFeatures(ctx, head);
     if (tab === 'leads') return adminLeads(ctx, head);
     if (tab === 'capacity') return adminCapacity(ctx, head);
     if (tab === 'runners') return adminRunners(ctx, head);
+    if (tab === 'usage') return adminUsage(ctx, head);
     const d = await api('/api/admin/billing');
     if (!ctx.alive()) return;
     const c = d.counts;
@@ -2368,6 +2591,27 @@
     rowsLink(ctx.main);
   }
 
+  async function adminFeatures(ctx, head) {
+    const d = await api('/api/admin/features');
+    if (!ctx.alive()) return;
+    const areas = [...new Set(d.features.map((f) => f.area))];
+    ctx.main.innerHTML = `<div class="main-inner">${head}<p class="muted">Switch features on or off for every customer. A feature that is off is hidden everywhere and its checks don’t run. Changes are recorded in the audit log.</p>
+      ${d.features.length ? areas.map((area) => `<section class="suite-area"><h3>${esc(area)}</h3><div class="rows">${d.features.filter((f) => f.area === area).map((f) => `<label class="check-row ${f.on ? '' : 'off'}">
+        <span class="switch"><input type="checkbox" name="feat" value="${esc(f.key)}" ${f.on ? 'checked' : ''} aria-label="${esc(f.label)}"><span></span></span>
+        <span><b>${esc(f.label)}</b><p>${esc(f.about)}</p>${f.changed ? `<p class="muted" style="font-size:12.5px">Changed ${time(f.changed.at)} by ${esc(f.changed.by || '')}</p>` : ''}</span>
+        <span class="when">${f.core ? 'Basic' : 'Extra'}</span></label>`).join('')}</div></section>`).join('') : '<p class="muted">No features to switch yet.</p>'}</div>`;
+    ctx.main.querySelectorAll('input[name=feat]').forEach((el) => el.addEventListener('change', async () => {
+      el.disabled = true;
+      try {
+        await api(`/api/admin/features/${encodeURIComponent(el.value)}`, { method: 'PATCH', body: { on: el.checked } });
+        el.closest('.check-row').classList.toggle('off', !el.checked);
+        if (el.checked) S.features.add(el.value); else S.features.delete(el.value);
+        toast(`${el.closest('.check-row').querySelector('b').textContent} is ${el.checked ? 'on' : 'off'}`);
+      } catch (ex) { el.checked = !el.checked; toast(ex.message); }
+      el.disabled = false;
+    }));
+  }
+
   async function adminSettings(ctx, head) {
     const d = await api('/api/admin/settings');
     if (!ctx.alive()) return;
@@ -2380,6 +2624,9 @@
         <div class="controls"><div class="field"><label>Grace days</label><input name="grace_days" type="number" min="0" max="90" value="${esc(st.grace_days)}"></div></div></div>
       <div class="form-section"><div><h3>How customers pay</h3><p class="explain">Shown on every customer’s Plan and billing page and in reminder emails.</p></div>
         <div class="controls"><div class="field"><label>Payment instructions</label><textarea name="payment_note" rows="4" maxlength="2000">${esc(st.payment_note)}</textarea></div></div></div>
+      <div class="form-section"><div><h3>Running costs</h3><p class="explain">What one browser hour costs you (machine price ÷ the browser hours it gives). Used for the estimated cost on the Usage page.</p></div>
+        <div class="controls"><div class="field"><label>Cost per browser hour</label><input name="browser_hour_cost" type="number" min="0" max="100" step="0.0001" value="${esc(st.browser_hour_cost)}"></div>
+        <div class="field"><label>Currency</label><select name="cost_currency">${CURS.map((c) => opt(c, c, st.cost_currency)).join('')}</select></div></div></div>
       <div class="form-section"><div></div><div class="controls"><p class="error-msg" id="set-err" role="alert"></p><div><button class="btn" type="submit">Save settings</button></div></div></div></form></div>`;
     $('#setf').onsubmit = async (e) => {
       e.preventDefault();
@@ -2471,8 +2718,8 @@
         ${shopify || f.blocked ? '' : `<div class="notice info"><p>${esc(f.platform?.label || 'This platform')} is detected. Add to cart and checkout tests run on Shopify today; speed, SEO, accessibility, links and errors are fully tested.</p></div>`}
         <form id="w2">
         ${shopify && f.catalog?.length ? `<div class="field" style="margin-bottom:28px"><label for="wtp">Product used in tests</label><select id="wtp"><option value="">Choose automatically (recommended)</option>${f.catalog.map((p) => `<option value="${esc(p.handle)}" ${p.handle === w.testProduct ? 'selected' : ''}>${esc(p.title)}${p.variants > 1 ? ` (${p.variants} variants)` : ''}</option>`).join('')}</select><p class="hint">Each test adds one to a fresh cart, opens checkout, then empties the cart. No orders are created.</p></div>` : ''}
-        <div class="field" style="margin-bottom:24px"><label>Where do you sell?</label><div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${(w.markets || []).includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div>
-          <p class="hint">We add checks for the laws in these countries. You can change this later in Store settings.</p></div>
+        ${feat('laws') ? `<div class="field" style="margin-bottom:24px"><label>Where do you sell?</label><div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${(w.markets || []).includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div>
+          <p class="hint">We add checks for the laws in these countries. You can change this later in Store settings.</p></div>` : ''}
         <div id="w-suite">${suiteRows(S.catalog.groups, w.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: w.markets || [] })}</div>
         <div class="wiz-actions"><button class="btn secondary" type="button" id="back">Back</button><div class="right"><button class="btn" type="submit">Continue</button></div></div></form>`);
       const form = $('#w2');
@@ -2482,7 +2729,7 @@
         w.markets = $$('input[name=market]:checked', form).map((x) => x.value);
         $('#w-suite').innerHTML = suiteRows(S.catalog.groups, w.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: w.markets });
       }));
-      const save = () => { w.markets = $$('input[name=market]:checked', form).map((x) => x.value); w.disabled = readDisabled(form).concat(shopify ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key)); w.testProduct = $('#wtp')?.value || ''; };
+      const save = () => { if (feat('laws')) w.markets = $$('input[name=market]:checked', form).map((x) => x.value); w.disabled = readDisabled(form).concat(shopify ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key)); w.testProduct = $('#wtp')?.value || ''; };
       $('#back').onclick = () => { save(); w.step = 1; wizardStep(ctx); };
       form.onsubmit = (e) => { e.preventDefault(); save(); w.step = 3; wizardStep(ctx); };
       return;
@@ -2551,10 +2798,10 @@
     try {
       const sec = location.pathname.replace(/^\/shopify\/?/, '').split('/')[0] || 'overview';
       const sess = await api('/shopify/api/session', { method: 'POST', body: { welcome: sec === 'welcome' } });
-      const me = await api('/api/me'); S.me = me.user; S.admin = false;
+      const me = await api('/api/me'); S.me = me.user; S.admin = false; S.features = new Set(me.features || []);
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', alerts: '/alerts', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', suite: '/suite', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {
@@ -2577,7 +2824,7 @@
         if (r.confirmed) S.flash = 'Your email is confirmed. You can now sign in to Tharam in any browser.';
       } catch (ex) { return authView('link', ex.message); }
     }
-    try { const r = await api('/api/me'); S.me = r.user; S.admin = r.admin; }
+    try { const r = await api('/api/me'); S.me = r.user; S.admin = r.admin; S.features = new Set(r.features || []); }
     catch { return authView(location.hash === '#signup' ? 'signup' : 'login'); }
     shell();
     if (location.hash === '#signup') location.replace('#/');

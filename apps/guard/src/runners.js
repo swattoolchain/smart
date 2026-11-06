@@ -2,9 +2,9 @@
  * Runners: the machines that run checks. The main server is always one ("main"); worker machines join with a
  * one-time join token and then lease checks over an authenticated HTTPS API (src/runner-routes.js, src/worker.js).
  *
- * Part 1 scope: workers take scheduled and manual journey checks of monitored stores. Full checks, publish checks
- * and free checks stay on the main server, because they need data that lives there (visual baselines, the
- * catalog history, Shopify tokens).
+ * Workers take scheduled and manual journey and full checks of monitored stores (see canRun). Publish checks,
+ * free checks and full checks with AI review stay on the main server. Shopify tokens and the AI key never leave it:
+ * discount codes are fetched on the main server and sent with the check.
  *
  * This module is the registry (database), runner credentials, and the routing rules as plain functions.
  */
@@ -192,10 +192,21 @@ export function wantedTags({ sale = false, plan = null, markets = [] } = {}) {
   return [...new Set([sale && 'sale', plan, ...markets.map((m) => REGION[m])].filter(Boolean))];
 }
 
-/** Workers take journey checks of monitored stores; everything else needs the main server's data. */
+/** A full check uses AI review when the AI key is set and its suite has an AI group switched on. */
+export function usesAi(kind, disabled = [], aiOn = false) {
+  return kind === 'full' && !!aiOn && !(disabled.includes('ai.visual') && disabled.includes('ai.copy'));
+}
+
+/**
+ * Workers take journey checks and full checks of monitored stores. A full check gets the store's visual baselines
+ * and previous catalog snapshot from the main server and sends new ones back (src/runner-files.js).
+ * Stays on the main server: free checks, publish checks (they compare live and draft side by side), and full checks
+ * that use AI review (the AI key never leaves the main server).
+ */
 export function canRun(runner, job) {
   if (runner.kind === 'main') return true;
-  return job.kind === 'journeys' && !!job.storeId && !job.release && !job.preview && !job.captureOnly;
+  if (!job.storeId || job.release || job.preview || job.captureOnly) return false;
+  return job.kind === 'journeys' || (job.kind === 'full' && !job.needsAi);
 }
 
 /**
@@ -204,8 +215,8 @@ export function canRun(runner, job) {
  * order, the runners with that tag; if none has a free slot, any runner. Among those: most free slots
  * (the main server first on a tie, so nothing changes until workers have room).
  * `job.avoid`: a runner that lost this check before (its retry goes elsewhere when possible).
- * Pausing or draining the main server moves journey checks to workers, but never strands a check: checks only
- * the main server can run (free, full, publish) ignore its status, and so does everything while no active,
+ * Pausing or draining the main server moves journey and full checks to workers, but never strands a check: checks only
+ * the main server can run (free, publish, full checks with AI review) ignore its status, and so does everything while no active,
  * healthy worker exists.
  */
 export function chooseRunner(job, runners) {

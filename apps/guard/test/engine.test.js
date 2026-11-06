@@ -23,6 +23,11 @@ const cases = [
   { name: 'a password-protected store is reported as locked', breaks: 'password', expect: (r) => r.verdict === 'locked' },
   { name: 'bot protection is reported as blocked, not as failures', breaks: 'cloudflare', expect: (r) => r.verdict === 'blocked' && !r.checks.some((c) => c.status === 'fail') },
   { name: 'the storefront password unlocks the store', breaks: 'password', password: 'letmein', expect: (r) => check(r, 'fn.atc')?.status === 'pass' },
+  {
+    name: 'a checkout hijacked to another website is a critical failure',
+    breaks: 'hijack',
+    expect: (r) => { const c = check(r, 'fn.checkout'); return r.verdict === 'critical' && c?.status === 'fail' && /different website/.test(c.detail) && c.evidence?.offsite === '127.0.0.1'; },
+  },
 ];
 
 describe('Check engine', { concurrency: 1 }, () => {
