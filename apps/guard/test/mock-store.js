@@ -18,6 +18,13 @@
  * apps, appsbug, appsupdate, appsnowidget, appscode (App Health: two outside apps, see APP_SCRIPTS below).
  * Variant extras (MOCK_EXTRA): brokenvariant (Kurta Large shown in stock, cart refuses it), unpublishedvariant
  * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out).
+ * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
+ * spam (hidden casino/pill links and text in the footer), cloaked (a link to another site moved off the page),
+ * deface (homepage replaced with a hacker's message), replaced (homepage replaced with unrelated content)
+ * Catalog tampering (env MOCK_EXTRA): zero (a variant made free), cut (every price cut by 90%), swap (a product replaced by another)
+ * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
+ *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
+ *   checkoutprice (checkout subtotal ₹200 more than the cart)
  */
 import http from 'node:http';
 import { URL } from 'node:url';
@@ -119,6 +126,10 @@ let ADD_CALLS = 0; // cart/add.js requests, so tests can see the sweep is capped
 let INFLIGHT = 0;
 let LAST_ADD = 0;
 const CROWD_PAGE = (p) => (p.startsWith('/products/') && !p.endsWith('.js')) || p === '/cart' || p.startsWith('/checkouts/') || p === '/checkout';
+// Tampering: what an intruder with admin access might do to the catalog.
+if (EXTRA.includes('zero')) products[0].variants[1].price = '0.00';
+if (EXTRA.includes('cut')) for (const p of products) for (const v of p.variants) v.price = (Number(v.price) / 10).toFixed(2);
+if (EXTRA.includes('swap')) Object.assign(products[1], { title: 'Prepaid Gift Card Bundle', body_html: '<p>Instant delivery gift cards. Pay by crypto only.</p>', images: [{ src: '/img/g.png' }, { src: '/img/g2.png' }] });
 const byId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, { p, v }])));
 
 function cartFor(req, res) {
@@ -147,8 +158,10 @@ function cartJson(items) {
     total_price: original - off,
     discount_codes: code ? [{ code, applicable }] : [],
     cart_level_discount_applications: off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : [],
+    items_subtotal_price: original,
     currency: 'INR',
-    items,
+    // Like Shopify's cart.js: prices in paise, one entry per line.
+    items: items.map((i) => { const unit = Math.round(Number(i.price) * 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: unit, line_price: unit * i.quantity, original_line_price: unit * i.quantity, final_line_price: unit * i.quantity }; }),
   };
 }
 function layout(title, body, { noindex = false } = {}) {
@@ -160,7 +173,7 @@ ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <script>window.Shopify={shop:'mock.myshopify.com',theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}<script src="/assets/theme.js?v=111"></script>${scriptTags()}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}${B.has('restyle') ? '<style>body{background:#111;color:#eee} a{color:#9cf}</style>' : ''}</head><body>${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
-<main id="MainContent">${body}</main>${formBox()}${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}${frameTags()}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${US ? ' <a href="/pages/data-sharing-opt-out">Your privacy choices</a>' : ''}${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
+<main id="MainContent">${body}</main>${formBox()}${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}${frameTags()}${B.has('spam') ? '<div style="position:absolute;left:-9999px;top:0"><a href="https://best-casino-bonus.example/">online casino</a> <a href="https://pills.example/buy">cheap viagra</a></div><p style="display:none">replica watches and payday loans at low prices</p>' : ''}${B.has('cloaked') ? '<a href="https://link-farm.example/" style="font-size:0">partner</a>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${US ? ' <a href="/pages/data-sharing-opt-out">Your privacy choices</a>' : ''}${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
 }
 function send(res, status, body, type = 'text/html; charset=utf-8') {
   res.writeHead(status, { 'Content-Type': type });
@@ -246,6 +259,8 @@ const server = http.createServer(async (req, res) => {
   if (p.startsWith('/collections/') && p.endsWith('/products.json')) return send(res, 200, { products: products.slice(0,2) }, 'application/json');
   if (p === '/products.json') return send(res, 200, { products }, 'application/json');
   if (p === '/collections.json') return send(res, 200, { collections: [{ title: 'Festive', handle: 'festive', products_count: 3 }] }, 'application/json');
+  if (p === '/' && B.has('deface')) return send(res, 200, `<!doctype html><html><head><title>Hacked by Gh0st Crew</title></head><body style="background:#000;color:#0f0;font:700 40px monospace;text-align:center;padding-top:120px"><h1>HACKED BY GH0ST CREW</h1><p>Your security is low. Greetz to all.</p></body></html>`);
+  if (p === '/' && B.has('replaced')) return send(res, 200, `<!doctype html><html><head><title>Welcome</title></head><body style="background:#123;color:#fff;font:28px sans-serif;padding:80px"><h1>Exclusive offers today</h1><p>Claim your prize now. Limited time members only bonus available worldwide.</p></body></html>`);
   if (p === '/') return send(res, 200, layout('Mock Store – Handmade in India', `<h1>Handmade in India</h1><img src="/img/hero.png" width="800" height="400" alt="Artisans at work">${products.map(productCard).join('')}`));
   if (p.startsWith('/collections/')) {
     if (p === '/collections/discontinued') return send(res, 404, layout('Not found', '<h1>404</h1>'));
@@ -291,7 +306,9 @@ const server = http.createServer(async (req, res) => {
       if (refused) return send(res, refused[0], refused[1], 'application/json');
       const hit = byId.get(Number(it.id));
       if (!hit || !hit.v.available) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
-      items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price: hit.v.price, handle: hit.p.handle });
+      // pricedrift / pricelow: an app or cart script changes the price after the shopper saw it.
+      const price = (Number(hit.v.price) + (B.has('pricedrift') ? 150 : B.has('pricelow') ? -100 : 0)).toFixed(2);
+      items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price, handle: hit.p.handle });
     }
     return send(res, 200, { items }, 'application/json');
   }
@@ -324,7 +341,15 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(302, { Location: B.has('checkout') ? '/cart' : B.has('hijack') ? HIJACK : '/checkouts/cn/abc123' });
     return res.end();
   }
-  if (p.startsWith('/checkouts/')) return send(res, 200, layout('Checkout', '<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>'));
+  if (p.startsWith('/checkouts/')) {
+    // Order summary like Shopify's checkout: lines and a subtotal, before any payment details.
+    const c = cartJson(cartFor(req, res));
+    const sub = c.items_subtotal_price + (B.has('checkoutprice') ? 20000 : 0);
+    const inr = (m) => '₹' + (m / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+    return send(res, 200, layout('Checkout', `<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>
+<aside class="order-summary"><h2>Order summary</h2>${c.items.map((i) => `<div class="line"><span>${i.title} × ${i.quantity}</span> <span>${inr(i.final_line_price)}</span></div>`).join('')}
+<div class="row"><span>Subtotal · ${c.item_count} ${c.item_count === 1 ? 'item' : 'items'}</span> <span>${inr(sub)}</span></div><div class="row"><span>Shipping</span> <span>Enter shipping address</span></div></aside>`));
+  }
   if (p.startsWith('/policies/')) {
     if (!DE && (p.endsWith('terms-of-service') || p.endsWith('shipping-policy'))) return send(res, 404, layout('Not found', '<h1>404</h1>'));
     if (DE && p.endsWith('refund-policy')) return send(res, 200, layout('Widerrufsbelehrung', '<h1>Widerrufsbelehrung</h1><p>Sie haben das Recht, binnen 14 Tagen ohne Angabe von Gründen diesen Vertrag zu widerrufen.</p>'));

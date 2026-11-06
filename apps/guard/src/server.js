@@ -35,6 +35,11 @@ import { appHealth } from './app-health.js';
 import { runnerRoutes } from './runner-routes.js';
 import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportName } from './export.js';
 import { teamRoutes, membership, memberMay, teamAllowed } from './team.js';
+import * as themeClean from './theme-clean.js';
+import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
+import { recoveryPacket } from './recovery-packet.js';
+import { incidentView, startIncident, updateIncident, endIncident, incidentBrief, startEmail as incidentStartEmail, endEmail as incidentEndEmail } from './incident.js';
+import { warningsFor } from './early-warning.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -109,7 +114,7 @@ function ownStore(req, res) {
 }
 function publicStore(s) {
   const { storefront_password, config_json, webhook_json, ...rest } = s;
-  return { ...rest, has_password: !!storefront_password };
+  return { ...rest, has_password: !!storefront_password, incident: incidentBrief(s.id) };
 }
 // ADMIN_EMAIL may list several founders, separated by commas.
 const ADMINS = new Set(String(config.adminEmail || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean));
@@ -382,7 +387,7 @@ function storeView(s) {
   return {
     ...publicStore(s),
     blocked: blockReason(ent, s.id),
-    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
+    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], priceRules: cfg.priceRules || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
@@ -420,6 +425,7 @@ app.post('/api/stores', requireUser, async (req, res) => {
   if (mine.some((s) => s.url === origin)) return res.status(409).json({ error: 'This store is already in your account.' });
   if (alertEmail && !isEmail(alertEmail)) return res.status(400).json({ error: 'Alert email is not valid' });
   if (slack && !/^https:\/\/hooks\.slack\.com\//.test(slack)) return res.status(400).json({ error: 'Slack webhook must start with https://hooks.slack.com/' });
+  if (Array.isArray(req.body?.config?.priceRules) && req.body.config.priceRules.length > ent.limits.priceRules) return refuse(res, `Your plan includes ${ent.limits.priceRules} price rules per store.`);
   let cfg;
   try { cfg = normalizeConfig(req.body?.config || {}); } catch (e) { return res.status(400).json({ error: e.message }); }
   const info = q.insertStore.run(
@@ -491,6 +497,7 @@ app.patch('/api/stores/:id', requireUser, async (req, res) => {
   if (b.slack && b.slack !== s.slack_webhook && !has(ent, 'slack')) return refuse(res, notIncluded('slack', 'Slack alerts'));
   if (b.config?.journeyIntervalMin && Number(b.config.journeyIntervalMin) < ent.limits.journeyMinInterval) return refuse(res, 'Your plan doesn\'t include checks this often. Choose a longer interval or upgrade.');
   if (b.config?.fullIntervalMin && Number(b.config.fullIntervalMin) < ent.limits.fullMinInterval) return refuse(res, 'Your plan doesn\'t include full checks this often.');
+  if (Array.isArray(b.config?.priceRules) && b.config.priceRules.filter((r) => r && (r.product || r.price)).length > ent.limits.priceRules) return refuse(res, `Your plan includes ${ent.limits.priceRules} price rule${ent.limits.priceRules === 1 ? '' : 's'} per store. Remove one, or upgrade to add more.`);
   q.updateStoreSettings.run(
     b.name === undefined ? s.name : String(b.name).trim().slice(0, 80),
     b.password === undefined ? s.storefront_password : seal(b.password || null),
@@ -515,7 +522,106 @@ app.delete('/api/stores/:id', requireUser, (req, res) => {
   q.deleteStore.run(s.id, req.user.id);
   fs.rmSync(path.join(config.dataDir, 'baselines', `store-${s.id}`), { recursive: true, force: true });
   fs.rmSync(path.join(config.dataDir, 'variants', `store-${s.id}.json`), { force: true });
+  fs.rmSync(path.join(config.dataDir, 'domain', `store-${s.id}.json`), { force: true });
   res.json({ ok: true });
+});
+
+// ---------- Clean theme copy and guided restore (read-only; Shopify stores) ----------
+app.get('/api/stores/:id/theme/clean', requireUser, requireFeature('theme_watch'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json({ clean: themeClean.cleanView(s.id) });
+});
+
+app.get('/api/stores/:id/theme/clean/file', requireUser, requireFeature('theme_watch'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const f = themeClean.cleanFile(s.id, String(req.query.name || '').slice(0, 300));
+  if (!f) return res.status(404).json({ error: 'This file isn’t in the clean copy.' });
+  res.json(f);
+});
+
+app.get('/api/stores/:id/theme/clean.zip', requireUser, requireFeature('theme_watch'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const v = themeClean.cleanView(s.id);
+  if (!v) return res.status(404).json({ error: 'There is no clean copy of your theme yet.' });
+  const name = `${String(v.themeName || 'theme').replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'theme'}-clean-${String(v.savedAt).slice(0, 10)}.zip`;
+  res.set({ 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' });
+  res.send(themeClean.cleanZip(s.id));
+});
+
+// ---------- Security checklist (S11): the owner ticks off what they did; reviews come due again ----------
+const securityView = (s) => securityChecklist(s, { shopify: !!shopify.shopForStore(s.id) || /shopify/i.test(s.platform || '') });
+app.get('/api/stores/:id/security-checklist', requireUser, requireFeature('security_checklist'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(securityView(s));
+});
+app.post('/api/stores/:id/security-checklist/:item', requireUser, requireFeature('security_checklist'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (!isSecurityItem(req.params.item)) return res.status(404).json({ error: 'There is no such item on the checklist.' });
+  if (typeof req.body?.done !== 'boolean') return res.status(400).json({ error: 'Say whether it is done (true or false).' });
+  tickSecurity(s.id, req.params.item, req.body.done);
+  res.json(securityView(s));
+});
+app.patch('/api/stores/:id/security-checklist', requireUser, requireFeature('security_checklist'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (typeof req.body?.reminders !== 'boolean') return res.status(400).json({ error: 'Say whether reminders are on (true or false).' });
+  setSecurityReminders(s.id, req.body.reminders);
+  res.json(securityView(s));
+});
+
+// ---------- Incident mode (S12): one button when the store may be hacked or badly broken ----------
+const onShopify = (s) => !!shopify.shopForStore(s.id) || /shopify/i.test(s.platform || '');
+app.get('/api/stores/:id/incident', requireUser, requireFeature('incident_mode'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(incidentView(s, { shopify: onShopify(s) }));
+});
+app.post('/api/stores/:id/incident', requireUser, requireFeature('incident_mode'), async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const why = blockReason(entitlements(s.user_id), s.id);
+  if (why) return refuse(res, why);
+  if (!s.monitoring) return res.status(400).json({ error: 'Monitoring is paused for this store. Switch it on under Monitoring first, so we can check the store every few minutes.' });
+  let row;
+  try { row = startIncident(s, { reason: req.body?.reason, contacts: req.body?.contacts }); }
+  catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  // A full check right away, unless one is already running.
+  const runId = q.activeRunForStore.get(s.id) ? null : startRun({ storeId: s.id, origin: s.url, kind: 'full', password: s.storefront_password, trigger: 'incident' });
+  sendMail(incidentStartEmail(s, row, { shopify: onShopify(s) })).catch((e) => console.error('incident email failed', e));
+  res.json({ ...incidentView(s, { shopify: onShopify(s) }), runId });
+});
+app.patch('/api/stores/:id/incident', requireUser, requireFeature('incident_mode'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  try { updateIncident(s.id, { contacts: req.body?.contacts, steps: req.body?.steps }); }
+  catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  res.json(incidentView(s, { shopify: onShopify(s) }));
+});
+app.post('/api/stores/:id/incident/end', requireUser, requireFeature('incident_mode'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const row = endIncident(s.id, 'owner');
+  if (!row) return res.status(404).json({ error: 'Incident mode is not on for this store.' });
+  sendMail(incidentEndEmail(s, row)).catch((e) => console.error('incident email failed', e));
+  res.json(incidentView(s, { shopify: onShopify(s) }));
+});
+
+// Recovery packet (S17): password reset link and a ready-to-send message to Shopify Support.
+app.get('/api/stores/:id/recovery-packet', requireUser, requireFeature('incident_mode'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json(recoveryPacket(s, { shopify: onShopify(s) }));
+});
+app.get('/api/stores/:id/recovery-packet.txt', requireUser, requireFeature('incident_mode'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const p = recoveryPacket(s, { shopify: onShopify(s) });
+  res.set('Content-Disposition', `attachment; filename="recovery-${p.store.host.replace(/[^a-z0-9.-]/gi, '-')}.txt"`).type('text/plain; charset=utf-8').send(`Subject: ${p.message.subject}\n\n${p.message.text}\n`);
 });
 
 app.get('/api/stores/:id/scorecard', requireUser, (req, res) => {
@@ -834,7 +940,7 @@ app.post('/api/stores/:id/sale-readiness/email', requireUser, requireFeature('sa
 app.get('/api/stores/:id/apps', requireUser, requireFeature('app_health'), (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
-  res.json(appHealth(s));
+  res.json({ ...appHealth(s), earlyWarnings: warningsFor(s.id) });
 });
 
 // ---------- Exports: CSV and printable / PDF report (owner only) ----------
@@ -947,6 +1053,8 @@ const html = (render) => (req, res) => {
 const old = (file, opts) => html(() => site.legacy(config.publicDir, file, opts));
 app.get('/', html(() => site.home()));
 app.get('/de', html(() => site.deHome()));
+app.get('/fr', html(() => site.frHome()));
+app.get('/es', html(() => site.esHome()));
 app.get('/commerce-assurance', html(() => site.category()));
 app.get('/features', html(() => site.productIndex()));
 app.get('/features/:slug', html((req) => site.product(req.params.slug)));

@@ -5,6 +5,17 @@
   const VERDICT = { healthy: 'Healthy', warning: 'Needs attention', critical: 'Customers can\'t buy', locked: 'Password protected', blocked: 'Blocked by bot protection' };
   const COLOR = { healthy: 'var(--pass)', warning: 'var(--warn)', critical: 'var(--fail)', locked: 'var(--warn)', blocked: 'var(--warn)' };
 
+  // What the shopper is asked to pay at each step (Prices stay the same, price rules).
+  function priceTrailHtml(t) {
+    if (!t || !t.steps || !t.steps.length) return '';
+    const base = t.steps[0].minor;
+    return `<table class="price-trail"><thead><tr><th>Step</th><th class="num">Price</th><th></th></tr></thead><tbody>${t.steps.map((s, i) => {
+      const diff = i > 0 && s.minor != null && base != null && s.minor !== base;
+      return `<tr class="${diff ? (s.minor > base ? 'up' : 'down') : ''}"><td>${esc(s.label)}</td><td class="num">${s.money == null ? '<span class="muted">Not shown</span>' : esc(s.money)}</td><td class="muted">${esc(s.note || '')}${diff ? ` <b>${s.minor > base ? 'Higher' : 'Lower'}</b>` : ''}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  }
+  window.priceTrailHtml = priceTrailHtml;
+
   function checkHtml(c) {
     const shot = c.evidence && c.evidence.screenshot;
     const errors = c.evidence && c.evidence.errors;
@@ -20,6 +31,7 @@
       <div class="chk-top"><span class="st">${ST[c.status] || esc(c.status)}</span><h4>${esc(c.title)}</h4></div>
       <p class="detail">${esc(c.detail)}</p>
       ${c.fix && c.status !== 'pass' ? `<p class="fix"><b>How to fix:</b> ${esc(c.fix)}</p>` : ''}
+      ${c.evidence && c.evidence.priceTrail ? priceTrailHtml(c.evidence.priceTrail) : ''}
       ${errors ? `<p class="fix">${errors.map((e) => `<code>${esc(e.message)}</code>`).join('<br>')}</p>` : ''}
       ${variants ? `<ul class="ai-findings variant-list">${variants.map((x) => `<li><b>${esc(x.name)}</b> <span class="muted">(${x.problem === 'unpublished' ? 'cart can\'t find it' : x.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${x.message ? `<br><span class="fix-inline">Store said: ${esc(x.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}
       ${video ? (videoGone ? '<p class="fix video-gone">The video replay was deleted after 7 days.</p>' : `<details class="video-replay"><summary>Watch the replay</summary><video controls preload="metadata" playsinline src="${esc(video)}"></video><span class="muted">Kept until ${esc(new Date(c.evidence.videoUntil).toLocaleDateString())}</span></details>`) : ''}

@@ -14,12 +14,15 @@ import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { runVariantSweep } from './variants.js';
 import { runTraffic } from './traffic.js';
+import { runPriceRules } from './pricing.js';
 import { reviewScreens } from './visual-ai.js';
 import { watchScripts, scriptChecks, pageKind } from './scripts.js';
 import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js';
 import { watchHijack, hijackChecks } from './hijack.js';
 import { watchForms, formChecks } from './forms.js';
 import { runShopper } from './agent.js';
+import { runSpam } from './spam.js';
+import { runDomain } from './domain.js';
 import { aiEnabled } from '../ai.js';
 import { VIDEO_FILE, VIDEO_DAYS } from '../video.js';
 
@@ -38,7 +41,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -115,12 +118,17 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       rec.add(check('fn.preview', 'functional', 'Draft theme opened', theme ? 'pass' : 'warn', { severity: 'minor', detail: theme ? `Testing “${theme.name}” (draft) in a preview session.` : 'We could not confirm which theme loaded. Results may reflect the live theme.' }));
     }
     info = await discover(ctx.request, origin, { testProduct });
+    // WooCommerce shopping tests can be switched off (founder console); the store is then treated like any other platform.
+    if (!woo) info.isWoo = false;
     const lockedEarly = /\/password/.test(page.url());
-    if (!info.isShopify && !lockedEarly && !(await isLocked(ctx, origin))) {
+    if (!info.isShopify && !info.isWoo && !lockedEarly && !(await isLocked(ctx, origin))) {
       rec.add(
         check('fn.platform', 'functional', 'Full shopping journey test', 'skip', {
           severity: 'minor',
-          detail: `Detected platform: ${info.platform.label}. Automated add-to-cart and checkout tests currently run on Shopify stores; WooCommerce support is next. Uptime, speed, SEO, accessibility, links and script errors were fully tested.`,
+          detail: info.platform.key === 'woocommerce'
+            ? 'This WooCommerce store does not answer on the WooCommerce Store API (it may be turned off or blocked by a security plugin), so add-to-cart and checkout could not be tested. Uptime, speed, SEO, accessibility, links and script errors were fully tested.'
+            : `Detected platform: ${info.platform.label}. Automated add-to-cart and checkout tests run on Shopify and WooCommerce stores. Uptime, speed, SEO, accessibility, links and script errors were fully tested.`,
+          fix: info.platform.key === 'woocommerce' ? 'Allow public access to /wp-json/wc/store/ in your security or firewall plugin (it is the same API your cart and checkout blocks use), then run the check again.' : '',
         })
       );
     }
@@ -171,6 +179,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     }
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
+      if (on('pricing.journey') && priceRules.length && info.isShopify) await runPriceRules({ page, rec, origin, rules: priceRules });
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
       if (kind !== 'journeys') {
         phase('quality');
@@ -183,20 +192,24 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind === 'full' && storeId && traffic && !preview && on('sale.traffic')) {
         phase('traffic');
         trafficOut = await runTraffic({ rec, origin, info, password, storeId, dataDir: config.dataDir, shoppers: traffic.shoppers });
+        if (on('security.spam')) await runSpam({ page, rec, origin, info, password, shot });
       }
       if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
         phase('regional');
         await runRegional({ page, rec, origin, info, password, on, preview });
       }
-      if (kind === 'full' && storeId && on('visual')) {
+      if (kind === 'full' && storeId && (on('visual') || on('security.deface'))) {
         phase('visual');
-        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
+        // Defacement is judged against the approved look, so it rides on the visual screenshots.
+        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null, deface: on('security.deface') && !preview });
       }
-      if (kind === 'full' && storeId && info.isShopify && on('catalog')) {
+      if (kind === 'full' && storeId && info.isShopify && (on('catalog') || on('security.tamper'))) {
         phase('catalog');
-        catalog = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on, keep: catalogKeep });
+        const cat = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on, keep: catalogKeep, shopifyCodes });
         // The full catalog checks supersede the quick sample check; reporting both double-counts one mistake.
-        if (catalog?.count) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
+        if (cat?.count && on('catalog')) rec.checks = rec.checks.filter((c) => c.id !== 'nf.catalog');
+        // Tampering alone (catalog checks off or not in the plan) reads the catalog but doesn't show it.
+        catalog = on('catalog') ? cat : null;
       }
       if (kind === 'full' && storeId && info.isShopify && on('catalog.variants') && !preview) {
         phase('variants');
@@ -209,6 +222,11 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
           fs.mkdirSync(path.dirname(posFile), { recursive: true });
           fs.writeFileSync(posFile, JSON.stringify({ next: variants.next, total: variants.total, at: new Date().toISOString() }));
         }
+      }
+      // Domain, certificate and records belong to the live store: not to a draft theme or a Safe to publish check.
+      if (kind === 'full' && storeId && !preview && !release && on('security.domain')) {
+        phase('domain');
+        await runDomain({ rec, request: ctx.request, origin, storeId }).catch((e) => rec.add(check('sec.domain.dns', 'security', 'Domain and email records unchanged', 'skip', { severity: 'minor', detail: shortErr(e) })));
       }
       if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
         phase('ai');
@@ -237,6 +255,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       startedAt: new Date(started).toISOString(),
       durationMs: Date.now() - started,
       isShopify: info.isShopify,
+      isWoo: !!info.isWoo,
       metrics,
       catalog,
       variants,

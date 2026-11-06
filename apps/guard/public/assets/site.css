@@ -227,3 +227,11 @@ footer.foot a { color: var(--muted); }
 .prose { padding: 48px 0 72px; }
 .prose h2 { margin-top: 1.6em; font-size: 1.4rem; }
 .prose li { margin-bottom: 6px; }
+
+/* Price trail: what the shopper is asked to pay at each step */
+.price-trail { border-collapse: collapse; margin: 8px 0 4px; font-size: 13px; min-width: 280px; max-width: 100%; }
+.price-trail th { text-align: left; font-weight: 600; font-size: 12px; color: #6b6f76; padding: 3px 12px 3px 0; border-bottom: 1px solid #e6e6e6; }
+.price-trail td { padding: 4px 12px 4px 0; border-bottom: 1px solid #f0f0f0; }
+.price-trail .num { text-align: right; font-variant-numeric: tabular-nums; }
+.price-trail tr.up td { color: #b42318; }
+.price-trail tr.down td { color: #9a6700; }
