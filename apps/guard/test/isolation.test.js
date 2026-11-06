@@ -10,7 +10,7 @@ const STORE_ROUTES = [
   ['get', '/api/stores/:id/environments'], ['get', '/api/stores/:id/releases'], ['get', '/api/stores/:id/reports'],
   ['get', '/api/stores/:id/runs'], ['get', '/api/stores/:id/sale-readiness'], ['get', '/api/stores/:id/scorecard'], ['get', '/api/stores/:id/shopify/themes'],
   ['get', '/api/stores/:id/visual'], ['patch', '/api/stores/:id'], ['delete', '/api/stores/:id'],
-  ['post', '/api/stores/:id/approve-visual'], ['post', '/api/stores/:id/discover'], ['post', '/api/stores/:id/environments'],
+  ['post', '/api/stores/:id/approve-visual'], ['post', '/api/stores/:id/accept-visual-change'], ['post', '/api/stores/:id/discover'], ['post', '/api/stores/:id/environments'],
   ['post', '/api/stores/:id/explain-change'], ['post', '/api/stores/:id/releases'], ['post', '/api/stores/:id/run'],
   ['post', '/api/stores/:id/sale-readiness/email'], ['post', '/api/stores/:id/test-alert'],
   ['get', '/api/stores/:id/incident'], ['post', '/api/stores/:id/incident'], ['patch', '/api/stores/:id/incident'], ['post', '/api/stores/:id/incident/end'],

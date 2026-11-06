@@ -226,6 +226,9 @@ async function prepare(job) {
     // Sale traffic (opt-in): claim the store's 6-hour slot here, on the main server, only when the test will run.
     traffic: store && kind === 'full' && !release && !preview && cfg.saleTraffic && !runDisabled.includes('sale.traffic') ? { shoppers: cfg.saleTrafficShoppers, ...claimTrafficSlot(store.id) } : null,
     woo: isOn('woocommerce'),
+    // Visual changes: the owner's sensitivity (default 12% of a page) and the changes they accepted as small, per page.
+    visualThreshold: (cfg.visualThreshold || 12) / 100,
+    visualPages: Object.fromEntries(Object.entries(cfg.visualPages || {}).map(([k, v]) => [k, v / 100])),
   };
 }
 

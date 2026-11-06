@@ -123,6 +123,26 @@ export function groupOf(checkId) {
 export const INTERVALS = [30, 60, 180, 360, 720, 1440];
 export const FULL_INTERVALS = [720, 1440, 10080];
 
+export const VISUAL_DEFAULT_PERCENT = 12;
+export const VISUAL_KEY = /^(home|product)-(desktop|tablet|mobile)$/;
+function cleanPercent(v) {
+  if (v === null || v === '' || v === undefined) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 1 || n > 50) throw new Error('Sensitivity must be a number from 1 to 50 (percent of the page).');
+  return Math.round(n * 10) / 10;
+}
+function cleanVisualPages(v) {
+  if (v === null) return {};
+  if (typeof v !== 'object' || Array.isArray(v)) throw new Error('Page settings are not valid.');
+  const out = {};
+  for (const [k, val] of Object.entries(v)) {
+    if (!VISUAL_KEY.test(k)) throw new Error('Unknown page.');
+    const n = cleanPercent(val);
+    if (n !== null) out[k] = n;
+  }
+  return out;
+}
+
 export function normalizeConfig(input = {}, base = {}) {
   const cfg = { ...base };
   if (input.discountCodes !== undefined) cfg.discountCodes = cleanCodes(input.discountCodes);
@@ -146,6 +166,9 @@ export function normalizeConfig(input = {}, base = {}) {
   if (input.dailySales !== undefined) { const n = Number(input.dailySales); cfg.dailySales = Number.isFinite(n) && n > 0 ? Math.round(n) : null; }
   if (Array.isArray(input.markets)) cfg.markets = [...new Set(input.markets.map(String).filter((m) => MARKETS.some((x) => x.code === m)))];
   if (input.currency !== undefined) cfg.currency = /^[A-Z]{3}$/.test(String(input.currency)) ? String(input.currency) : null;
+  // Visual changes: how much of a page may differ before it counts as changed (percent, 1 to 50; empty = the default).
+  if (input.visualThreshold !== undefined) cfg.visualThreshold = cleanPercent(input.visualThreshold);
+  if (input.visualPages !== undefined) cfg.visualPages = cleanVisualPages(input.visualPages);
   if (input.fullIntervalMin !== undefined && FULL_INTERVALS.includes(Number(input.fullIntervalMin))) cfg.fullIntervalMin = Number(input.fullIntervalMin);
   return cfg;
 }

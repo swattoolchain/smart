@@ -47,7 +47,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], priceTiers = [], priceConfigs = [], priceOffers = [], markets = [], marketPrices = null, abVariants = [], customTests = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], priceTiers = [], priceConfigs = [], priceOffers = [], markets = [], marketPrices = null, abVariants = [], customTests = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, visualThreshold = 0.12, visualPages = {}, release = false, woo = true }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -223,7 +223,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind === 'full' && storeId && (on('visual') || on('security.deface'))) {
         phase('visual');
         // Defacement is judged against the approved look, so it rides on the visual screenshots.
-        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null, deface: on('security.deface') && !preview });
+        await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, threshold: visualThreshold, pageThresholds: visualPages, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null, deface: on('security.deface') && !preview });
       }
       if (kind === 'full' && storeId && (info.isShopify || info.isWoo) && (on('catalog') || on('security.tamper'))) {
         phase('catalog');

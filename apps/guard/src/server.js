@@ -7,14 +7,14 @@ import { config } from './config.js';
 import { db, q } from './db.js';
 import { normalizeStoreUrl, assertPublicTarget, newContext, gotoStore, settleChallenge } from './engine/browser.js';
 import { discover } from './engine/discover.js';
-import { GROUPS, INTERVALS, FULL_INTERVALS, MARKETS, normalizeConfig } from './engine/catalog.js';
+import { GROUPS, INTERVALS, FULL_INTERVALS, MARKETS, normalizeConfig, VISUAL_DEFAULT_PERCENT } from './engine/catalog.js';
 import { startRun, startScheduler, storeConfig, intervals, nextRunIn, saleActive } from './scheduler.js';
 import { queueDepth, cancelRun, queueRoom } from './queue.js';
 import { withLookupSlot } from './lookups.js';
 import { liveView } from './live.js';
 import { scorecard, weekBuyability } from './scorecard.js';
 import crypto from 'node:crypto';
-import { entitlements, has, blockReason, licenseView, ensureLicense, notIncluded, plansWith, FEATURES, envAllowed, listPlans } from './license.js';
+import { audit, entitlements, has, blockReason, licenseView, ensureLicense, notIncluded, plansWith, FEATURES, envAllowed, listPlans } from './license.js';
 import { adminRoutes } from './admin.js';
 import { enabledKeys, checkOn, isOn, requireFeature } from './features.js';
 import * as shopify from './shopify.js';
@@ -494,7 +494,7 @@ function storeView(s) {
   return {
     ...publicStore(s),
     blocked: blockReason(ent, s.id),
-    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], priceRules: cfg.priceRules || [], priceTiers: cfg.priceTiers || [], priceConfigs: cfg.priceConfigs || [], priceOffers: cfg.priceOffers || [], marketPrices: cfg.marketPrices || null, abVariants: cfg.abVariants || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
+    config: { onboarded: cfg.onboarded !== false, toured: cfg.toured !== false, disabled: cfg.disabled || [], markets: cfg.markets || [], discountCodes: cfg.discountCodes || [], priceRules: cfg.priceRules || [], priceTiers: cfg.priceTiers || [], priceConfigs: cfg.priceConfigs || [], priceOffers: cfg.priceOffers || [], marketPrices: cfg.marketPrices || null, abVariants: cfg.abVariants || [], saleUntil: saleActive(cfg) ? cfg.saleUntil : null, testProduct: cfg.testProduct || null, dailySales: cfg.dailySales || null, currency: cfg.currency || null, failureVideo: !!cfg.failureVideo, visualThreshold: cfg.visualThreshold || null, visualPages: cfg.visualPages || {}, saleTraffic: !!cfg.saleTraffic, saleTrafficShoppers: cfg.saleTrafficShoppers || 3, ...iv },
     buyability_week: weekBuyability(s.id),
     next_run_in: s.last_run_at ? nextRunIn(s) : null,
     active_run_id: active ? active.id : null,
@@ -989,9 +989,11 @@ app.get('/api/stores/:id/visual', requireUser, (req, res) => {
   const result = run ? JSON.parse(run.result_json) : null;
   const visual = result?.checks?.find((c) => c.id === 'nf.visual')?.evidence?.visual || [];
   const shotDir = run ? path.join(config.dataDir, 'shots', `run-${run.id}`) : null;
+  const cfgV = storeConfig(s);
   res.json({
     runId: run?.id || null,
     checkedAt: run?.finished_at || null,
+    sensitivity: { percent: cfgV.visualThreshold || VISUAL_DEFAULT_PERCENT, isDefault: !cfgV.visualThreshold, defaultPercent: VISUAL_DEFAULT_PERCENT, pages: cfgV.visualPages || {} },
     shots: keys
       .map((k) => {
         const v = visual.find((x) => x.key === k) || {};
@@ -1135,7 +1137,36 @@ app.post('/api/stores/:id/approve-visual', requireUser, (req, res) => {
   const run = q.runById.get(Number(req.body?.runId));
   if (!run || run.store_id !== s.id) return res.status(404).json({ error: 'Run not found' });
   const n = approveBaseline(path.join(config.dataDir, 'shots', `run-${run.id}`), path.join(config.dataDir, 'baselines', `store-${s.id}`));
+  audit(`user:${currentUserId(req)}`, s.user_id, 'visual.approve', { store: s.url, runId: run.id, pages: n });
   res.json({ ok: true, approved: n });
+});
+
+// "Changes this small are fine": raise this store's limit for the pages that changed in a check to just above what was measured.
+app.post('/api/stores/:id/accept-visual-change', requireUser, (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const run = q.runById.get(Number(req.body?.runId));
+  if (!run || run.store_id !== s.id) return res.status(404).json({ error: 'Run not found' });
+  let result;
+  try { result = JSON.parse(run.result_json || '{}'); } catch { result = {}; }
+  const seen = result?.checks?.find((c) => c.id === 'nf.visual')?.evidence?.visual || [];
+  let changed = seen.filter((v) => v.status === 'changed' && Number.isFinite(v.ratio));
+  if (req.body?.key !== undefined) changed = changed.filter((v) => v.key === String(req.body.key));
+  if (!changed.length) return res.status(400).json({ error: 'There is no visual change in this check to accept.' });
+  const cfg = storeConfig(s);
+  const pages = { ...(cfg.visualPages || {}) };
+  const accepted = {};
+  const tooBig = [];
+  for (const v of changed) {
+    const next = Math.round((v.ratio + 0.5) * 10) / 10;
+    if (next > 50) { tooBig.push(v.key); continue; }
+    pages[v.key] = Math.max(pages[v.key] || 0, next);
+    accepted[v.key] = pages[v.key];
+  }
+  if (!Object.keys(accepted).length) return res.status(400).json({ error: 'That is more than a small change. If you meant to change the page, choose “This is the new look”.' });
+  q.updateStoreConfig.run(JSON.stringify({ ...cfg, visualPages: pages }), s.id);
+  audit(`user:${currentUserId(req)}`, s.user_id, 'visual.accept_small', { store: s.url, runId: run.id, pages: accepted });
+  res.json({ ok: true, accepted, tooBig });
 });
 
 // ---------- Sale plans and the sale rehearsal ----------

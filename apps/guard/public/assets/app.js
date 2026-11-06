@@ -109,7 +109,27 @@
     const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || 'tharam-export';
     return { blob: await r.blob(), name };
   }
+  // The two ways to answer a visual change: it is the new look, or changes this small are fine.
+  async function answerVisual(storeId, runId, kind, key) {
+    if (kind === 'approve') {
+      if (!(await confirmDialog({ title: 'Is this the new look?', body: 'Future checks will compare against the latest screenshots.', confirm: 'This is the new look' }))) return false;
+      await api(`/api/stores/${storeId}/approve-visual`, { method: 'POST', body: { runId } });
+      toast('Latest look approved');
+    } else {
+      if (!(await confirmDialog({ title: 'Are changes this small fine?', body: 'We will stop warning you about changes of this size on this page. A bigger change still gets reported. You can undo this under Test suite → Visual changes.', confirm: 'Changes this small are fine' }))) return false;
+      const r = await api(`/api/stores/${storeId}/accept-visual-change`, { method: 'POST', body: { runId, ...(key ? { key } : {}) } });
+      toast(`Okay. Changes up to ${Math.max(...Object.values(r.accepted))}% are fine on ${plural(Object.keys(r.accepted).length, 'page')}`);
+    }
+    return true;
+  }
   document.addEventListener('click', async (e) => {
+    const v = e.target.closest('[data-visual]');
+    if (v && !v.disabled) {
+      v.disabled = true;
+      try { if (await answerVisual(v.dataset.store, Number(v.dataset.run), v.dataset.visual, v.dataset.key)) { await loadStores(); render({ silent: true }); } } catch (ex) { toast(ex.message, 'error'); }
+      v.disabled = false;
+      return;
+    }
     const b = e.target.closest('[data-download],[data-print]');
     if (!b || b.disabled) return;
     e.preventDefault();
@@ -1068,10 +1088,10 @@
   STORE_PAGES.suite = async (ctx, s) => {
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (!ctx.alive()) return;
-    const tab = ['product', 'codes', ...(feat('price_checks') ? ['prices'] : []), ...(feat('ab_tests') ? ['abtests'] : [])].includes(ctx.r.a) ? ctx.r.a : null;
+    const tab = ['product', 'codes', 'visual', ...(feat('price_checks') ? ['prices'] : []), ...(feat('ab_tests') ? ['abtests'] : [])].includes(ctx.r.a) ? ctx.r.a : null;
     const base = `#/s/${s.id}/suite`;
     const shopify = !s.platform || /shopify/i.test(s.platform);
-    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes'], ...(feat('price_checks') ? [['prices', 'Price rules']] : []), ...(feat('ab_tests') ? [['abtests', 'A/B tests']] : [])], tab);
+    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes'], ['visual', 'Visual changes'], ...(feat('price_checks') ? [['prices', 'Price rules']] : []), ...(feat('ab_tests') ? [['abtests', 'A/B tests']] : [])], tab);
     if (!tab) {
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id, saleTraffic: !!s.config.saleTraffic })}</form></div>`;
       const form = $('#suite');
@@ -1176,6 +1196,44 @@
       oform.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.offer-rule', oform).length > 1) b.closest('.offer-rule').remove(); else b.closest('.offer-rule').querySelectorAll('input').forEach((i) => (i.value = '')); mark(); });
       $('#addo').onclick = () => { if (count() >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); oform.insertAdjacentHTML('beforeend', orow({ type: 'spend', products: [], variant: '', offer: '' }, Date.now())); mark(); oform.lastElementChild.querySelector('select').focus(); };
       $('#addr').onclick = () => { if (count() >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
+      return;
+    }
+    if (tab === 'visual') {
+      const cur = s.config.visualThreshold || 12;
+      const preset = { 12: 'normal', 25: 'low', 5: 'high' }[cur] || 'custom';
+      const pages = Object.entries(s.config.visualPages || {});
+      const PGL = { home: 'Homepage', product: 'Product page' };
+      const nm = (k) => { const [pg, dev] = k.split('-'); return `${PGL[pg] || pg} on ${dev}`; };
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
+        <div class="form-section" style="border-top:0;padding-top:0"><div><h3>How sensitive should we be?</h3><p class="explain">With every full check we compare screenshots of your pages with the look you approved. A page counts as changed when more than a set share of it looks different. Normal suits most stores.</p></div>
+          <div class="controls"><form id="vsens">
+            <label class="check-row"><input type="radio" name="lvl" value="normal" ${preset === 'normal' ? 'checked' : ''}> <span><b>Normal</b> · tell me when more than 12% of a page changes</span></label>
+            <label class="check-row"><input type="radio" name="lvl" value="low" ${preset === 'low' ? 'checked' : ''}> <span><b>Low</b> · only big changes, more than 25%</span></label>
+            <label class="check-row"><input type="radio" name="lvl" value="high" ${preset === 'high' ? 'checked' : ''}> <span><b>High</b> · even small changes, more than 5%</span></label>
+            <label class="check-row"><input type="radio" name="lvl" value="custom" ${preset === 'custom' ? 'checked' : ''}> <span><b>My own number</b></span></label>
+            <div class="field" style="max-width:220px"><label for="vpct">Percent of the page (1 to 50)</label><input id="vpct" name="pct" type="number" min="1" max="50" step="0.5" value="${cur}" ${preset === 'custom' ? '' : 'disabled'}></div>
+            <p class="error-msg" id="vs-err" role="alert"></p></form></div></div>
+        <div class="form-section"><div><h3>Changes you said are fine</h3><p class="explain">When you answer “Changes this small are fine” on a visual change, that page gets a higher limit. Bigger changes on it are still reported.</p></div>
+          <div class="controls" id="vpages">${pages.length ? pages.map(([k, v]) => `<div class="inline-row"><span>${esc(nm(k))}: up to ${v}%</span><button type="button" class="btn small ghost" data-vreset="${esc(k)}">Reset</button></div>`).join('') : '<p class="muted">None yet.</p>'}
+            ${pages.length ? '<div class="inline-row"><button type="button" class="btn small secondary" data-vreset="*">Reset all</button></div>' : ''}</div></div></div>`;
+      const form = $('#vsens');
+      const mark = savebar($('.main-inner', ctx.main), {
+        onSave: async () => {
+          const lvl = form.lvl.value;
+          const pct = lvl === 'custom' ? Number(form.pct.value) : { normal: null, low: 25, high: 5 }[lvl];
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { visualThreshold: pct } } }); $('#vs-err').textContent = ''; } catch (ex) { $('#vs-err').textContent = ex.message; throw ex; }
+          await loadStores();
+        },
+        onDiscard: () => render(),
+      });
+      form.addEventListener('change', () => { form.pct.disabled = form.lvl.value !== 'custom'; if (form.lvl.value !== 'custom') form.pct.value = { normal: 12, low: 25, high: 5 }[form.lvl.value]; mark(); });
+      form.addEventListener('input', mark);
+      $('#vpages').addEventListener('click', async (e) => {
+        const b = e.target.closest('[data-vreset]'); if (!b) return;
+        const k = b.dataset.vreset;
+        const next = k === '*' ? {} : Object.fromEntries(Object.entries(s.config.visualPages || {}).filter(([x]) => x !== k));
+        try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { visualPages: next } } }); await loadStores(); toast('Back to the store setting'); render({ silent: true }); } catch (ex) { toast(ex.message, 'error'); }
+      });
       return;
     }
     if (tab === 'abtests') {
@@ -1728,7 +1786,7 @@
       return;
     }
     const visualChanged = run.result.checks.some((c) => c.id === 'nf.visual' && c.status === 'warn');
-    renderReport(el, run.result, { actions: `<div class="inline-row" style="margin-top:12px"><a class="btn small" href="#/s/${s.id}/reports/${run.id}">Open in Reports and compare</a>${visualChanged ? `<a class="btn small secondary" href="#/s/${s.id}/visual">Review visual changes</a>` : ''}</div>
+    renderReport(el, run.result, { actions: `<div class="inline-row" style="margin-top:12px"><a class="btn small" href="#/s/${s.id}/reports/${run.id}">Open in Reports and compare</a>${visualChanged ? `<a class="btn small secondary" href="#/s/${s.id}/visual">Review visual changes</a><button type="button" class="btn small secondary" data-visual="approve" data-store="${s.id}" data-run="${run.id}">This is the new look</button><button type="button" class="btn small secondary" data-visual="small" data-store="${s.id}" data-run="${run.id}">Changes this small are fine</button>` : ''}</div>
       <div class="inline-row export-row" style="margin-top:8px"><button type="button" class="btn small secondary" data-download="/api/stores/${s.id}/runs/${run.id}/report.pdf">Download PDF</button><button type="button" class="btn small secondary" data-print="/api/stores/${s.id}/runs/${run.id}/report.html">Print</button><button type="button" class="btn small ghost" data-download="/api/stores/${s.id}/export/checks.csv?run=${run.id}">Checks as CSV</button></div>` });
   }
 
@@ -2116,26 +2174,20 @@
       ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Visual changes')}${intro}<div class="panel empty"><h2>No screenshots yet</h2><p>${s.config.disabled.includes('visual') ? 'Visual checks are switched off in the test suite.' : 'They are taken during the next full check.'}</p>${s.config.disabled.includes('visual') ? `<a class="btn" href="#/s/${s.id}/suite">Open test suite</a>` : runLink(s, 'Run validations')}</div></div>`;
       return;
     }
-    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Visual changes', { actions: d.runId && changed.length ? '<button class="btn" id="approve">Approve latest look</button>' : '' })}${intro}
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Visual changes', { actions: d.runId && changed.length ? `<button class="btn secondary" data-visual="small" data-store="${s.id}" data-run="${d.runId}">Changes this small are fine</button><button class="btn" data-visual="approve" data-store="${s.id}" data-run="${d.runId}">This is the new look</button>` : '' })}${intro}
+      <p class="muted" style="margin:-6px 0 14px">Sensitivity: a page counts as changed when more than ${d.sensitivity.percent}% of it differs${d.sensitivity.isDefault ? ' (the usual setting)' : ''}. <a href="#/s/${s.id}/suite/visual">Change this</a></p>
       ${changed.length ? `<div class="notice"><p>${changed.length} page${changed.length > 1 ? 's look' : ' looks'} different from the approved version. If you meant to change them, approve the latest look.</p></div>` : `<div class="notice ok"><p>Everything matches the approved look${d.checkedAt ? ` as of ${esc(exact(d.checkedAt))}` : ''}.</p></div>`}
       <div class="shots">${d.shots.map((x) => {
         const views = [['current', 'Latest', x.current], ['baseline', 'Approved', x.baseline], ['diff', 'Difference', x.diff]].filter((v) => v[2]);
         const status = x.status === 'changed' ? `<span class="pill warning">Changed · ${x.ratio}%</span>` : x.status === 'baseline' ? '<span class="pill">New baseline</span>' : x.status === 'same' ? '<span class="pill healthy">Matches</span>' : '';
         return `<article class="shot-card"><header><b>${esc(LABEL[x.key] || x.key)}</b>${status}</header>
           ${views.length > 1 ? `<div class="seg" role="radiogroup" aria-label="Choose view">${views.map((v, i) => `<label><input type="radio" name="v-${x.key}" value="${esc(v[2])}" ${i === 0 ? 'checked' : ''}><span>${v[1]}</span></label>`).join('')}</div>` : ''}
-          <div class="frame">${views[0] ? `<img src="${esc(views[0][2])}" alt="${esc(LABEL[x.key])}" loading="lazy">` : '<span class="none">No screenshot</span>'}</div></article>`;
+          ${d.sensitivity.pages[x.key] ? `<p class="hint" style="margin:6px 0">Changes up to ${d.sensitivity.pages[x.key]}% are fine on this page.</p>` : ''}<div class="frame">${views[0] ? `<img src="${esc(views[0][2])}" alt="${esc(LABEL[x.key])}" loading="lazy">` : '<span class="none">No screenshot</span>'}</div></article>`;
       }).join('')}</div></div>`;
     $$('.shot-card', ctx.main).forEach((card) => {
       card.addEventListener('change', (e) => { card.querySelector('.frame img').src = e.target.value; });
       card.querySelector('.frame img')?.addEventListener('click', (e) => lightbox(e.target.src, e.target.alt));
     });
-    const ap = $('#approve');
-    if (ap) ap.onclick = async () => {
-      if (!(await confirmDialog({ title: 'Approve the latest look?', body: 'Future checks will compare against these screenshots.', confirm: 'Approve' }))) return;
-      await api(`/api/stores/${s.id}/approve-visual`, { method: 'POST', body: { runId: d.runId } });
-      toast('Latest look approved');
-      render({ silent: true });
-    };
   };
 
   // Store settings
