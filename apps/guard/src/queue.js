@@ -30,6 +30,12 @@ export function enqueue(job) {
   pump();
 }
 
+/** Whether `need` more checks fit in the waiting line. Free checks may only use a small part of it. */
+export function queueRoom({ free = false, need = 1 } = {}) {
+  const limit = free ? Math.min(config.freeQueueMax, config.queueMax) : config.queueMax;
+  return waiting.length + need <= limit;
+}
+
 export function queueDepth() {
   return { waiting: waiting.length, active };
 }
