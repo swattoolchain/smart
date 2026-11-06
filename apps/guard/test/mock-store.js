@@ -24,7 +24,8 @@
  * Catalog tampering (env MOCK_EXTRA): zero (a variant made free), cut (every price cut by 90%), swap (a product replaced by another)
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
  *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
- *   checkoutprice (checkout subtotal ₹200 more than the cart)
+ *   checkoutprice (checkout subtotal ₹200 more than the cart), protection (a shipping-protection app adds a
+ *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price)
  * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out), slowcart (each
  * add to cart takes 300 ms, like a store with a slow bundle or upsell app).
  * Extras (env MOCK_EXTRA) include offsite: links, page text and a script button that try to lead a shopper off the store
@@ -312,7 +313,7 @@ const server = http.createServer(async (req, res) => {
       200,
       layout(
         `${prod.title} – Mock Store`,
-        `<h1>${prod.title}</h1><div class="price">₹${v.price}</div>
+        `<h1>${prod.title}</h1>${B.has('noprice') ? '' : `<div class="price">₹${v.price}</div>`}
 <form method="post" action="/cart/add"><input type="hidden" name="id" value="${v.id}">
 <select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>
 <button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>${DE ? '<p class="tax-note">inkl. MwSt., zzgl. <a href="/policies/shipping-policy">Versandkosten</a></p>' : ''}
@@ -336,6 +337,8 @@ const server = http.createServer(async (req, res) => {
       const price = (Number(hit.v.price) + (B.has('pricedrift') ? 150 : B.has('pricelow') ? -100 : 0)).toFixed(2);
       items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price, handle: hit.p.handle });
     }
+    // protection: an app adds its own paid line to every cart, once.
+    if (B.has('protection') && !items.some((i) => i.id === 901)) items.push({ id: 901, title: 'Shipping protection', quantity: 1, price: '99.00', handle: 'shipping-protection' });
     return send(res, 200, { items }, 'application/json');
   }
   if (p === '/cart/update.js' && req.method === 'POST') {
