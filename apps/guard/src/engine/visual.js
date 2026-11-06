@@ -15,7 +15,7 @@ const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); }
  * Visual regression: compares viewport screenshots against the store's approved baseline.
  * The first run becomes the baseline. Differences above the threshold are reported as warnings.
  */
-export async function runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir, threshold = 0.12, captureOnly = false, prime = null, deface = false }) {
+export async function runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir, threshold = 0.12, pageThresholds = {}, captureOnly = false, prime = null, deface = false }) {
   const tctx = await newContext({ tablet: true });
   const tabletPage = await tctx.newPage();
   if (prime) await prime(tabletPage).catch(() => {});
@@ -58,10 +58,12 @@ export async function runVisual({ page, mobilePage, rec, origin, info, password,
       const n = pixelmatch(a.data, b.data, diff.data, a.width, a.height, { threshold: 0.15 });
       const ratio = n / (a.width * a.height);
       t.ratio = ratio;
+      // A change the owner accepted as small raises the limit for that page only; it never lowers the store's own limit.
+      const limit = Math.max(threshold, pageThresholds?.[s.key] || 0);
       // Stores approved before page words were kept: record them on the first run that matches the look.
-      if (!t.before && text && ratio <= threshold) fs.writeFileSync(baseText, JSON.stringify(text));
-      if (ratio > threshold) fs.writeFileSync(path.join(runDir, `${s.key}-diff.png`), PNG.sync.write(diff));
-      results.push({ key: s.key, status: ratio > threshold ? 'changed' : 'same', ratio: Math.round(ratio * 1000) / 10 });
+      if (!t.before && text && ratio <= limit) fs.writeFileSync(baseText, JSON.stringify(text));
+      if (ratio > limit) fs.writeFileSync(path.join(runDir, `${s.key}-diff.png`), PNG.sync.write(diff));
+      results.push({ key: s.key, status: ratio > limit ? 'changed' : 'same', ratio: Math.round(ratio * 1000) / 10, limit: Math.round(limit * 1000) / 10 });
     } catch (e) {
       results.push({ key: s.key, status: 'error', error: shortErr(e) });
     }
