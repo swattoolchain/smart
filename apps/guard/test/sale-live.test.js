@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startProduct, signup, addStore } from './lib/harness.js';
 import { note, screenshot } from './lib/evidence.js';
+import { cartsFor, isFree } from '../src/engine/shipping.js';
 import { utcToZoned, burstEvery, burstDue, livePrices, baselineFrom, liveChanges, nearPrice } from '../src/sale-math.js';
 
 const MIN = 60000, DAY = 86400000;
@@ -57,6 +58,25 @@ describe('Go-live burst: schedule and prices (no server)', () => {
     note(t, JSON.stringify(r.counts));
   });
 
+  it('free shipping: a cart just above and just below the amount; free options are recognised', (t) => {
+    const products = [
+      { title: 'Diya', variants: [{ id: 1, price: '0.00', available: true }] }, // free items don't help
+      { title: 'Kurta', variants: [{ id: 2, price: '1199.20', available: true }, { id: 3, price: '999.00', available: false }] },
+      { title: 'Saree', variants: [{ id: 4, price: '6999.00', available: true }] },
+    ];
+    const c = cartsFor(products, 3000);
+    assert.equal(c.variant.id, 2, 'the cheapest item in stock');
+    assert.deepEqual(c.above, { quantity: 3, total: 3597.6 });
+    assert.deepEqual(c.below, { quantity: 2, total: 2398.4 });
+    assert.equal(cartsFor(products, 500).below, null, 'one item is already over the amount: no cart below it');
+    assert.equal(cartsFor([{ title: 'Pin', variants: [{ id: 9, price: '1.00' }] }], 100000), null, 'no item reaches the amount in 50 pieces: no cart');
+    assert.equal(cartsFor([{ title: 'Pin', variants: [{ id: 9, price: '1.00' }] }, { title: 'Lamp', variants: [{ id: 8, price: '400.00' }] }], 1000).variant.id, 8, 'the cheapest item that reaches it in 50 pieces');
+    assert.equal(cartsFor([], 100), null);
+    for (const t of ['Free shipping Free', 'Standard ₹0.00', 'Kostenloser Versand', 'Livraison gratuite', 'Pickup 0']) assert.ok(isFree(t), t);
+    for (const t of ['Standard ₹99.00', 'Express $10.00', 'Standard 5,00 €', 'Free shipping over ₹999']) assert.equal(isFree(t), /Free shipping over/.test(t), t);
+    note(t, `Cart above: ${c.above.quantity} × 1199.20 = ${c.above.total}; below: ${c.below.total}`);
+  });
+
   it('alerts only on change: new problems, fixed ones, and ones still open', () => {
     const f = (key, level = 'fail') => ({ key, level, title: key });
     const c = liveChanges([{ key: 'theme', title: 'theme' }, { key: 'banner', title: 'banner' }], [f('banner'), f('prices.wrong'), f('soldout', 'warn')]);
@@ -71,7 +91,9 @@ describe('Go-live burst: schedule and prices (no server)', () => {
 describe('Go-live burst in the product', () => {
   let P, owner, storeId, mallory, browser, planId;
   // From the start: kurta Small at its sale price, Medium sold out, Large at a wrong price, saree at its new price.
-  const sale = { at: Date.now() + 365 * DAY, prices: { 101: 1199.2, 103: 1300, 201: 6999 }, soldOut: [102], banner: 'BLACK FRIDAY · 20% OFF', themeId: 333 };
+  // Markets: BF20 is set up for India and the UK only, and takes 10% in the UK; the store doesn't sell in the UAE.
+  // Free shipping from 3000 to India and the UK once the sale is on.
+  const sale = { at: Date.now() + 365 * DAY, prices: { 101: 1199.2, 103: 1300, 201: 6999 }, soldOut: [102], banner: 'BLACK FRIDAY · 20% OFF', themeId: 333, freeShipping: { amount: 3000, countries: ['IN', 'GB'] }, codeCountries: { BF20: ['IN', 'GB'] }, countryPct: { 'BF20:GB': 10 } };
   async function waitCheck(s, pid, id) {
     for (let i = 0; i < 240; i++) {
       const r = await s.get(`/api/stores/${storeId}/sale-plans/${pid}/live-checks/${id}`);
@@ -92,9 +114,9 @@ describe('Go-live burst in the product', () => {
   it('a sale that started: the pre-check’s normal prices are kept for comparison', async (t) => {
     const start = Math.floor(Date.now() / MIN) * MIN; // this minute
     const r = await owner.post(`/api/stores/${storeId}/sale-plans`, {
-      name: 'Black Friday 2026', timeZone: TZ, startsLocal: local(start), endsLocal: local(start + 2 * DAY), markets: ['IN'],
+      name: 'Black Friday 2026', timeZone: TZ, startsLocal: local(start), endsLocal: local(start + 2 * DAY), markets: ['IN', 'US', 'UK', 'AE'],
       rules: [{ scope: 'tag', type: 'percent', value: 20, target: 'cotton' }, { scope: 'product', type: 'price', value: 6999, target: 'silk-saree' }],
-      codes: [{ code: 'BF20', percent: 20 }], banner: 'Black Friday · 20% off',
+      codes: [{ code: 'BF20', percent: 20 }], banner: 'Black Friday · 20% off', freeShipping: 3000,
     });
     assert.equal(r.status, 200, r.text);
     planId = r.json.plan.id;
@@ -134,12 +156,29 @@ describe('Go-live burst in the product', () => {
     assert.match(f('prices.normal').title, /^4 prices still at the normal price/);
     assert.match(f('prices.normal').detail, /Organic Cotton Kurta \(Small\): 1499, should be 1199.2/);
     assert.equal(f('code.bf20').level, 'pass', 'BF20 takes 20% off in a real cart');
+    // Each code in each market, after picking the country like a shopper (T101).
+    assert.equal(f('market.in').level, 'pass'); assert.match(f('market.in').title, /Your code works for shoppers in India \(INR\)/);
+    assert.equal(f('market.us.code.bf20').level, 'fail'); assert.match(f('market.us.code.bf20').title, /BF20 doesn’t work for shoppers in United States/);
+    assert.match(f('market.us.code.bf20').detail, /USD/);
+    assert.equal(f('market.uk.code.bf20').level, 'fail'); assert.match(f('market.uk.code.bf20').title, /BF20 takes 10% off in United Kingdom, not 20%/);
+    assert.equal(f('market.ae').level, 'warn'); assert.match(f('market.ae').title, /couldn’t switch your store to United Arab Emirates/);
+    const mk = Object.fromEntries(first.summary.markets.map((m) => [m.market, m]));
+    assert.deepEqual([mk.IN.currency, mk.US.currency, mk.UK.currency], ['INR', 'USD', 'GBP'], 'the cart follows the market’s currency');
+    assert.equal(mk.UK.codes[0].pct, 10);
+    assert.equal(mk.AE.ok, false);
+    // Free shipping isn't on yet: a cart over 3000 still pays at checkout's shipping step (T102).
+    assert.equal(f('shipping.cart.in').level, 'fail', JSON.stringify(first.summary.shipping));
+    assert.match(f('shipping.cart.in').title, /Free shipping doesn’t start at 3000 for India/);
+    assert.match(f('shipping.cart.in').detail, /A cart of 4497 \(3 × Organic Cotton Kurta\) gets: Standard ₹99.00/);
+    assert.equal(f('shipping.cart.us').level, 'warn', 'other markets: a warning');
+    assert.deepEqual(first.summary.shipping.markets.map((m) => m.market), ['IN', 'US', 'UK'], 'up to 3 markets');
     assert.equal(first.verdict, 'fail');
     assert.ok(first.runId, 'the shopping journey (checkout included) is started with the check');
     assert.equal(first.summary.journey, 'started');
     const mail = P.log();
     assert.match(mail, /Sale problem on Mock Store: /);
     assert.match(mail, /What to do: Publish the sale theme/);
+    assert.match(mail, /Discount code BF20 doesn’t work for shoppers in United States/);
     note(t, first.summary.findings.map((x) => `${x.level}: ${x.title}`).join(' | '));
   });
 
@@ -163,6 +202,10 @@ describe('Go-live burst in the product', () => {
     assert.equal(rows.find((x) => x.handle === 'silk-saree').state, 'ok', 'new price 6999');
     assert.equal(rows.find((x) => x.variant === 'Small').state, 'ok');
     assert.equal(second.summary.findings.find((x) => x.key === 'code.bf20').level, 'pass');
+    assert.equal(f('shipping.cart.in').level, 'pass', JSON.stringify(second.summary.shipping));
+    assert.match(f('shipping.cart.in').detail, /A cart of 3597.6 ships free at checkout; 2398.4 doesn’t/);
+    assert.equal(f('shipping.cart.uk').level, 'pass');
+    assert.equal(f('shipping.cart.us').level, 'warn'); assert.match(f('shipping.cart.us').title, /No free shipping for shoppers in United States/);
     if (!second.runId) assert.equal(second.summary.journey, 'busy', 'the journey from the first check is still running: not started twice');
     const mail = P.log();
     assert.match(mail, /Sale problem on Mock Store: 1 price different from your plan/);
@@ -222,6 +265,15 @@ describe('Go-live burst in the product', () => {
     assert.match(txt, /1 price different from your plan/);
     assert.match(txt, /Different from plan/);
     assert.match(txt, /Last rehearsal before the sale/);
+    assert.match(await p.textContent('.sale-markets-panel'), /Codes in each market/);
+    assert.equal(await p.locator('.sale-markets-panel tbody tr').count(), 4, 'one row per market');
+    assert.match(await p.textContent('.sale-markets-panel'), /Couldn’t switch to this market/);
+    await p.locator('.sale-markets-panel').scrollIntoViewIfNeeded();
+    await screenshot(t, p, 'Codes in each market');
+    assert.match(await p.textContent('.sale-shipping-panel'), /Free shipping at checkout/);
+    assert.equal(await p.locator('.sale-shipping-panel tbody tr').count(), 3);
+    await p.locator('.sale-shipping-panel').scrollIntoViewIfNeeded();
+    await screenshot(t, p, 'Free shipping at checkout');
     assert.equal(await p.locator('#sp-run').count(), 0, 'no “Rehearse now” while the sale runs; “Check now” instead');
     assert.equal(await p.locator('#sl-run').count(), 1);
     await screenshot(t, p, 'Sale plan while the sale is live', { fullPage: true });

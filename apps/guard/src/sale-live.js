@@ -15,7 +15,9 @@
 import { db, q } from './db.js';
 import { config } from './config.js';
 import { newContext, gotoStore, settle, themeOf } from './engine/browser.js';
-import { runDiscounts } from './engine/discount.js';
+import { runDiscounts, codesByMarket } from './engine/discount.js';
+import { freeShippingByMarket } from './engine/shipping.js';
+import { MARKETS } from './engine/catalog.js';
 import { entitlements, has, blockReason } from './license.js';
 import { sendMail, sendSlack } from './alerts.js';
 import * as shopify from './shopify.js';
@@ -60,6 +62,59 @@ export function liveView(r, { full = false } = {}) {
   return v;
 }
 
+const marketName = (m) => MARKETS.find((x) => x.code === m)?.label || m;
+/** Findings from the codes tried in each market: one line per market, and one per code that fails there. */
+export function marketFindings(plan, byMarket) {
+  const out = [];
+  const f = (key, level, title, detail = '', fix = null) => out.push({ key, area: 'markets', level, title, detail, fix });
+  if (!byMarket) { f('markets', 'warn', 'We couldn’t try your codes in each market', 'The store didn’t answer in time. The next check tries again.'); return out; }
+  for (const m of byMarket) {
+    const name = marketName(m.market);
+    const key = `market.${m.market.toLowerCase()}`;
+    if (!m.ok) { f(key, 'warn', `We couldn’t switch your store to ${name}`, `Your store didn’t change to ${name} when a shopper picks it, so codes weren’t tried there.`, `If you sell in ${name}, check it is a market in Shopify admin → Settings → Markets, with the country picker on your theme. If you don’t, take it out of the sale plan.`); continue; }
+    const cur = m.currency ? ` (${m.currency})` : '';
+    const bad = m.codes.filter((c) => c.status === 'fail'), odd = m.codes.filter((c) => c.status === 'warn' || c.status === 'skip');
+    for (const c of bad) {
+      const want = plan.codes.find((x) => x.code === c.code)?.percent;
+      const wrongPct = c.off > 0 && want != null;
+      f(`${key}.code.${c.code.toLowerCase()}`, 'fail', wrongPct ? `Discount code ${c.code} takes ${c.pct}% off in ${name}, not ${want}%` : `Discount code ${c.code} doesn’t work for shoppers in ${name}`, c.detail,
+        wrongPct ? 'Check the discount’s value for this market in Shopify → Discounts, and any market price adjustments in Settings → Markets.' : `Check the discount in Shopify → Discounts is available in ${name} (its markets, or “all customers”), and that it applies to products sold there.`);
+    }
+    for (const c of odd) f(`${key}.code.${c.code.toLowerCase()}`, 'warn', c.status === 'warn' ? `Discount code ${c.code} needs a bigger cart in ${name}` : `We couldn’t try discount code ${c.code} in ${name}`, c.detail);
+    if (!bad.length && !odd.length && m.codes.length) f(key, 'pass', `Your ${m.codes.length === 1 ? 'code works' : `${m.codes.length} codes work`} for shoppers in ${name}${cur}`, m.codes.map((c) => `${c.code}: ${c.pct}% off`).join(' · '));
+  }
+  return out;
+}
+
+/**
+ * Findings from free shipping in a real cart. The plan's first market is where the amount is set (the store's
+ * own currency): not free there above the amount is a fail. Other markets may convert the amount or not offer
+ * free shipping on purpose, so there it is a warning.
+ */
+export function shippingFindings(plan, shipping) {
+  const out = [];
+  const f = (key, level, title, detail = '', fix = null) => out.push({ key, area: 'shipping', level, title, detail, fix });
+  const amt = plan.freeShipping;
+  if (!shipping) { f('shipping.cart', 'warn', 'We couldn’t make a cart to check free shipping', `No product in stock adds up to ${amt}.`); return out; }
+  if (shipping.error) { f('shipping.cart', 'warn', 'We couldn’t check free shipping at checkout', 'The store didn’t answer in time. The next check tries again.'); return out; }
+  const { carts } = shipping;
+  shipping.markets.forEach((m, i) => {
+    const name = marketName(m.market);
+    const key = `shipping.cart.${m.market.toLowerCase()}`;
+    const rates = (x) => (x?.rates || []).join('; ');
+    if (!m.above?.reached) { f(key, 'warn', `We couldn’t check free shipping at checkout for ${name}`, m.above?.why || '', 'Try a cart over the amount yourself and go to the shipping step. If checkout asks for more than an address first, this check can’t reach it.'); return; }
+    if (!m.above.free) {
+      f(key, i === 0 ? 'fail' : 'warn', i === 0 ? `Free shipping doesn’t start at ${amt} for ${name}` : `No free shipping for shoppers in ${name}`,
+        `A cart of ${carts.above.total} (${carts.above.quantity} × ${carts.item}) gets: ${rates(m.above)}.`,
+        i === 0 ? 'Check the free shipping discount (Shopify admin → Discounts) or the free rate in Settings → Shipping and delivery: its minimum order, dates and countries.' : `If free shipping should apply in ${name}, add the country to the free shipping discount or rate. The amount may also be converted to the local currency.`);
+      return;
+    }
+    if (m.below?.reached && m.below.free) { f(key, 'warn', `Free shipping starts below ${amt} in ${name}`, `A cart of ${carts.below.total} already ships free: ${rates(m.below)}.`, 'If that isn’t intended, raise the minimum order on the free shipping discount or rate.'); return; }
+    f(key, 'pass', `Free shipping starts at ${amt} for ${name}`, `A cart of ${carts.above.total} ships free at checkout${m.below?.reached ? `; ${carts.below.total} doesn’t` : ''}.`);
+  });
+  return out;
+}
+
 // ---------- one live check ----------
 async function checkLive(store, plan, { trigger }) {
   const end = isEnd(trigger);
@@ -73,7 +128,7 @@ async function checkLive(store, plan, { trigger }) {
     try { discounts = await scheduledDiscounts(shop.shop); } catch { add('shopify', 'codes', 'warn', 'We couldn’t read your discounts from Shopify', 'Shopify didn’t answer just now. The next check tries again.'); }
   }
 
-  let prices = null, isShopify = !!shop;
+  let prices = null, isShopify = !!shop, byMarket = null, shipping = null;
   const ctx = await newContext({ mobile: true });
   try {
     // The live homepage, on a phone: which theme is live, and is the banner there.
@@ -178,6 +233,33 @@ async function checkLive(store, plan, { trigger }) {
         } else if (r.status === 'pass') add(key, 'codes', 'pass', `Discount code ${c.code} works`, r.detail);
         else add(key, 'codes', r.status === 'warn' ? 'warn' : 'fail', r.status === 'warn' ? `Discount code ${c.code} needs a bigger cart` : `Discount code ${c.code} doesn’t work`, r.detail, r.fix || null);
       }
+      // Each code in each market of the plan, in that market's currency (Shopify Markets, via the country picker).
+      if (isShopify && plan.markets.length) {
+        const mPage = await ctx.newPage();
+        try {
+          await gotoStore(mPage, store.url, { password: store.storefront_password });
+          const list = (await storeProducts(ctx.request, store.url)).slice(0, 6).map((p) => ({ handle: p.handle }));
+          byMarket = await codesByMarket({ page: mPage, origin: new URL(mPage.url()).origin, products: list, codes: plan.codes, markets: plan.markets });
+        } catch { byMarket = null; }
+        finally { await mPage.close().catch(() => {}); }
+        for (const f of marketFindings(plan, byMarket)) findings.push(f);
+      }
+    }
+
+    // Free shipping in a real cart: just above the amount it should be free at checkout's shipping step,
+    // just below it shouldn't. Shopify and other stores alike; nothing is bought.
+    if (plan.freeShipping != null && plan.freeShipping > 0 && !locked) {
+      let mk = plan.markets;
+      if (!mk.length) { try { mk = (JSON.parse(store.config_json || '{}').markets || []).slice(0, 1); } catch { mk = []; } }
+      if (!mk.length) mk = ['US'];
+      const sPage = await ctx.newPage();
+      try {
+        await gotoStore(sPage, store.url, { password: store.storefront_password });
+        const products = await storeProducts(ctx.request, store.url);
+        shipping = await freeShippingByMarket({ page: sPage, origin: new URL(sPage.url()).origin, products, amount: plan.freeShipping, markets: mk });
+      } catch { shipping = { error: true, markets: [] }; }
+      finally { await sPage.close().catch(() => {}); }
+      for (const f of shippingFindings(plan, shipping)) findings.push(f);
     }
   } finally {
     await ctx.close().catch(() => {});
@@ -197,7 +279,7 @@ async function checkLive(store, plan, { trigger }) {
 
   const counts = { fail: findings.filter((f) => f.level === 'fail').length, warn: findings.filter((f) => f.level === 'warn').length, pass: findings.filter((f) => f.level === 'pass').length };
   const verdict = counts.fail ? 'fail' : counts.warn ? 'warn' : 'ok';
-  const summary = { verdict, mode: end ? 'end' : 'live', counts, findings, journey: runId ? 'started' : 'busy', prices: prices ? { counts: prices.counts, rows: prices.rows.slice(0, 300), more: Math.max(0, prices.rows.length - 300) } : null, trigger };
+  const summary = { verdict, mode: end ? 'end' : 'live', counts, findings, markets: byMarket, shipping, journey: runId ? 'started' : 'busy', prices: prices ? { counts: prices.counts, rows: prices.rows.slice(0, 300), more: Math.max(0, prices.rows.length - 300) } : null, trigger };
   return { verdict, runId, summary };
 }
 
