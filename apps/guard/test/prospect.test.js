@@ -97,6 +97,15 @@ describe('Prospect checker', () => {
     await checkStore(slow.origin, { browser, log: (e) => times.push(Date.now()) });
     const gaps = times.slice(2).map((x, i) => x - times[i + 1]);
     assert.ok(gaps.every((g) => g >= 1900), `2 s between requests: ${gaps.join(', ')} ms`);
+
+    // A Crawl-delay above 30 s: the store is skipped after robots.txt, never visited faster than it asks.
+    const long = await mock('robots-crawl60', { extra: 'robots-crawl60' });
+    const lmark = await markOf(long);
+    const lr = await checkStore(long.origin, { browser });
+    assert.equal(lr.status, 'skipped');
+    assert.match(lr.error, /crawl delay too long \(60 s\)/);
+    assert.deepEqual(lr.skipped, ['whole store (robots.txt Crawl-delay)']);
+    assert.deepEqual((await requests(long, lmark)).map((x) => x.path), ['/robots.txt'], 'only robots.txt was read');
   });
 
   it('locked, unreachable, not a store, and bad addresses are reported, not retried', async () => {
@@ -139,7 +148,8 @@ describe('Prospect checker', () => {
     assert.equal(robotsAllows(r, '/cart/add.js'), false);
     assert.equal(robotsAllows(r, '/products/hidden'), false);
     assert.equal(robotsAllows(r, '/products/hidden-gem'), true);
-    assert.equal(r.delayMs, 10000, 'crawl delay capped at 10 s');
+    assert.equal(r.delayMs, 60000, 'the crawl delay is kept as the store wrote it, never shortened');
+    assert.equal(parseRobots('User-agent: *\nCrawl-delay: 30\n').delayMs, 30000);
     assert.equal(robotsAllows(parseRobots('User-agent: tharambot\nDisallow: /\n'), '/'), false, 'agent names ignore case');
     const ctx = { storeHost: 'shop.example', shopDomain: 'shop-1.myshopify.com' };
     for (const h of ['shop.example', 'www.shop.example', 'shop-1.myshopify.com', 'checkout.shopify.com', 'shop.app']) assert.equal(checkoutHostOk(h, ctx), true, h);

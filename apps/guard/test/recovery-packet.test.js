@@ -122,8 +122,13 @@ describe('Recovery packet: in the product', () => {
       await page.locator('#rp-copy').click();
       const copied = await page.evaluate(() => navigator.clipboard.readText());
       assert.match(copied, /^Subject: Possible unauthorized access to localhost:\d+\n\nHello/);
+      // Download is built in the page from the loaded packet (no plain link to a signed-in route), so it also works
+      // inside Shopify admin, where the embedded app has no cookie and a link would carry no session token.
+      assert.equal(await page.locator('#rp-download').getAttribute('href'), null);
       const [dl] = await Promise.all([page.waitForEvent('download'), page.locator('#rp-download').click()]);
       assert.match(dl.suggestedFilename(), /^recovery-localhost-\d+\.txt$/);
+      const saved = fs.readFileSync(await dl.path(), 'utf8');
+      assert.equal(saved, `${copied}\n`, 'the file holds the same message as the copy button');
       await box.scrollIntoViewIfNeeded();
       await screenshot(t, page, 'recovery packet on the incident page');
       note(t, copied);

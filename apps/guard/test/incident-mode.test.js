@@ -58,6 +58,19 @@ describe('Incident mode: the rules', () => {
     assert.throws(() => I.updateIncident(s.id, { steps: { password: true } }), /not on/);
   });
 
+  it('can be started once a week per store, so it never becomes a way around the plan or a mail loop', () => {
+    const s = newStore();
+    const t0 = Date.now();
+    I.startIncident(s, { now: t0, contacts: 'dev@example.com' });
+    I.endIncident(s.id, 'owner', t0 + 60000);
+    assert.throws(() => I.startIncident(s, { now: t0 + 120000 }), (e) => e.status === 429 && /once a week per store/.test(e.message));
+    assert.throws(() => I.startIncident(s, { now: t0 + 6.9 * 24 * HOUR }), /once a week/);
+    assert.ok(I.nextStartAt(s.id, t0 + 120000));
+    assert.equal(I.nextStartAt(s.id, t0 + 7 * 24 * HOUR + 1), null);
+    assert.ok(I.startIncident(s, { now: t0 + 7 * 24 * HOUR + 1 }), 'allowed again after 7 days');
+    assert.ok(I.startIncident(newStore()), 'other stores are not affected');
+  });
+
   it('checks every 10 minutes while on, back to the plan afterwards', () => {
     const s = newStore();
     const normal = intervals(s);
@@ -266,5 +279,20 @@ describe('Incident mode: in the product', () => {
     const st = (await owner.get(`/api/stores/${storeId}`)).json.store;
     assert.notEqual(st.config.journeyIntervalMin, 10);
     assert.equal(st.incident, null);
+  });
+
+  it('starting again within a week is refused, with the date it is possible again', async (t) => {
+    const mark = product.log().length;
+    const r = await owner.post(url(), { contacts: 'someone@else.test', reason: 'again' });
+    assert.equal(r.status, 429);
+    assert.match(r.json.error, /once a week per store\. You can start it again on/);
+    await new Promise((res) => setTimeout(res, 300));
+    assert.doesNotMatch(product.log().slice(mark), /\[mail skipped\]/, 'no email sent');
+    assert.equal((await owner.get(url())).json.active, null);
+    const page = await open(`/s/${storeId}/incident`);
+    await page.locator('#inc-wait').waitFor({ timeout: 20000 });
+    assert.equal(await page.locator('#inc-go').isDisabled(), true);
+    await screenshot(t, page, 'incident mode, used this week');
+    await page.context().close();
   });
 });

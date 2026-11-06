@@ -28,9 +28,18 @@ export function open(sealed) {
   return Buffer.concat([d.update(Buffer.from(enc, 'base64')), d.final()]).toString('utf8');
 }
 
-/** True when a stored value is already encrypted (and opens with our key). */
+/**
+ * True when a stored value is already encrypted, judged by its format alone. A value sealed with an
+ * older key is still sealed: it must never be encrypted a second time (that would make the password
+ * unrecoverable after a key change). A typed storefront password never matches this exact pattern.
+ */
 export function isSealed(value) {
-  if (typeof value !== 'string' || !SEALED.test(value)) return false;
+  return typeof value === 'string' && SEALED.test(value);
+}
+
+/** True when a sealed value opens with the current key. */
+export function opensWithKey(value) {
+  if (!isSealed(value)) return false;
   try { open(value); return true; } catch { return false; }
 }
 
@@ -57,18 +66,21 @@ export const storePassword = (store) => readSecret(store?.storefront_password);
  * any number of times. Rows are updated in place (same row, same column), so nothing is lost.
  */
 export function migratePasswords(db) {
-  let n = 0;
+  let n = 0, unreadable = 0;
   db.transaction(() => {
     for (const [table, col] of [['stores', 'storefront_password'], ['environments', 'password']]) {
       const rows = db.prepare(`SELECT id, ${col} AS v FROM ${table} WHERE ${col} IS NOT NULL AND ${col} != ''`).all();
       const upd = db.prepare(`UPDATE ${table} SET ${col} = ? WHERE id = ? AND ${col} = ?`);
       for (const r of rows) {
-        if (isSealed(r.v)) continue;
+        if (isSealed(r.v)) { if (!opensWithKey(r.v)) unreadable++; continue; }
         upd.run(seal(r.v), r.id, r.v);
         n++;
       }
     }
   })();
   if (n) console.log(`Encrypted ${n} stored password${n === 1 ? '' : 's'}.`);
+  if (unreadable) {
+    console.error(`${unreadable} stored password${unreadable === 1 ? '' : 's'} could not be decrypted with the current key and ${unreadable === 1 ? 'was' : 'were'} left unchanged. Was TOKEN_KEY or SESSION_SECRET changed? Restore the old key to read them again.`);
+  }
   return n;
 }

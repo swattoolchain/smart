@@ -112,30 +112,67 @@ export function cartLine(cart, variantId) {
 }
 
 /**
+ * The whole cart, when it holds more than the test item (a shipping-protection or upsell app added a paid line,
+ * or items were left from an earlier visit). The checkout subtotal is for the whole cart, so it is compared with
+ * this total, not with the test item's price. null when the cart holds only the test item.
+ */
+export function wholeCart(cart, variantId) {
+  const items = cart?.items || [];
+  const others = items.filter((i) => String(i.variant_id ?? i.id) !== String(variantId));
+  if (!others.length) return null;
+  // Shopify's checkout subtotal: line prices after line discounts, before order-level discounts and shipping.
+  const minor = Number(cart.items_subtotal_price ?? cart.total_price);
+  if (!Number.isFinite(minor)) return null;
+  return { minor, lines: items.length, others: others.map((i) => String(i.title || i.product_title || '').slice(0, 80)).filter(Boolean) };
+}
+
+/**
  * The journey price check. trail: { product, variant, quantity, currency, page, cart, checkout }.
  * Fails when the cart or checkout charges more than the product page showed; warns when it charges less
- * and no discount explains it.
+ * and no discount explains it. When the cart holds other lines too (trail.whole), the checkout subtotal is
+ * compared with the whole cart instead. When the product page price could not be read (page.trusted false),
+ * a difference against our guess from product data is at most a warning: it may be a market or B2B price
+ * the shopper never saw.
  */
 export async function priceCheck(rec, trail, { shot = null } = {}) {
   const cur = trail.currency;
   const qty = trail.quantity || 1;
   const shown = trail.page.minor * qty;
   const tol = trail.page.exact ? 1 : 100; // a page showing "₹1,499" rounds to whole units
+  const whole = trail.whole || null;
+  // Each step with what it is compared with: the price shown (ref 'page'), or the whole cart (ref 'cart').
   const steps = [
     { label: trail.page.trusted ? 'Product page' : 'Product price (from your product data)', minor: shown, note: trail.page.text || '' },
-    trail.cart ? { label: 'Cart', minor: trail.cart.charged, note: trail.cart.discounted ? 'A discount is applied' : '' } : null,
-    trail.checkout ? { label: 'Checkout subtotal', minor: trail.checkout.minor, note: '' } : trail.checkoutReached ? { label: 'Checkout subtotal', minor: null, note: 'Not shown before payment details' } : null,
+    trail.cart ? { label: 'Cart', minor: trail.cart.charged, note: trail.cart.discounted ? 'A discount is applied' : '', ref: 'page' } : null,
+    whole ? { label: `Whole cart (${whole.lines} items)`, minor: whole.minor, note: whole.others.length ? `Also in the cart: ${whole.others.slice(0, 3).join(', ')}` : '' } : null,
+    trail.checkout ? { label: 'Checkout subtotal', minor: trail.checkout.minor, note: '', ref: whole ? 'cart' : 'page' } : trail.checkoutReached ? { label: 'Checkout subtotal', minor: null, note: 'Not shown before payment details' } : null,
   ].filter(Boolean);
   const name = `“${trail.product}”${trail.variant && trail.variant !== 'Default Title' ? ` (${trail.variant})` : ''}${qty > 1 ? ` × ${qty}` : ''}`;
-  const over = steps.slice(1).find((s) => s.minor != null && s.minor > shown + tol);
+  const refOf = (s) => (s.ref === 'cart' ? whole.minor : shown);
+  const tolOf = (s) => (s.ref === 'cart' ? 1 : tol);
+  const compared = steps.filter((s) => s.ref && s.minor != null);
+  const over = compared.find((s) => s.minor > refOf(s) + tolOf(s));
   const discounted = !!trail.cart?.discounted;
-  const under = !discounted && steps.slice(1).find((s) => s.minor != null && s.minor < shown - tol);
-  const evidence = { priceTrail: { currency: cur, steps: steps.map((s) => ({ ...s, money: s.minor == null ? null : money(s.minor, cur) })) } };
+  const under = !discounted && compared.find((s) => s.minor < refOf(s) - tolOf(s));
+  const evidence = { priceTrail: { currency: cur, steps: steps.map(({ ref, ...s }) => ({ ...s, money: s.minor == null ? null : money(s.minor, cur) })) } };
   const screenshot = (over || under) && shot ? await shot().catch(() => null) : null;
+  // Against our guess from product data (the page price could not be read): never critical.
+  const guessed = (s) => s.ref === 'page' && !trail.page.trusted;
+  if (over && guessed(over)) {
+    return rec.add(check('fn.price', 'functional', 'Price stays the same to checkout', 'warn', {
+      severity: 'major',
+      detail: `We could not read the price on the product page of ${name}. Your product data says ${money(shown, cur)}, but the ${over.label.toLowerCase()} asks for ${money(over.minor, cur)}. This can be right (a price for another country or a customer price list), so check what shoppers see on the product page.`,
+      evidence: { ...evidence, screenshot },
+      fix: 'Open the product page as a shopper and compare its price with the cart. If they differ, check apps that change prices in the cart (bundle, upsell, currency and pricing apps).',
+    }));
+  }
   if (over) {
+    const vsCart = over.ref === 'cart';
     return rec.add(check('fn.price', 'functional', 'Price stays the same to checkout', 'fail', {
       severity: 'critical',
-      detail: `${name} shows ${money(shown, cur)} on the product page, but the ${over.label.toLowerCase()} asks for ${money(over.minor, cur)}. Customers are charged more than the price they saw.`,
+      detail: vsCart
+        ? `The checkout subtotal asks for ${money(over.minor, cur)}, but the cart with the same items comes to ${money(whole.minor, cur)}. Customers are charged more than the cart showed.`
+        : `${name} shows ${money(shown, cur)} on the product page, but the ${over.label.toLowerCase()} asks for ${money(over.minor, cur)}. Customers are charged more than the price they saw.`,
       evidence: { ...evidence, screenshot },
       fix: 'Check apps that change prices in the cart or checkout (bundle, upsell, currency and pricing apps) and any checkout customisations. Then compare the price in Shopify admin with what your theme shows on the product page.',
     }));
@@ -143,7 +180,9 @@ export async function priceCheck(rec, trail, { shot = null } = {}) {
   if (under) {
     return rec.add(check('fn.price', 'functional', 'Price stays the same to checkout', 'warn', {
       severity: 'major',
-      detail: `${name} shows ${money(shown, cur)} on the product page, but the ${under.label.toLowerCase()} asks for only ${money(under.minor, cur)}, and no discount explains it. You may be selling below your price.`,
+      detail: under.ref === 'cart'
+        ? `The checkout subtotal asks for only ${money(under.minor, cur)}, but the cart with the same items comes to ${money(whole.minor, cur)}, and no discount explains it. You may be selling below your price.`
+        : `${name} shows ${money(shown, cur)} on the product page, but the ${under.label.toLowerCase()} asks for only ${money(under.minor, cur)}, and no discount explains it. You may be selling below your price.`,
       evidence: { ...evidence, screenshot },
       fix: 'Check for an automatic discount or pricing app you did not mean to leave on, and that the product page shows the current price.',
     }));

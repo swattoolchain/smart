@@ -2,9 +2,6 @@
 // cart and checkout, compared with one shopper alone; slowdowns and breakage reported; never a load test.
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { chromium } from 'playwright';
 import { startMock, startProduct, signup, runAndWait } from './lib/harness.js';
 import { note, screenshot } from './lib/evidence.js';
@@ -16,13 +13,11 @@ const { getBrowser } = await import('../src/engine/browser.js');
 const { GROUPS, effectiveDisabled, normalizeConfig } = await import('../src/engine/catalog.js');
 
 const info = { products: [{ title: 'Organic Cotton Kurta', handle: 'cotton-kurta', variants: [{ id: 101, title: 'Small' }] }] };
-let storeSeq = 1;
 async function traffic(mock, opts = {}) {
   const rec = new Recorder();
-  const dataDir = opts.dataDir || fs.mkdtempSync(path.join(os.tmpdir(), 'tharam-traffic-'));
-  const out = await runTraffic({ rec, origin: mock.origin, info, storeId: opts.storeId || storeSeq++, dataDir, shoppers: opts.shoppers ?? 3, now: opts.now });
+  const out = await runTraffic({ rec, origin: mock.origin, info, shoppers: opts.shoppers ?? 3, lastAt: opts.lastAt || null, now: opts.now });
   const carts = (await (await fetch(`${mock.origin}/__carts`)).json()).carts;
-  return { out, check: rec.checks.find((c) => c.id === 'perf.traffic'), carts, dataDir };
+  return { out, check: rec.checks.find((c) => c.id === 'perf.traffic'), carts };
 }
 
 describe('Sale traffic readiness: the test itself', { concurrency: 1 }, () => {
@@ -83,18 +78,18 @@ describe('Sale traffic readiness: the test itself', { concurrency: 1 }, () => {
     } finally { mock.stop(); }
   });
 
-  it('runs at most once every 6 hours per store', { timeout: 120000 }, async (t) => {
+  it('runs at most once every 6 hours per store: told when it last ran, it waits', { timeout: 120000 }, async (t) => {
     const mock = await startMock();
     try {
-      const first = await traffic(mock, { storeId: 77 });
-      assert.equal(first.check.status, 'pass');
-      const again = await traffic(mock, { storeId: 77, dataDir: first.dataDir, now: Date.now() + 5 * 3600e3 });
+      const lastAt = new Date().toISOString();
+      const again = await traffic(mock, { lastAt, now: Date.now() + 5 * 3600e3 });
       assert.equal(again.check.status, 'skip');
       assert.match(again.check.detail, /at most once every 6 hours/);
       assert.equal(again.out.skipped, 'recent');
-      const later = await traffic(mock, { storeId: 77, dataDir: first.dataDir, now: Date.now() + 6.1 * 3600e3 });
+      assert.equal(again.out.shoppers, undefined, 'no shoppers were sent');
+      const later = await traffic(mock, { lastAt, now: Date.now() + 6.1 * 3600e3 });
       assert.equal(later.check.status, 'pass');
-      note(t, `5 h later: skipped (${again.check.detail}); 6.1 h later: ran again`);
+      note(t, `last run given; 5 h later: skipped (${again.check.detail}); 6.1 h later: ran again`);
     } finally { mock.stop(); }
   });
 });
@@ -133,6 +128,19 @@ describe('Sale traffic readiness in the product', { concurrency: 1 }, () => {
     assert.equal(run.result.traffic.shoppers, 4);
     assert.equal(c.evidence.traffic.steps.length, 4);
     note(t, c.detail);
+  });
+
+  it('the 6-hour limit is kept on the main server, not on the machine that ran the check', { timeout: 300000 }, async (t) => {
+    const at = P.db().prepare('SELECT traffic_last_at AS t FROM stores WHERE id = ?').get(storeId).t;
+    assert.ok(at && Date.now() - new Date(at).getTime() < 15 * 60e3, `last traffic test saved in the database: ${at}`);
+    const again = await runAndWait(owner, storeId, { kind: 'full', groups: ['sale.traffic'] });
+    assert.equal(again.status, 'done', again.error || '');
+    const c = again.result.checks.find((x) => x.id === 'perf.traffic');
+    assert.equal(c.status, 'skip');
+    assert.match(c.detail, /at most once every 6 hours/);
+    assert.equal(again.result.traffic.skipped, 'recent');
+    assert.equal(P.db().prepare('SELECT traffic_last_at AS t FROM stores WHERE id = ?').get(storeId).t, at, 'a skipped test does not move the clock');
+    note(t, `traffic_last_at ${at} in the stores table; a second full check right after: ${c.status} (${c.detail})`);
   });
 
   it('the report shows one shopper vs several, and Store settings has the switch', { timeout: 90000 }, async (t) => {

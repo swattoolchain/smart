@@ -75,22 +75,35 @@ export function startRelease(store, { url, label, env = null, trigger = 'manual'
 const BLOCK = new Set(['critical', 'major']);
 
 const SHOPPER_TITLE = 'An AI shopper can find a product and reach checkout';
-const shopperView = (s) => (s && s.outcome ? { outcome: s.outcome, steps: s.steps || [], friction: s.friction || [] } : null);
+const shopperView = (s) => (s && s.outcome ? { outcome: s.outcome, steps: s.steps || [], friction: s.friction || [], ...(s.tries ? { tries: s.tries } : {}) } : null);
 const reached = (s) => s.steps.length - 1; // the last step is "reached checkout"
+const FAILED = new Set(['stuck', 'limit']);
+// The scripted journey on the candidate: the deterministic signal that can confirm the AI shopper.
+const JOURNEY = new Set(['fn.home', 'fn.collection', 'fn.pdp', 'fn.variant', 'fn.atc', 'fn.cart', 'fn.checkout']);
 
 /**
- * The AI shopper on live and on the candidate. When it reaches checkout on live but not on the candidate,
- * that alone is a reason not to publish: returns that blocker (otherwise null).
+ * The AI shopper on live and on the candidate. When it reaches checkout on live but gets stuck (or runs out of steps)
+ * on the candidate, that is reported. It is a reason not to publish only when it is confirmed: the shopper failed on
+ * two tries, or the scripted journey on the candidate breaks too. One unconfirmed AI run is a review item, since the
+ * AI does not always take the same path. Returns that item, or null.
  */
-export function shopperBlocker({ live, draft, draftCheck = null }, where = 'the draft') {
-  if (!live || !draft || live.outcome !== 'checkout' || draft.outcome === 'checkout') return null;
+export function shopperBlocker({ live, draft, draftCheck = null }, where = 'the draft', journeyBreaks = []) {
+  if (!live || !draft || live.outcome !== 'checkout' || !FAILED.has(draft.outcome)) return null;
+  const twice = Array.isArray(draft.tries) && draft.tries.length >= 2 && draft.tries.every((t) => FAILED.has(t));
+  const scripted = journeyBreaks.length > 0;
+  const confirmed = twice || scripted;
   const last = draft.steps.at(-1);
   const how = draft.outcome === 'stuck'
     ? `got stuck on ${last?.at || 'the store'}${last?.did?.startsWith('stuck: ') ? `: ${last.did.slice(7)}` : ''}`
     : `did not reach checkout within ${draft.steps.length} steps`;
+  const why = twice
+    ? ' It failed on both tries.'
+    : scripted
+      ? ` Our scripted shopping test fails there too (${journeyBreaks[0].title}).`
+      : ' This happened on one try and our scripted shopping test still passes, so check it yourself before you publish.';
   return {
-    id: 'ai.shopper', title: SHOPPER_TITLE, status: 'fail', severity: 'major',
-    detail: `On ${where}, an AI shopper ${how}.${draft.friction.length ? ` It noticed: ${draft.friction.slice(0, 3).map((f) => f.issue).join('; ')}.` : ''}`,
+    id: 'ai.shopper', title: SHOPPER_TITLE, status: confirmed ? 'fail' : 'warn', severity: 'major', confirmed,
+    detail: `On ${where}, an AI shopper ${how}.${why}${draft.friction.length ? ` It noticed: ${draft.friction.slice(0, 3).map((f) => f.issue).join('; ')}.` : ''}`,
     liveDetail: `An AI shopper reached checkout in ${reached(live)} steps.`,
     fix: `Follow the AI shopper's steps below on ${where}. Where it got stuck is where new customers would get stuck after you publish.`,
     evidence: draftCheck?.evidence?.screenshot ? { screenshot: draftCheck.evidence.screenshot } : null,
@@ -100,7 +113,8 @@ export function shopperBlocker({ live, draft, draftCheck = null }, where = 'the 
 /** Turns a draft-vs-live comparison into a verdict and the lists the merchant needs. */
 export function judge(cmp, where = 'the draft', shopper = null) {
   const item = (x) => ({ id: x.id, title: x.title, status: x.a, severity: x.severity, detail: x.detail, liveDetail: x.prevDetail, fix: x.fix, evidence: x.evidence || null });
-  const stuck = shopper ? shopperBlocker(shopper, where) : null;
+  const journeyBreaks = cmp.changes.new.filter((x) => JOURNEY.has(x.id) && x.a === 'fail' && BLOCK.has(x.severity));
+  const stuck = shopper ? shopperBlocker(shopper, where, journeyBreaks) : null;
   const breaks = [...(stuck ? [stuck] : []), ...cmp.changes.new.filter((x) => !(stuck && x.id === 'ai.shopper')).map(item)];
   const blockers = breaks.filter((x) => x.status === 'fail' && BLOCK.has(x.severity));
   const reviews = breaks.filter((x) => !blockers.includes(x));

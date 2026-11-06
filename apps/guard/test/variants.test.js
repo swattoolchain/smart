@@ -110,6 +110,48 @@ describe('Every-variant sweep', { concurrency: 1 }, () => {
   });
 });
 
+describe('Every-variant sweep: time budget', { concurrency: 1 }, () => {
+  it('a slow cart: the sweep stops at its time budget, saves where it stopped, and the next check goes on from there', { timeout: 90000 }, async (t) => {
+    const mock = await startMock({ extra: 'manyvariants,slowcart' });
+    try {
+      const saved = [];
+      const t0 = Date.now();
+      const first = await sweep(mock, { budgetMs: 1500, savePosition: (n) => saved.push(n) });
+      const took = Date.now() - t0;
+      assert.equal(first.out.cutShort, 'time');
+      assert.ok(first.out.tried >= 1 && first.out.tried < 44, `tried ${first.out.tried}`);
+      assert.ok(took < 5000, `stopped near its budget (${took} ms)`);
+      assert.equal(first.out.next, first.out.tried, 'the next check starts after the last one tried');
+      assert.equal(saved.at(-1), first.out.next, 'position saved');
+      assert.equal(first.check.status, 'pass');
+      assert.match(first.check.detail, new RegExp(`${first.out.tried} of 44 variants for sale \\(the store’s cart was slow, so we stopped to keep the check on time; the rest are checked in the next full checks\\)`));
+      assert.deepEqual((await (await fetch(`${mock.origin}/__addcount`)).json()).carts.filter((n) => n > 0), [], 'the cart was emptied');
+      const second = await sweep(mock, { budgetMs: 1500, offset: first.out.next });
+      assert.equal(second.out.start, first.out.next);
+      // A deadline already reached still tries one variant, so the position always moves.
+      const late = await sweep(mock, { deadline: Date.now() - 1, offset: second.out.next });
+      assert.equal(late.out.tried, 1);
+      assert.equal(late.out.next, second.out.next + 1);
+      note(t, `300 ms per add, 1.5 s budget: tried ${first.out.tried} of 44 in ${took} ms, saved position ${first.out.next}; next check started at ${second.out.start}`);
+    } finally { mock.stop(); }
+  });
+
+  it('a cancelled check stops the sweep at once and empties the cart', { timeout: 60000 }, async (t) => {
+    const mock = await startMock({ extra: 'manyvariants,slowcart' });
+    try {
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(), 700);
+      const saved = [];
+      const r = await sweep(mock, { signal: ac.signal, savePosition: (n) => saved.push(n) });
+      assert.equal(r.out.cutShort, 'cancelled');
+      assert.ok(r.out.tried < 10, `tried ${r.out.tried}`);
+      assert.equal(saved.at(-1), r.out.next);
+      assert.deepEqual(r.counts.carts.filter((n) => n > 0), [], 'the cart was emptied');
+      note(t, `cancelled after ${r.out.tried} variants; position ${r.out.next} saved; cart empty`);
+    } finally { mock.stop(); }
+  });
+});
+
 describe('Every-variant sweep in a full check', { concurrency: 1 }, () => {
   let P, owner, storeId, browser;
   before(async () => {

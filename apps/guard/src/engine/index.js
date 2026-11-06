@@ -192,7 +192,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       // Opt-in only (Store settings), never on publish previews, at most every 6 hours (see traffic.js).
       if (kind === 'full' && storeId && traffic && !preview && on('sale.traffic')) {
         phase('traffic');
-        trafficOut = await runTraffic({ rec, origin, info, password, storeId, dataDir: config.dataDir, shoppers: traffic.shoppers });
+        trafficOut = await runTraffic({ rec, origin, info, password, shoppers: traffic.shoppers, lastAt: traffic.lastAt || null });
       }
       if (kind === 'full' && ['law.de', 'law.cookies', 'access.law', 'law.us'].some(on)) {
         phase('regional');
@@ -217,11 +217,14 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         const posFile = path.join(config.dataDir, 'variants', `store-${storeId}.json`);
         let offset = 0;
         try { offset = Number(JSON.parse(fs.readFileSync(posFile, 'utf8')).next) || 0; } catch {}
-        variants = await runVariantSweep({ request: ctx.request, origin, rec, products: catalogKeep.snap?.products || null, offset });
-        if (variants) {
+        // Saved as the sweep goes, so a check stopped mid-sweep still moves on next time.
+        const savePosition = (next) => {
           fs.mkdirSync(path.dirname(posFile), { recursive: true });
-          fs.writeFileSync(posFile, JSON.stringify({ next: variants.next, total: variants.total, at: new Date().toISOString() }));
-        }
+          fs.writeFileSync(posFile, JSON.stringify({ next, at: new Date().toISOString() }));
+        };
+        // Keep well inside the 6-minute limit for a whole check (queue.js), with time left for the rest.
+        variants = await runVariantSweep({ request: ctx.request, origin, rec, products: catalogKeep.snap?.products || null, offset, signal, savePosition, deadline: started + 4.5 * 60 * 1000 });
+        if (variants) savePosition(variants.next);
       }
       // Domain, certificate and records belong to the live store: not to a draft theme or a Safe to publish check.
       if (kind === 'full' && storeId && !preview && !release && on('security.domain')) {
@@ -236,7 +239,20 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       // In Safe to publish it shops the draft theme too (its own window opens the preview first).
       if (kind === 'full' && storeId && on('ai.shopper') && aiEnabled() && info.isShopify) {
         phase('shopper');
-        shopper = await runShopper({ rec, origin, password, shot, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
+        const shop = (r) => runShopper({ rec: r, origin, password, shot, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null });
+        shopper = await shop(rec);
+        // Safe to publish: the AI is not deterministic, so a shopper that got stuck (or ran out of steps) gets one
+        // more try before the publish check can treat it as a reason not to publish.
+        if (captureOnly && shopper && (shopper.outcome === 'stuck' || shopper.outcome === 'limit')) {
+          const rec2 = new Recorder();
+          const again = await shop(rec2).catch(() => null);
+          if (again?.outcome === 'checkout') {
+            rec.checks = rec.checks.filter((c) => c.id !== 'ai.shopper').concat(rec2.checks.filter((c) => c.id === 'ai.shopper'));
+            shopper = { ...again, tries: [shopper.outcome, again.outcome] };
+          } else {
+            shopper = { ...shopper, tries: [shopper.outcome, again?.outcome || 'error'] };
+          }
+        }
       }
     }
     // Checks made outside the browser (theme files through the Shopify API) count like any other.

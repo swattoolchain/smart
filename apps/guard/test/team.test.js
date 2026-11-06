@@ -75,6 +75,45 @@ describe('Team workspaces', { concurrency: 1 }, () => {
     note(t, `${refused.length} changes, billing, team, profile, password and founder routes refused with 403; reading works`);
   });
 
+  it('a viewer never sees credentials: gate keys, the Slack address or signing secrets', async (t) => {
+    const SLACK = 'https://hooks.slack.com/services/T000/B000/viewer-must-not-see';
+    const sl = await agencyA.patch(`/api/stores/${storeA}`, { slack: SLACK });
+    assert.equal(sl.status, 200, sl.text);
+    const env = await agencyA.post(`/api/stores/${storeA}/environments`, { name: 'Staging', kind: 'store', url: P.mock.origin.replace('localhost', '127.0.0.1') });
+    assert.equal(env.status, 200, env.text);
+    const key = env.json.token;
+    assert.match(key, /^tg_/);
+    for (const u of [`/api/stores/${storeA}`, '/api/stores', '/api/overview', `/api/stores/${storeA}/environments`, `/api/stores/${storeA}/runs`]) {
+      const r = await viewer.get(u);
+      assert.equal(r.status, 200, u);
+      assert.ok(!r.text.includes(key), `${u} shows the gate key`);
+      assert.ok(!r.text.includes(SLACK), `${u} shows the Slack address`);
+    }
+    const envs = (await viewer.get(`/api/stores/${storeA}/environments`)).json.environments;
+    assert.equal(envs[0].name, 'Staging', 'the environment itself is listed');
+    assert.equal(envs[0].token, null);
+    assert.equal((await viewer.get(`/api/stores/${storeA}`)).json.store.slack_webhook, null);
+    // The owner still sees both.
+    assert.equal((await agencyA.get(`/api/stores/${storeA}/environments`)).json.environments[0].token, key);
+    assert.equal((await agencyA.get(`/api/stores/${storeA}`)).json.store.slack_webhook, SLACK);
+    // On screen: the pipeline dialog tells the viewer to ask the owner, and shows no key.
+    const ctx = await browser.newContext({ viewport: { width: 1360, height: 900 } });
+    try {
+      await ctx.addCookies(viewer.browserCookies());
+      const p = await ctx.newPage();
+      await p.goto(`${P.base}/app#/s/${storeA}/publish`);
+      await p.waitForSelector('li.env [data-act=pipe]', { timeout: 20000 });
+      await p.evaluate(() => document.querySelectorAll('.tour,.tour-mask,.toast').forEach((x) => x.remove()));
+      await p.click('li.env [data-act=pipe]');
+      const dlg = p.locator('dialog.form-dialog');
+      await dlg.waitFor();
+      assert.match(await dlg.textContent(), /Only the account owner and admins can see the key/);
+      assert.ok(!(await p.content()).includes(key));
+      await screenshot(t, p, 'Viewer: the deploy key is not shown');
+    } finally { await ctx.close(); }
+    note(t, 'Viewer: gate key and Slack address null in stores, overview and environments; owner still sees them; the pipeline dialog shows no key');
+  });
+
   it('an admin manages stores and runs checks, but not billing, the team or the owner account', async (t) => {
     const token = await invite(agencyA, 'admin@people.test', 'admin');
     admin = await signup(P, 'admin@people.test');
@@ -133,17 +172,29 @@ describe('Team workspaces', { concurrency: 1 }, () => {
   it('role changes and removal take effect on the next request', async (t) => {
     const team = (await agencyA.get('/api/team')).json;
     const adm = team.members.find((m) => m.email === 'admin@people.test');
+    const gateKey = async () => (await agencyA.get(`/api/stores/${storeA}/environments`)).json.environments[0].token;
+    const knows = async (k) => (await fetch(`${P.base}/api/gate/${k}/999999`)).status !== 401;
+    const adminKey = (await admin.get(`/api/stores/${storeA}/environments`)).json.environments[0].token;
+    assert.equal(adminKey, await gateKey(), 'an admin sees the key (they set up pipelines)');
     assert.equal((await agencyA.patch(`/api/team/members/${adm.id}`, { role: 'viewer' })).status, 200);
+    const k2 = await gateKey();
+    assert.notEqual(k2, adminKey, 'admin -> viewer: the key they saw is replaced');
+    assert.equal(await knows(adminKey), false, 'the old key no longer starts checks');
+    assert.equal(await knows(k2), true);
     assert.equal((await admin.patch(`/api/stores/${storeA}`, { name: 'again' })).status, 403, 'now a viewer');
     assert.equal((await agencyA.patch(`/api/team/members/${adm.id}`, { role: 'owner' })).status, 400, 'no other roles');
     assert.equal((await agencyB.patch(`/api/team/members/${adm.id}`, { role: 'admin' })).status, 404, "another agency can't touch A's team");
     assert.equal((await agencyB.del(`/api/team/members/${adm.id}`)).status, 404);
-    assert.equal((await agencyA.del(`/api/team/members/${adm.id}`)).status, 200);
+    const del = await agencyA.del(`/api/team/members/${adm.id}`);
+    assert.equal(del.status, 200);
+    assert.equal(del.json.rotatedKeys, 1);
+    assert.notEqual(await gateKey(), k2, 'removal makes new keys too');
+    assert.equal(await knows(k2), false);
     assert.equal((await admin.get(`/api/stores/${storeA}`)).status, 404, 'removed: no access');
     assert.equal((await admin.get('/api/me')).json.user.email, 'admin@people.test', 'back in their own account');
     const sr = await fetch(P.base + runA.result.cover, { headers: { cookie: [...admin.cookies].map(([k, v]) => `${k}=${v}`).join('; ') } });
     assert.equal(sr.status, 404, 'screenshots too');
-    note(t, 'admin -> viewer refused at once; removed member back in own account, report screenshots refused');
+    note(t, 'admin -> viewer refused at once and gate keys renewed; removed member back in own account, keys renewed again (old ones answer 401), report screenshots refused');
   });
 
   it('invites: checked, limited, revocable; website accounts only', async (t) => {

@@ -141,6 +141,26 @@ describe('Store passwords', () => {
     assert.equal(decrypt(P, 'plain-old-password'), 'plain-old-password', 'unmigrated value read as is');
   });
 
+  it('after a key change, sealed passwords are never encrypted again, and work once the old key is back', (t) => {
+    const legacy = P.db().prepare("SELECT id FROM stores WHERE storefront_password IS NOT NULL ORDER BY id").all().map((r) => r.id);
+    const snapshot = () => legacy.map((id) => stored(id));
+    const before = snapshot();
+    assert.ok(before.length >= 2 && before.every((v) => SEALED.test(v)));
+    // Start up with a different key (for example after SESSION_SECRET was rotated).
+    const { log } = inProduct(P, "import('./src/db.js').then(() => console.log('{}'))", { TOKEN_KEY: 'a-rotated-key' });
+    assert.doesNotMatch(log, /Encrypted \d+ stored/, 'nothing wrapped a second time');
+    assert.match(log, /could not be decrypted with the current key and were left unchanged/);
+    assert.deepEqual(snapshot(), before, 'stored values untouched');
+    // A second start with the wrong key changes nothing either.
+    inProduct(P, "import('./src/db.js').then(() => console.log('{}'))", { TOKEN_KEY: 'a-rotated-key' });
+    assert.deepEqual(snapshot(), before);
+    // With the original key back, every password opens as before.
+    const again = inProduct(P, "import('./src/db.js').then(() => console.log('{}'))");
+    assert.doesNotMatch(again.log, /Encrypted|could not be decrypted/);
+    assert.equal(decrypt(P, stored(storeId)), PW);
+    note(t, `${before.length} sealed passwords: two starts with another key left them byte-for-byte unchanged and logged a warning; the original key opens them again`);
+  });
+
   it('staging environment passwords are encrypted too, and used for publish checks', async (t) => {
     const stagingUrl = P.mock.origin.replace('localhost', '127.0.0.1');
     const r = await owner.post(`/api/stores/${storeId}/environments`, { name: 'Staging', kind: 'store', url: stagingUrl, password: PW });

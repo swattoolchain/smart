@@ -14,10 +14,18 @@
 
   // Guided restore (S4): the clean copy of each changed theme file, to copy or download and paste back in Shopify.
   // Read-only: Tharam never changes the theme itself.
-  async function themeRestore(el, storeId, ev) {
+  async function themeRestore(el, storeId, ev, changed = true) {
     let clean;
     try { clean = (await api(`/api/stores/${storeId}/theme/clean`)).clean; } catch { return; }
-    if (!clean) { el.innerHTML = '<p class="muted">We keep a clean copy of your theme from each check where nothing changed. There isn\'t one yet, so use the older versions in Shopify\'s code editor to undo a change.</p>'; return; }
+    if (!changed) {
+      // No change in this check, but the theme still differs from the clean copy (a change reported earlier, or a
+      // newly published theme): only the owner can make it the new clean copy.
+      if (!clean?.pending) { el.innerHTML = ''; return; }
+      el.innerHTML = `<p class="muted">Your theme is different from the clean copy we keep (“${esc(clean.themeName || 'your theme')}”, ${esc(exact(clean.savedAt))}). We never replace the clean copy on our own.</p>${confirmBox()}`;
+      wireConfirm();
+      return;
+    }
+    if (!clean) { el.innerHTML = '<p class="muted">We keep a clean copy of your theme from your first clean check. There isn\'t one yet, so use the older versions in Shopify\'s code editor to undo a change.</p>'; return; }
     const byName = new Map(clean.files.map((f) => [f.filename, f]));
     const rows = (ev?.files || []).map((f) => {
       const c = byName.get(f.filename);
@@ -28,10 +36,12 @@
       return `<li><code>${esc(f.filename)}</code><div class="tr-act">${act}</div></li>`;
     }).join('');
     el.innerHTML = `<h4>Undo a change you didn't make</h4>
-      <p class="muted">Clean copy of “${esc(clean.themeName || 'your theme')}” from ${esc(exact(clean.savedAt))}, the last check where nothing had changed.${clean.sameTheme ? '' : ' It is from a different theme than the one live now, so compare carefully before pasting.'}</p>
+      <p class="muted">Clean copy of “${esc(clean.themeName || 'your theme')}” from ${esc(exact(clean.savedAt))}${clean.confirmedBy === 'owner' ? ', the last version you confirmed' : ', your first clean check'}. It stays until you confirm a change yourself.${clean.sameTheme ? '' : ' It is from a different theme than the one live now, so compare carefully before pasting.'}</p>
       <ol class="steps"><li>In Shopify admin, open <b>Online Store → Themes</b>, then <b>⋯ → Edit code</b> on your live theme.</li><li>Open the file below, select all its code and paste the clean version over it.</li><li>Press <b>Save</b>. Then run a full check here to confirm the theme matches the clean copy again.</li><li>If you didn't make the change, also change your Shopify password and review your staff accounts and apps.</li></ol>
       <ul class="tr-files">${rows}</ul>
-      <p><button type="button" class="btn small secondary" data-clean-zip>${icon('download', 14)}Download the whole clean copy (.zip)</button></p>`;
+      <p><button type="button" class="btn small secondary" data-clean-zip>${icon('download', 14)}Download the whole clean copy (.zip)</button></p>
+      ${clean.pending ? confirmBox() : ''}`;
+    wireConfirm();
     const fileOf = async (name) => api(`/api/stores/${storeId}/theme/clean/file?name=${encodeURIComponent(name)}`);
     $$('[data-clean-copy]', el).forEach((b) => (b.onclick = async () => { try { copyText((await fileOf(b.dataset.cleanCopy)).content); } catch (e) { toast(e.message, 'error'); } }));
     $$('[data-clean-get]', el).forEach((b) => (b.onclick = async () => {
@@ -47,6 +57,22 @@
         saveBlob(await r.blob(), name);
       } catch (e) { toast(e.message, 'error'); }
     };
+    function confirmBox() {
+      return `<div class="tr-confirm"><p><b>Did you or your developer make this change?</b> Then keep the theme as it is now as your clean copy. Only do this if you know the change: if someone else made it, the clean copy would include their code.</p>
+        <button type="button" class="btn small secondary" data-clean-confirm>I made this change: keep it as the clean copy</button></div>`;
+    }
+    function wireConfirm() {
+      const b = $('[data-clean-confirm]', el);
+      if (!b) return;
+      b.onclick = async () => {
+        if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = 'Press again to confirm: this theme becomes your clean copy'; return; }
+        try {
+          await api(`/api/stores/${storeId}/theme/clean/confirm`, { method: 'POST', body: {} });
+          b.closest('.tr-confirm').innerHTML = '<p>Done. The theme as it is now is your clean copy. The one before it is kept with your older copies.</p>';
+          toast('Clean copy updated');
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    }
   }
   function saveBlob(blob, name) {
     const a = document.createElement('a');
@@ -1444,12 +1470,13 @@
       const a = d.active;
       if (!a) {
         ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Incident mode')}
-          <p class="lede-sm">Think your store was hacked, or something just broke badly? Switch on incident mode. For ${d.hours} hours we check your store every ${d.everyMinutes} minutes, show what changed since the last healthy check, give you a recovery checklist, and send every alert to the people you add below.</p>
+          <p class="lede-sm">Think your store was hacked, or something just broke badly? Switch on incident mode. For ${d.hours} hours we check your store every ${d.everyMinutes} minutes, show what changed since the last healthy check, give you a recovery checklist, and send every alert to the people you add below. It can be started once a week per store.</p>
           <section class="panel inc-start"><h2>Start incident mode</h2>
             <form id="inc-form" class="stack">
               <div class="field"><label for="inc-reason">What happened? <span class="muted">(optional, goes in the emails)</span></label><input id="inc-reason" maxlength="500" placeholder="For example: prices changed by themselves, strange app installed"></div>
               <div class="field"><label for="inc-team">Who else should get alerts? <span class="muted">(up to 5 emails, optional)</span></label><input id="inc-team" placeholder="developer@example.com, partner@example.com"></div>
-              <div><button class="btn danger" id="inc-go" type="submit">${icon('lock', 16)}Start incident mode</button></div>
+              ${d.nextStartAt ? `<p class="notice" id="inc-wait">Incident mode can be started once a week per store. You can start it again ${esc(when(d.nextStartAt))}. Your store is still checked on its usual schedule.</p>` : ''}
+              <div><button class="btn danger" id="inc-go" type="submit" ${d.nextStartAt ? 'disabled' : ''}>${icon('lock', 16)}Start incident mode</button></div>
             </form></section>
           <section class="panel"><h2>What you'll be asked to do</h2><ol class="inc-steps-preview">${d.steps.map((x) => `<li><b>${esc(x.title)}.</b> <span class="muted">${esc(x.how)}</span></li>`).join('')}</ol></section>
           ${d.history.length ? `<section class="panel"><h2>Earlier incidents</h2><ul class="list">${d.history.map((h) => `<li><span>${esc(when(h.startedAt))} → ${esc(when(h.endedAt))}${h.reason ? ` · ${esc(h.reason)}` : ''}</span><span class="muted">${h.stepsDone} of ${h.steps} steps · ${h.endedBy === 'time' ? 'ended after 48 hours' : 'ended by you'}</span></li>`).join('')}</ul></section>` : ''}
@@ -1515,7 +1542,16 @@
         <div class="rp-msg"><h3>2. Send this to ${p.support ? 'Shopify Support' : 'support'}</h3>
           <div class="field"><label for="rp-subject">Subject</label><input id="rp-subject" readonly value="${esc(p.message.subject)}"></div>
           <div class="field"><label for="rp-text">Message</label><textarea id="rp-text" readonly rows="14">${esc(p.message.text)}</textarea></div>
-          <p class="inline-row"><button class="btn" type="button" id="rp-copy">${icon('copy', 16)}Copy message</button><a class="btn secondary" id="rp-download" href="/api/stores/${s.id}/recovery-packet.txt" download>Download</a>${p.support ? `<a class="btn secondary" href="${esc(p.support.url)}" target="_blank" rel="noopener">${icon('external', 16)}Contact Shopify Support</a>` : ''}</p></div></div>`;
+          <p class="inline-row"><button class="btn" type="button" id="rp-copy">${icon('copy', 16)}Copy message</button><button class="btn secondary" type="button" id="rp-download">Download</button>${p.support ? `<a class="btn secondary" href="${esc(p.support.url)}" target="_blank" rel="noopener">${icon('external', 16)}Contact Shopify Support</a>` : ''}</p></div></div>`;
+      // Built in the browser from the packet already loaded: a plain link would carry no session inside Shopify admin.
+      $('#rp-download').addEventListener('click', () => {
+        const blob = new Blob([`Subject: ${p.message.subject}\n\n${p.message.text}\n`], { type: 'text/plain;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `recovery-${p.store.host.replace(/[^a-z0-9.-]/gi, '-')}.txt`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      });
       $('#rp-copy').addEventListener('click', async () => {
         const text = `Subject: ${p.message.subject}\n\n${p.message.text}`;
         try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into your message to support.'); }
@@ -1689,7 +1725,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.changes?.length ? `<table class="data record-changes"><thead><tr><th>What changed</th><th>Before</th><th>Now</th></tr></thead><tbody>${x.evidence.changes.map((r) => `<tr><td>${esc(r.what)}</td><td><code>${esc(r.before)}</code></td><td><code>${esc(r.after)}</code></td></tr>`).join('')}</tbody></table>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a === 'fail' && x.evidence?.files ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.changes?.length ? `<table class="data record-changes"><thead><tr><th>What changed</th><th>Before</th><th>Now</th></tr></thead><tbody>${x.evidence.changes.map((r) => `<tr><td>${esc(r.what)}</td><td><code>${esc(r.before)}</code></td><td><code>${esc(r.after)}</code></td></tr>`).join('')}</tbody></table>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a !== 'skip' ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -1765,7 +1801,7 @@
     $('#print').onclick = () => { $$('details', ctx.main).forEach((d) => (d.open = true)); const hidden = $$('[data-pane][hidden]', ctx.main); hidden.forEach((p) => (p.hidden = false)); window.print(); hidden.forEach((p) => (p.hidden = true)); };
     $$('[data-shot]', ctx.main).forEach((x) => (x.onclick = () => lightbox(x.dataset.shot, 'Screenshot')));
     const restoreEl = $('[data-theme-restore]', ctx.main);
-    if (restoreEl) themeRestore(restoreEl, s.id, c.areas.flatMap((a) => a.checks).find((x) => x.id === 'sec.theme')?.evidence);
+    if (restoreEl) { const tc = c.areas.flatMap((a) => a.checks).find((x) => x.id === 'sec.theme'); themeRestore(restoreEl, s.id, tc?.evidence, tc?.a === 'fail' && !!tc?.evidence?.files); }
     const PAGE = { home: 'Homepage', product: 'Product page' };
     const drawDevice = (dev) => {
       const el = $('#dev-shots');
@@ -2010,6 +2046,7 @@
   }
 
   function pipelineDialog(s, e) {
+    if (!e.token) { formDialog({ title: 'Check from your deploy pipeline', body: `<p>Only the account owner and admins can see the key for <b>${esc(e.name)}</b>. Ask the account owner if you need it.</p>`, cancel: 'Done' }); return; }
     const base = location.origin;
     const curl = `curl -X POST ${base}/api/gate \\\n  -H "Authorization: Bearer ${e.token}"`;
     const yaml = `- name: Tharam publish check
@@ -2595,13 +2632,14 @@
   async function adminRunners(ctx, head) {
     const d = await api('/api/admin/runners');
     if (!ctx.alive()) return;
-    const STAT = { active: ['healthy', 'Active'], draining: ['warning', 'Draining'], paused: ['', 'Paused'] };
+    const STAT = { active: ['healthy', 'Active'], draining: ['warning', 'Draining'], paused: ['', 'Paused'], removed: ['critical', 'Removed'] };
     const RUNSTAT = { done: 'Finished', error: 'Didn’t finish', cancelled: 'Stopped', running: 'Running', queued: 'Waiting' };
     const secs = (x) => (x < 90 ? `${x} s` : `${Math.round(x / 6) / 10} min`);
     const now = d.runners.flatMap((r) => r.current.map((c) => ({ ...c, runner: r.name })));
     const row = (r) => {
       const [cls, label] = STAT[r.status] || ['', r.status];
-      const health = r.kind === 'main' ? '<span class="pill healthy">This server</span>' : r.healthy ? `<span class="pill healthy">Checking in</span><div class="cell-sub">${time(r.lastSeen)}</div>` : `<span class="pill critical">Not responding</span><div class="cell-sub">last seen ${time(r.lastSeen)}</div>`;
+      const removed = r.status === 'removed';
+      const health = removed ? '<span class="muted">–</span>' : r.kind === 'main' ? '<span class="pill healthy">This server</span>' : r.healthy ? `<span class="pill healthy">Checking in</span><div class="cell-sub">${time(r.lastSeen)}</div>` : `<span class="pill critical">Not responding</span><div class="cell-sub">last seen ${time(r.lastSeen)}</div>`;
       const btn = (st, txt) => (r.status === st ? '' : `<button type="button" class="btn small secondary" data-runner="${r.id}" data-status="${st}">${txt}</button>`);
       return `<tr class="runner-row" data-name="${esc(r.name)}"><td><span class="cell-main">${esc(r.name)}</span><div class="cell-sub">${r.kind === 'main' ? 'Main server · web, database, scheduler' : 'Worker'}</div></td>
         <td><span class="pill ${cls}">${label}</span></td><td>${health}</td><td class="num">${r.used} of ${r.slots}</td>
@@ -2609,7 +2647,7 @@
         <td class="num">${r.totals ? `${r.totals.checks}<div class="cell-sub">${r.totals.minutes} min</div>` : '–'}</td>
         <td class="num">${r.totals && r.totals.failed + r.totals.lost ? `<span class="pill ${r.totals.lost ? 'critical' : 'warning'}">${r.totals.failed} failed${r.totals.lost ? ` · ${r.totals.lost} lost` : ''}</span>` : '<span class="muted">0</span>'}</td>
         <td>${r.tags.length ? r.tags.map((t) => `<span class="pill">${esc(t)}</span>`).join(' ') : '<span class="muted">–</span>'}</td>
-        <td class="actions">${btn('active', 'Activate')} ${btn('draining', 'Drain')} ${btn('paused', 'Pause')}</td></tr>`;
+        <td class="actions">${removed ? '' : `${btn('active', 'Activate')} ${btn('draining', 'Drain')} ${btn('paused', 'Pause')}${r.kind === 'main' ? '' : ` <button type="button" class="btn small danger" data-remove="${r.id}" data-rname="${esc(r.name)}">Remove</button>`}`}</td></tr>`;
     };
     ctx.main.innerHTML = `<div class="main-inner">${head}
       <p class="lede-sm">Checks go to the active runner with the most free slots. Stores in sale mode prefer runners tagged <code>sale</code>, paid plans prefer their plan's tag (for example <code>pro</code>), and stores prefer their region's tag (<code>india</code>, <code>eu</code>, <code>us</code>). If no such runner has room, any runner takes the check. Workers take journey and full checks (a full check fetches the store’s approved screenshots and last product list from this server and sends new ones back). Publish checks, free website checks and full checks with AI review run on the main server. A worker that stops checking in for a minute gets no new checks, and its unfinished checks are retried once elsewhere. <b>Drain</b> finishes current checks and takes no new ones.</p>
@@ -2630,6 +2668,10 @@
           <div class="field"><label>Tags (comma separated)</label><input name="tags" placeholder="sale, india"></div>
           <div class="field"><label>&nbsp;</label><button class="btn" type="submit">Create join token</button></div></form>
         <p class="error-msg" id="rjoin-err" role="alert"></p><div id="rjoin-out"></div></section></div>`;
+    ctx.main.querySelectorAll('[data-remove]').forEach((b) => (b.onclick = async () => {
+      if (!(await confirmDialog({ title: `Remove ${b.dataset.rname}?`, body: 'Its credentials stop working at once and its unfinished checks move to another runner. To use the machine again, join it with a new token.', confirm: 'Remove runner', danger: true }))) return;
+      try { await api(`/api/admin/runners/${b.dataset.remove}/remove`, { method: 'POST' }); toast('Runner removed'); adminRunners(ctx, head); } catch (ex) { toast(ex.message, 'error'); }
+    }));
     ctx.main.querySelectorAll('[data-runner]').forEach((b) => (b.onclick = async () => {
       try { await api(`/api/admin/runners/${b.dataset.runner}`, { method: 'PATCH', body: { status: b.dataset.status } }); toast('Runner updated'); adminRunners(ctx, head); } catch (ex) { toast(ex.message, 'error'); }
     }));

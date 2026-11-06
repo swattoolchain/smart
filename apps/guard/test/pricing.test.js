@@ -47,6 +47,11 @@ describe('Prices stay the same: the check engine', { concurrency: 1 }, () => {
     { name: 'a cart that charges more than the product page is a critical failure', breaks: 'pricedrift', status: 'fail', steps: ['Product page ₹1,499', 'Cart ₹1,649', 'Checkout subtotal ₹1,649'] },
     { name: 'a checkout that charges more than the cart is a critical failure', breaks: 'checkoutprice', status: 'fail', steps: ['Product page ₹1,499', 'Cart ₹1,499', 'Checkout subtotal ₹1,699'] },
     { name: 'a cart that charges less with no discount is a warning', breaks: 'pricelow', status: 'warn', steps: ['Product page ₹1,499', 'Cart ₹1,399', 'Checkout subtotal ₹1,399'] },
+    // A shipping-protection app adds a paid line: the checkout subtotal is compared with the whole cart, not the one item.
+    { name: 'a paid line added by an app (shipping protection) is not a price problem', breaks: 'protection', status: 'pass', steps: ['Product page ₹1,499', 'Cart ₹1,499', 'Whole cart (2 items) ₹1,598', 'Checkout subtotal ₹1,598'], detail: /whole cart \(2 items\) ₹1,598/ },
+    { name: 'with other lines in the cart, a checkout above the whole cart is still critical', breaks: 'protection,checkoutprice', status: 'fail', steps: ['Product page ₹1,499', 'Cart ₹1,499', 'Whole cart (2 items) ₹1,598', 'Checkout subtotal ₹1,798'], detail: /checkout subtotal asks for ₹1,798, but the cart with the same items comes to ₹1,598/ },
+    // The page price can't be read: a difference against product data is a warning, never a critical alarm.
+    { name: 'when the product page price cannot be read, a different cart price is only a warning', breaks: 'noprice,pricedrift', status: 'warn', severity: 'major', steps: ['Product price (from your product data) ₹1,499', 'Cart ₹1,649', 'Checkout subtotal ₹1,649'], detail: /could not read the price on the product page/ },
   ];
   for (const [i, c] of cases.entries()) {
     it(c.name, { timeout: 180000 }, async (t) => {
@@ -58,6 +63,9 @@ describe('Prices stay the same: the check engine', { concurrency: 1 }, () => {
         note(t, `${p.status}: ${p.detail} | ${trail(p)}`);
         assert.equal(p.status, c.status, p.detail);
         assert.deepEqual(p.evidence.priceTrail.steps.map((s) => `${s.label} ${s.money}`), c.steps);
+        if (c.detail) assert.match(p.detail, c.detail);
+        if (c.severity) assert.equal(p.severity, c.severity);
+        if (c.status === 'warn') assert.notEqual(r.verdict, 'critical', 'a warning never makes the store critical');
         if (c.status === 'fail') {
           assert.equal(p.severity, 'critical');
           assert.ok(p.evidence.screenshot, 'a screenshot of the step that charged more');

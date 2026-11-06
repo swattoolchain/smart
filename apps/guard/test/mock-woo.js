@@ -7,6 +7,9 @@
  *   search    search finds nothing
  *   storeapi  the Store API is blocked (security plugin), so shopping tests can't run
  *   soldout   the cart refuses every product (like a stock or purchasability problem)
+ *   cartapi   a security plugin blocks the Store API cart (reads and writes), while the product form's
+ *             Add to cart and the cart page's remove links still work
+ * GET /__carts: how many items are in carts across every session (tests check nothing is left behind).
  * Extras (env MOCK_EXTRA): plain  only plain permalinks (Store API at /?rest_route=…)
  */
 import http from 'node:http';
@@ -115,7 +118,7 @@ const server = http.createServer(async (req, res) => {
   else if (u.pathname === '/' && (u.searchParams.get('rest_route') || '').startsWith('/wc/store/v1')) route = u.searchParams.get('rest_route').slice('/wc/store/v1'.length) || '/';
   else if (u.pathname.startsWith('/wp-json/')) return json(404, { code: 'rest_no_route', message: 'No route was found matching the URL and request method.' });
   if (route !== null) {
-    if (B.has('storeapi')) return json(403, { code: 'rest_forbidden', message: 'Sorry, you are not allowed to do that.' });
+    if (B.has('storeapi') || (B.has('cartapi') && route.startsWith('/cart'))) return json(403, { code: 'rest_forbidden', message: 'Sorry, you are not allowed to do that.' });
     if (route === '/products' && req.method === 'GET') return json(200, products.map((p) => apiProduct(p, origin)));
     if (route === '/products/categories') return json(200, cats.map((c) => ({ ...c, permalink: `${origin}/product-category/${c.slug}/`, count: products.filter((p) => p.cat === c.slug).length })));
     if (route === '/cart' && req.method === 'GET') return json(200, cartJson(cart));
@@ -128,6 +131,7 @@ const server = http.createServer(async (req, res) => {
     return json(404, { code: 'rest_no_route', message: 'No route.' });
   }
 
+  if (u.pathname === '/__carts') return json(200, { items: [...sessions.values()].reduce((s, c) => s + c.reduce((a, l) => a + l.quantity, 0), 0) });
   if (u.pathname.startsWith('/img/')) { res.writeHead(200, { 'Content-Type': 'image/svg+xml' }); return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'); }
   if (u.pathname === '/' && u.searchParams.has('s')) {
     const q = u.searchParams.get('s').toLowerCase();
@@ -152,9 +156,14 @@ const server = http.createServer(async (req, res) => {
     return html(200, pdp(p));
   }
   if (u.pathname === '/cart/') {
+    // WooCommerce's remove link: /cart/?remove_item=<key>&_wpnonce=<nonce>, then back to the cart.
+    if (u.searchParams.has('remove_item')) {
+      if (u.searchParams.get('_wpnonce') === NONCE) { const i = cart.findIndex((l) => l.key === u.searchParams.get('remove_item')); if (i >= 0) cart.splice(i, 1); }
+      res.writeHead(302, { Location: '/cart/' }); return res.end();
+    }
     if (!cart.length) return html(200, page('Cart', '<p class="cart-empty woocommerce-info">Your cart is currently empty.</p>'));
     const total = cart.reduce((s, l) => s + l.price * l.quantity, 0);
-    return html(200, page('Cart', `<form class="woocommerce-cart-form"><table class="shop_table cart">${cart.map((l) => `<tr class="cart_item"><td class="product-name"><a href="${origin}${l.permalink}">${l.name}</a></td><td>${l.quantity}</td><td>${money(l.price * l.quantity)}</td></tr>`).join('')}</table></form>
+    return html(200, page('Cart', `<form class="woocommerce-cart-form"><table class="shop_table cart">${cart.map((l) => `<tr class="cart_item"><td class="product-remove"><a href="${origin}/cart/?remove_item=${l.key}&amp;_wpnonce=${NONCE}" class="remove" aria-label="Remove this item">×</a></td><td class="product-name"><a href="${origin}${l.permalink}">${l.name}</a></td><td>${l.quantity}</td><td>${money(l.price * l.quantity)}</td></tr>`).join('')}</table></form>
       <div class="cart_totals"><p>Total <strong>${money(total)}</strong></p><div class="wc-proceed-to-checkout"><a href="/checkout/" class="checkout-button button alt">Proceed to checkout</a></div></div>`));
   }
   if (u.pathname === '/checkout/') {

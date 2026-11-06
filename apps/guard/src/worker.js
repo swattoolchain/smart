@@ -148,7 +148,11 @@ async function main() {
         // For the container health check (deploy/docker-compose.worker.yml): the last time the main server answered.
         try { fs.writeFileSync(HEALTH, JSON.stringify({ at: new Date().toISOString(), name: r.json.name, status: r.json.status, running: running.size })); } catch {}
         for (const id of r.json.cancel || []) running.get(id)?.controller.abort();
-        for (const spec of stopping ? [] : r.json.jobs || []) runOne(auth, spec);
+        for (const spec of stopping ? [] : r.json.jobs || []) {
+          // Never more checks than this machine's slots (anything over is reported back as not running, and moves on).
+          if (running.has(spec.runId) || running.size >= (r.json.slots || 1)) { log(`no free slot for check ${spec.runId}`); continue; }
+          runOne(auth, spec);
+        }
       }
     } catch (e) { log('check-in failed', e.message); }
     await new Promise((res) => setTimeout(res, POLL_MS));

@@ -14,8 +14,18 @@
  * Delivery: up to 4 attempts (now, then after 1, 5 and 30 minutes) on network errors, timeouts, 408, 429 and 5xx.
  * Other answers (e.g. 404, 410) stop at once. Redirects are not followed. Every delivery is recorded so the owner
  * can see what happened. Retries waiting when the server restarts are not resumed.
+ *
+ * Internal addresses: each attempt resolves the host once, refuses private, loopback, link-local, unspecified
+ * and IPv4-mapped addresses (egress.js), and connects to exactly that address (no second DNS lookup), so a
+ * hostname that changes its answer between the check and the request (DNS rebinding) can't reach the server's
+ * own network.
  */
 import crypto from 'node:crypto';
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+import dns from 'node:dns/promises';
+import { isPrivateIp } from './egress.js';
 import { db } from './db.js';
 import { config } from './config.js';
 import { assertPublicTarget } from './engine/browser.js';
@@ -126,19 +136,62 @@ export function bodyFor(format, p) {
 
 const retryable = (code) => code === 408 || code === 429 || code >= 500;
 
+/**
+ * POSTs to `url`, connecting only to `ip` (already checked). TLS still checks the certificate against the
+ * hostname, and the Host header stays the hostname. Resolves with the status code; rejects on network errors
+ * and timeouts (error name 'TimeoutError').
+ */
+function postPinned(url, ip, headers, body) {
+  const u = new URL(url);
+  const family = net.isIPv6(ip) ? 6 : 4;
+  const lookup = (_host, opts, cb) => {
+    if (typeof opts === 'function') cb = opts;
+    if (opts && opts.all) cb(null, [{ address: ip, family }]); else cb(null, ip, family);
+  };
+  const mod = u.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = mod.request(u, {
+      method: 'POST', lookup, agent: false, servername: net.isIP(u.hostname.replace(/^\[|\]$/g, '')) ? undefined : u.hostname,
+      headers: { ...headers, 'content-length': Buffer.byteLength(body) },
+    }, (res) => { clearTimeout(timer); res.resume(); resolve(res.statusCode); });
+    // One deadline for the whole attempt (connecting included), like AbortSignal.timeout.
+    const timer = setTimeout(() => { const e = new Error('timeout'); e.name = 'TimeoutError'; req.destroy(e); }, TIMEOUT_MS);
+    req.on('error', (e) => { clearTimeout(timer); reject(e); });
+    req.end(body);
+  });
+}
+
+/**
+ * The one address an attempt connects to: every address the host has must be public (otherwise refused, with
+ * e.private set); IPv4 is preferred. ALLOW_LOCAL_TARGETS=1 (tests, local development) skips the check;
+ * EGRESS_TEST_ALLOW lists hosts tests treat as public.
+ */
+export async function addressFor(host) {
+  const h = String(host).replace(/^\[|\]$/g, '');
+  const addrs = net.isIP(h) ? [{ address: h, family: net.isIPv6(h) ? 6 : 4 }] : await dns.lookup(h, { all: true });
+  if (!addrs.length) throw new Error(`${host} has no address`);
+  const allowed = process.env.ALLOW_LOCAL_TARGETS === '1' || String(process.env.EGRESS_TEST_ALLOW || '').split(',').includes(h);
+  if (!allowed && addrs.some((a) => isPrivateIp(a.address))) {
+    const e = new Error(`${host} points to a private network address`);
+    e.private = true;
+    throw e;
+  }
+  return (addrs.find((a) => a.family === 4) || addrs[0]).address;
+}
+
 /** One attempt. Returns { ok, code, error }. */
 async function attempt(url, secret, event, deliveryId, json) {
+  let ip;
   try {
-    await assertPublicTarget(new URL(url).origin); // checked again on every attempt (addresses can change)
-  } catch { return { ok: false, code: null, error: 'The address now points to a private network.', permanent: true }; }
+    ip = await addressFor(new URL(url).hostname); // resolved again on every attempt, and the request goes to exactly this address
+  } catch (e) {
+    if (e.private) return { ok: false, code: null, error: 'The address now points to a private network.', permanent: true };
+    return { ok: false, code: null, error: 'Could not find the address' };
+  }
   try {
-    const r = await fetch(url, {
-      method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS),
-      headers: { 'content-type': 'application/json', 'user-agent': 'Tharam-Webhooks/1', 'x-tharam-event': event, 'x-tharam-delivery': deliveryId, 'x-tharam-signature': sign(secret, json) },
-      body: json,
-    });
-    if (r.status >= 200 && r.status < 300) return { ok: true, code: r.status };
-    return { ok: false, code: r.status, error: r.status >= 300 && r.status < 400 ? 'The address redirected; we don\'t follow redirects.' : `Answered ${r.status}`, permanent: !retryable(r.status) };
+    const status = await postPinned(url, ip, { 'content-type': 'application/json', 'user-agent': 'Tharam-Webhooks/1', 'x-tharam-event': event, 'x-tharam-delivery': deliveryId, 'x-tharam-signature': sign(secret, json) }, json);
+    if (status >= 200 && status < 300) return { ok: true, code: status };
+    return { ok: false, code: status, error: status >= 300 && status < 400 ? 'The address redirected; we don\'t follow redirects.' : `Answered ${status}`, permanent: !retryable(status) };
   } catch (e) {
     return { ok: false, code: null, error: e.name === 'TimeoutError' ? `No answer in ${Math.round(TIMEOUT_MS / 1000)} s` : 'Could not connect' };
   }

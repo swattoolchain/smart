@@ -8,12 +8,16 @@
  * Sold-out variants are not tried: refusing them is correct.
  *
  * Capped per check (VARIANT_SWEEP_MAX, default 100) and paced, so big catalogs are covered over several checks:
- * each check starts where the previous one left off.
+ * each check starts where the previous one left off. It also has a time budget (VARIANT_SWEEP_BUDGET_MS, default
+ * 75 s, and never past the check's own deadline), so a slow cart can never push the whole check past its time
+ * limit: the sweep stops early and the rest are tried next time. The position is saved as it goes, so even a
+ * check that is stopped mid-sweep moves on next time instead of stopping at the same place forever.
  */
 import { check, shortErr, plural } from './checks.js';
 import { fetchCatalog } from './products.js';
 
 export const SWEEP_MAX = Math.max(1, Number(process.env.VARIANT_SWEEP_MAX || 100));
+export const SWEEP_BUDGET_MS = Math.max(1000, Number(process.env.VARIANT_SWEEP_BUDGET_MS || 75000));
 const PAUSE_MS = Number(process.env.VARIANT_SWEEP_PAUSE_MS ?? 250);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -69,30 +73,50 @@ async function tryVariant(request, origin, item) {
  * Runs the sweep and adds one check, `fn.variants`.
  * `products`: the normalized catalog (from the catalog check); fetched here if not given.
  * `offset`: where to start in a capped catalog (the previous check's `next`).
+ * `budgetMs` / `deadline` (epoch ms): stop trying new variants after the budget or at the deadline, whichever
+ * comes first. `signal`: stop when the run is cancelled. `savePosition(next)`: called as the sweep goes.
  */
-export async function runVariantSweep({ request, origin, rec, products = null, offset = 0, max = SWEEP_MAX }) {
+export async function runVariantSweep({ request, origin, rec, products = null, offset = 0, max = SWEEP_MAX, budgetMs = SWEEP_BUDGET_MS, deadline = Infinity, signal = null, savePosition = null }) {
   const title = 'Every variant can be added to the cart';
   try {
     if (!products) products = (await fetchCatalog(request, origin)).products;
-    const { picked, total, soldOut, start, next } = pickVariants(products, { max, offset });
-    if (!picked.length) {
+    const { picked: planned, total, soldOut, start } = pickVariants(products, { max, offset });
+    const until = Math.min(Date.now() + budgetMs, deadline);
+    let picked = planned;
+    const position = (n) => (total ? (start + n) % total : 0);
+    if (!planned.length) {
       rec.add(check('fn.variants', 'functional', title, 'skip', { severity: 'minor', detail: soldOut ? `All ${plural(soldOut, 'variant')} are sold out, so there was nothing to add.` : 'No products for sale were found.' }));
       return { tried: 0, total, soldOut, next: 0, problems: [] };
     }
-    rec.step(`Adding ${plural(picked.length, 'variant')} to the cart one by one`);
+    rec.step(`Adding ${plural(planned.length, 'variant')} to the cart one by one`);
     await clearCart(request, origin);
     const problems = [];
     let errors = 0;
-    for (const [i, item] of picked.entries()) {
+    let tried = 0;
+    let cutShort = null; // 'time' | 'cancelled'
+    for (const [i, item] of planned.entries()) {
+      if (signal?.aborted) { cutShort = 'cancelled'; break; }
+      if (i > 0 && Date.now() >= until) { cutShort = 'time'; break; }
       const r = await tryVariant(request, origin, item);
+      tried++;
       if (r?.problem === 'error') errors++;
       if (r) problems.push({ ...item, ...r });
       await clearCart(request, origin);
-      if (PAUSE_MS && i < picked.length - 1) await sleep(PAUSE_MS); // be gentle with the store
+      if (savePosition && tried % 10 === 0) { try { savePosition(position(tried)); } catch {} }
+      if (PAUSE_MS && i < planned.length - 1) await sleep(PAUSE_MS); // be gentle with the store
+    }
+    picked = planned.slice(0, tried);
+    const next = position(tried);
+    if (savePosition) { try { savePosition(next); } catch {} }
+    if (!tried) {
+      rec.add(check('fn.variants', 'functional', title, 'skip', { severity: 'minor', detail: 'The check was stopped before any variant was tried.' }));
+      return { tried: 0, total, soldOut, start, next, problems: [] };
     }
     const broken = problems.filter((p) => p.problem === 'broken');
     const unpublished = problems.filter((p) => p.problem === 'unpublished');
-    const scope = total > picked.length ? `${picked.length} of ${total} variants for sale (the rest are checked in the next full checks)` : `all ${plural(picked.length, 'variant')} for sale`;
+    const scope = total > picked.length
+      ? `${picked.length} of ${total} variants for sale (${cutShort === 'time' ? 'the store’s cart was slow, so we stopped to keep the check on time; ' : ''}the rest are checked in the next full checks)`
+      : `all ${plural(picked.length, 'variant')} for sale`;
     const names = (list) => list.slice(0, 4).map((p) => `“${p.name}”`).join(', ') + (list.length > 4 ? ` and ${list.length - 4} more` : '');
     const parts = [];
     if (broken.length) parts.push(`Customers can't add ${names(broken)} to the cart, although the store shows ${broken.length === 1 ? 'it' : 'them'} as in stock.`);
@@ -118,7 +142,7 @@ export async function runVariantSweep({ request, origin, rec, products = null, o
       fix,
       evidence: problems.length ? { variants: problems.slice(0, 50).map(({ product, variant, handle, id, name, problem, message }) => ({ product, variant, handle, id, name, problem, message })) } : null,
     }));
-    return { tried: picked.length, total, soldOut, start, next, problems: problems.slice(0, 200) };
+    return { tried: picked.length, total, soldOut, start, next, cutShort, problems: problems.slice(0, 200) };
   } catch (e) {
     rec.add(check('fn.variants', 'functional', title, 'skip', { severity: 'minor', detail: `The variant check could not run: ${shortErr(e)}` }));
     return null;

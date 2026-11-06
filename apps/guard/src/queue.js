@@ -2,6 +2,8 @@ import { config } from './config.js';
 import { db, q } from './db.js';
 import { storePassword } from './secret.js';
 import { runScan } from './engine/index.js';
+import { assertPublicTarget } from './engine/browser.js';
+import { MIN_GAP_HOURS } from './engine/traffic.js';
 import { handleAlerts } from './alerts.js';
 import { earlyWarning } from './early-warning.js';
 import { storeConfig, saleActive } from './scheduler.js';
@@ -18,7 +20,7 @@ import { offChecks, isOn } from './features.js';
 import { attributeFailures } from './attribution.js';
 import { aiEnabled } from './ai.js';
 import { fullCheckInputs } from './runner-files.js';
-import { usesAi, mainRunner, listRunners, healthy, chooseRunner, byPriority, wantedTags, L, leaseAge, LEASE_LIMIT_MS } from './runners.js';
+import { usesAi, mainRunner, listRunners, healthy, chooseRunner, byPriority, wantedTags, L, leaseAge, LEASE_LIMIT_MS, revokeRunner } from './runners.js';
 
 /** Groups switched off for this run: the store's choices, markets, and anything the owner's plan doesn't include. */
 function planDisabled(store, cfg, picked) {
@@ -161,6 +163,9 @@ function startLocal(job) {
 async function prepare(job) {
   const { runId, kind, storeId, disabled, preview, captureOnly, release } = job;
   let { password } = job;
+  // Checked again at every run: a store's address can start pointing somewhere internal after it was added.
+  // (A store that can't be found is left to the check itself, which reports it as down.)
+  await assertPublicTarget(job.origin).catch((e) => { if (/private network/.test(e.message)) throw e; });
   const store = storeId ? q.storeById.get(storeId) : null;
   if (storeId && !store) throw new Error('Store was removed');
   if (store) {
@@ -196,7 +201,8 @@ async function prepare(job) {
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).
     video: !!cfg.failureVideo && !release && isOn('failure_video'),
     // Sale traffic readiness: a few shoppers at once, when the store has it switched on (never for publish checks).
-    traffic: !release && cfg.saleTraffic ? { shoppers: cfg.saleTrafficShoppers } : null,
+    // Sale traffic (opt-in): claim the store's 6-hour slot here, on the main server, only when the test will run.
+    traffic: store && kind === 'full' && !release && !preview && cfg.saleTraffic && !runDisabled.includes('sale.traffic') ? { shoppers: cfg.saleTrafficShoppers, ...claimTrafficSlot(store.id) } : null,
     woo: isOn('woocommerce'),
   };
 }
@@ -271,6 +277,19 @@ async function settle(job, result) {
     // Cross-store early warning: an app whose code changed on many stores at once (needs script watch).
     if (result.scripts) await earlyWarning(storeId).catch((e) => console.error('early warning failed', e));
   }
+}
+
+/**
+ * The sale traffic test runs at most every MIN_GAP_HOURS per store, whichever machine runs the check. The main
+ * server keeps the time in the database and claims the slot before the check starts (one atomic update, so two
+ * checks at once can't both take it). Returns what to tell the check: { lastAt } when it must skip, else {}.
+ */
+export function claimTrafficSlot(storeId, now = Date.now()) {
+  const at = new Date(now).toISOString();
+  const cutoff = new Date(now - MIN_GAP_HOURS * 3600e3).toISOString();
+  const r = db.prepare('UPDATE stores SET traffic_last_at = ? WHERE id = ? AND (traffic_last_at IS NULL OR traffic_last_at <= ?)').run(at, storeId, cutoff);
+  if (r.changes) return {};
+  return { lastAt: db.prepare('SELECT traffic_last_at AS t FROM stores WHERE id = ?').get(storeId)?.t || at };
 }
 
 function settleReleaseOf(job) {
@@ -445,3 +464,35 @@ function recoverLost(now = Date.now()) {
 // Workers that go quiet are noticed even when nothing else happens.
 const healthTimer = setInterval(() => { try { pump(); } catch (e) { console.error('runner health', e); } }, 5000);
 healthTimer.unref?.();
+
+/** A founder removes a worker: credentials cleared, and the checks it held are retried on another runner. */
+export function removeRunner(id) {
+  const [before] = revokeRunner(id);
+  const open = L.openForRunner.all(before.id);
+  for (const l of open) lose(l, 'The server running it was removed.');
+  setImmediate(pump);
+  return { before, moved: open.length };
+}
+
+/**
+ * After a main server restart, checks that were handed to workers are still running there (or waiting for the
+ * worker's next check-in). Put them back in place, so the store counts as busy (no second check of the same
+ * store), the worker's slots stay counted, and the run shows as running. A lease whose run can't be restored
+ * (it was stopped meanwhile) is cancelled, so the worker drops it.
+ */
+const restoreRun = db.prepare("UPDATE runs SET status = ?, error = NULL WHERE id = ? AND status = 'error' AND error = 'Interrupted by restart'");
+export function restoreRemote() {
+  let n = 0;
+  for (const l of L.open.all()) {
+    if (remote.has(l.run_id)) continue;
+    let job, spec;
+    try { job = jobOf(l); spec = JSON.parse(l.spec_json); } catch { L.finish.run('cancelled', l.id); continue; }
+    if (restoreRun.run(l.state === 'leased' ? 'running' : 'queued', l.run_id).changes !== 1) { L.finish.run('cancelled', l.id); continue; }
+    remote.set(l.run_id, { job, runnerId: l.runner_id });
+    live.set(l.run_id, { phase: l.state === 'leased' ? 'open' : 'queued', kind: job.kind, disabled: spec.disabled || [], rec: null });
+    if (job.seqNo > seq) seq = job.seqNo;
+    n++;
+  }
+  return n;
+}
+restoreRemote();
