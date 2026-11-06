@@ -187,3 +187,29 @@ export function appHealth(store) {
     },
   };
 }
+
+/**
+ * For the cross-store early warning: the apps on the store's latest check, and the ones whose code changed
+ * since the check before (new script files, or new content at the same address). An app that is new on the
+ * store is not a code change. Theme, Shopify and Tharam files are left out.
+ */
+export function appChanges(store) {
+  let storeHost;
+  try { storeHost = new URL(store.url).host; } catch { storeHost = ''; }
+  const runs = recentRuns(store.id).slice(0, 2);
+  if (!runs.length) return { runId: null, apps: [], changed: [] };
+  const skip = (a) => ['theme', 'shopify', 'tharam'].includes(a.kind) || !a.scripts.length;
+  const now = appsIn(runs[0], storeHost);
+  const prev = runs[1] ? appsIn(runs[1], storeHost) : null;
+  const reachedPrev = runs[1] ? new Set(Object.keys(runs[1].scripts.pages)) : new Set();
+  const apps = [...now.values()].filter((a) => !skip(a));
+  const changed = [];
+  for (const a of apps) {
+    const before = prev?.get(a.key);
+    if (!before || ![...a.pages].some((pg) => reachedPrev.has(pg))) continue;
+    const keys = [...a.keys];
+    const files = [...a.scripts.filter((u, i) => !before.keys.has(keys[i])), ...updatedFiles(a, before)];
+    if (files.length) changed.push({ key: a.key, name: a.name, kind: a.kind, files });
+  }
+  return { runId: runs[0].id, apps: apps.map((a) => ({ key: a.key, name: a.name, kind: a.kind })), changed };
+}

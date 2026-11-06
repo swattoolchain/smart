@@ -63,7 +63,7 @@ function footer() {
     ${col('Features', PRODUCTS.map((p) => [`/features/${p.slug}`, p.name]).concat([['/checks', 'Every check']]))}
     ${col('Platforms', PLATFORMS.slice(0, 6).map((p) => [`/platforms/${p.slug}`, p.name]).concat([['/platforms', 'All platforms']]))}
     ${col('Marketplaces', MARKETPLACES.map((m) => [`/marketplaces/${m.slug}`, m.name]))}
-    ${col('Company', [['/commerce-assurance', 'Why Tharam'], ['/managed', 'Managed service'], ['/sale-ready', 'Black Friday readiness'], ['/pricing', 'Pricing'], ['/demo', 'Book a demo'], ['/bot', 'Our test browser'], ['mailto:hello@tharam.store', 'Contact'], ['/de', 'Deutsch']])}
+    ${col('Company', [['/commerce-assurance', 'Why Tharam'], ['/managed', 'Managed service'], ['/sale-ready', 'Black Friday readiness'], ['/pricing', 'Pricing'], ['/demo', 'Book a demo'], ['/bot', 'Our test browser'], ['mailto:hello@tharam.store', 'Contact'], ['/de', 'Deutsch'], ['/fr', 'Français'], ['/es', 'Español']])}
     </div><div class="wrap sf-legal"><span>© 2026 Tharam</span><span><a href="/privacy">Privacy</a><a href="/terms">Terms</a></span></div></footer>`;
 }
 
@@ -78,11 +78,12 @@ const SCRIPT = `<script>
   var mb=document.getElementById('menu-toggle');
   if(mb)mb.addEventListener('click',function(){var o=document.body.classList.toggle('menu-open');mb.setAttribute('aria-expanded',String(o));});
   var f=document.getElementById('check-form');
-  if(f)f.addEventListener('submit',async function(e){e.preventDefault();var err=document.getElementById('check-err'),btn=f.querySelector('button'),url=f.url.value.trim();err.textContent='';
-    if(!url){err.textContent='Enter your store address, like yourstore.com';return;}
-    btn.disabled=true;btn.textContent='Starting…';
-    try{var r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url})});var j=await r.json();if(!r.ok)throw new Error(j.error||'Could not start the check');location.href='/scan/'+j.runId;}
-    catch(x){err.textContent=x.message;btn.disabled=false;btn.textContent='Run free check';}});
+  // Pages in other languages give their own words in data-empty, data-starting and data-failed.
+  if(f)f.addEventListener('submit',async function(e){e.preventDefault();var err=document.getElementById('check-err'),btn=f.querySelector('button'),url=f.url.value.trim(),label=btn.textContent;err.textContent='';
+    if(!url){err.textContent=f.dataset.empty||'Enter your store address, like yourstore.com';return;}
+    btn.disabled=true;btn.textContent=f.dataset.starting||'Starting…';
+    try{var r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:url})});var j=await r.json();if(!r.ok)throw new Error(j.error||f.dataset.failed||'Could not start the check');location.href='/scan/'+j.runId;}
+    catch(x){err.textContent=x.message;btn.disabled=false;btn.textContent=label;}});
   [].slice.call(document.querySelectorAll('[data-tabs]')).forEach(function(t){t.addEventListener('click',function(e){var b=e.target.closest('[data-tab]');if(!b)return;
     [].slice.call(t.querySelectorAll('[data-tab]')).forEach(function(x){x.setAttribute('aria-selected',String(x===b));});
     [].slice.call(t.querySelectorAll('[data-pane]')).forEach(function(p){p.hidden=p.dataset.pane!==b.dataset.tab;});});});

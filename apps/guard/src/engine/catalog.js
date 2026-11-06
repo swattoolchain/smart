@@ -1,4 +1,5 @@
 import { cleanCodes } from './discount.js';
+import { cleanPriceRules } from './pricing.js';
 /**
  * The test suite catalog: every check belongs to one group, and merchants switch groups on or off per store.
  * `run`: 'journeys' groups run on every scheduled journey test; 'full' groups run on the daily full check.
@@ -15,6 +16,8 @@ export const GROUPS = [
     description: 'Picking a different size or colour selects it in the product form.', checks: ['fn.variant'] },
   { key: 'journey.checkout', label: 'Cart and checkout', run: 'journeys', area: 'Shopping journey',
     description: 'The cart lists the item and checkout opens. Stops before payment, then empties the cart.', checks: ['fn.cart', 'fn.checkout'] },
+  { key: 'pricing.journey', label: 'Prices stay the same', run: 'journeys', area: 'Shopping journey',
+    description: 'The price on the product page is what the cart and checkout ask for. Also checks your own price rules, like “3 of this product cost 1,299 each”. Add rules under Test suite → Price rules.', checks: ['fn.price', 'fn.price.'] },
   { key: 'sale.discount', label: 'Discount codes', run: 'full', area: 'Shopping journey',
     description: 'Your sale codes applied to a real cart: the price really drops, by the amount you expect. Nothing is bought; the cart is emptied. Add codes under Test suite → Discount codes.', checks: ['fn.discount.'] },
   { key: 'security.scripts', label: 'Script watch', run: 'journeys', area: 'Security',
@@ -47,6 +50,12 @@ export const GROUPS = [
   { key: 'catalog.variants', label: 'Every variant can be added to the cart', run: 'full', area: 'Catalog and products',
     description: 'Each size, colour and option you sell is added to a cart once, then the cart is emptied. Finds variants shown as in stock that the cart refuses, and products the cart can no longer find. Nothing is bought. Big catalogs are covered over several checks (up to 100 variants each time).',
     checks: ['fn.variants'] },
+  { key: 'security.tamper', label: 'Product and discount tampering', run: 'full', area: 'Security',
+    description: 'Someone with access to your admin can quietly make products free, cut every price, swap a product for another, or create a big discount code. Each full check compares your products, prices and Shopify discount codes with the last one and shows what changed, before and after.',
+    checks: ['sec.tamper'] },
+  { key: 'security.domain', label: 'Domain, certificate and email records', run: 'full', area: 'Security',
+    description: 'Your own domain name and its padlock certificate are not about to run out, and nobody quietly changed where your store address, your email or your domain\'s name servers point. Also checks SPF and DMARC, which stop others sending email as your store. Shows before and after for any change.',
+    checks: ['sec.domain.'] },
   { key: 'ai.visual', label: 'AI visual review', run: 'full', area: 'AI review', ai: true,
     description: 'An AI reviewer looks at your pages on desktop and mobile like a shopper would, catching overlapping or cut-off text, broken images, popups covering the buy button, and layout problems.',
     checks: ['ai.visual'] },
@@ -58,6 +67,12 @@ export const GROUPS = [
     checks: ['ai.copy'] },
   { key: 'visual', label: 'Visual changes', run: 'full', area: 'Regression',
     description: 'Screenshots of key pages on desktop and mobile compared with the look you approved.', checks: ['nf.visual'] },
+  { key: 'security.spam', label: 'Spam links', run: 'full', area: 'Security',
+    description: 'Hacked stores are used to sell links: casino, pill and replica-goods links slipped into the theme, often hidden from shoppers so only Google sees them. We read your homepage and a product page for spam words and hidden links to other websites.',
+    checks: ['sec.spam'] },
+  { key: 'security.deface', label: 'Defacement', run: 'full', area: 'Security',
+    description: 'Whether your homepage and product page still show your own store, not a hacker\'s message or a replaced page. Compared with the look you approved.',
+    checks: ['sec.deface'] },
   // Regional packs run only for stores that sell in those markets (Store settings → Where you sell).
   { key: 'law.de', label: 'Germany and Austria legal pack', run: 'full', area: 'Laws where you sell', markets: ['DE', 'AT'],
     description: 'Impressum, right of withdrawal, the new “Vertrag widerrufen” button, privacy policy and terms, VAT and shipping next to prices, unit prices (Grundpreis), and outdated EU dispute (ODR) links.',
@@ -102,6 +117,7 @@ export const FULL_INTERVALS = [720, 1440, 10080];
 export function normalizeConfig(input = {}, base = {}) {
   const cfg = { ...base };
   if (input.discountCodes !== undefined) cfg.discountCodes = cleanCodes(input.discountCodes);
+  if (input.priceRules !== undefined) cfg.priceRules = cleanPriceRules(input.priceRules);
   // Onboarding progress: the welcome flow and the first-report tour.
   if (typeof input.onboarded === 'boolean') cfg.onboarded = input.onboarded;
   if (typeof input.toured === 'boolean') cfg.toured = input.toured;

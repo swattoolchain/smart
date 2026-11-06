@@ -19,6 +19,7 @@ const PROBLEM = {
   'sec.mining': "a script is using shoppers' devices to mine cryptocurrency",
   'sec.frames': 'your store loads a hidden page from a known malicious website',
   'sec.scripts.forms': 'a script is reading what shoppers type and sending it to another website',
+  'sec.deface': 'your store shows a hacker\'s message instead of your shop',
 };
 
 export function scoreChecks(checks) {

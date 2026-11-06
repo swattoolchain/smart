@@ -12,6 +12,51 @@
       ${f.lines && f.lines.length ? `<pre class="diff">${f.lines.map((l) => `<span class="${l.t === '+' ? 'd-add' : 'd-del'}">${l.t} ${String(l.n).padStart(4, ' ')}  ${esc(l.s)}</span>`).join('')}${f.more ? `<span class="muted" style="display:block">… ${f.more} more changed lines</span>` : ''}</pre>` : `<p class="muted" style="margin:6px 0">${f.text === false ? 'Not a text file, so there are no lines to show.' : 'No lines to show.'}</p>`}</details>`).join('')}${ev.moreFiles ? `<p class="muted">… and ${ev.moreFiles} more files</p>` : ''}</div>`;
   }
 
+  // Guided restore (S4): the clean copy of each changed theme file, to copy or download and paste back in Shopify.
+  // Read-only: Tharam never changes the theme itself.
+  async function themeRestore(el, storeId, ev) {
+    let clean;
+    try { clean = (await api(`/api/stores/${storeId}/theme/clean`)).clean; } catch { return; }
+    if (!clean) { el.innerHTML = '<p class="muted">We keep a clean copy of your theme from each check where nothing changed. There isn\'t one yet, so use the older versions in Shopify\'s code editor to undo a change.</p>'; return; }
+    const byName = new Map(clean.files.map((f) => [f.filename, f]));
+    const rows = (ev?.files || []).map((f) => {
+      const c = byName.get(f.filename);
+      const act = c && c.stored
+        ? `<button type="button" class="btn small secondary" data-clean-copy="${esc(f.filename)}">${icon('copy', 14)}Copy clean version</button> <button type="button" class="btn small secondary" data-clean-get="${esc(f.filename)}">${icon('download', 14)}Download</button>`
+        : c ? '<span class="muted">Not a text file: restore it from the older versions in Shopify\'s code editor.</span>'
+          : '<span class="muted">Not in the clean copy: if you didn\'t add it, delete this file in the code editor.</span>';
+      return `<li><code>${esc(f.filename)}</code><div class="tr-act">${act}</div></li>`;
+    }).join('');
+    el.innerHTML = `<h4>Undo a change you didn't make</h4>
+      <p class="muted">Clean copy of “${esc(clean.themeName || 'your theme')}” from ${esc(exact(clean.savedAt))}, the last check where nothing had changed.${clean.sameTheme ? '' : ' It is from a different theme than the one live now, so compare carefully before pasting.'}</p>
+      <ol class="steps"><li>In Shopify admin, open <b>Online Store → Themes</b>, then <b>⋯ → Edit code</b> on your live theme.</li><li>Open the file below, select all its code and paste the clean version over it.</li><li>Press <b>Save</b>. Then run a full check here to confirm the theme matches the clean copy again.</li><li>If you didn't make the change, also change your Shopify password and review your staff accounts and apps.</li></ol>
+      <ul class="tr-files">${rows}</ul>
+      <p><button type="button" class="btn small secondary" data-clean-zip>${icon('download', 14)}Download the whole clean copy (.zip)</button></p>`;
+    const fileOf = async (name) => api(`/api/stores/${storeId}/theme/clean/file?name=${encodeURIComponent(name)}`);
+    $$('[data-clean-copy]', el).forEach((b) => (b.onclick = async () => { try { copyText((await fileOf(b.dataset.cleanCopy)).content); } catch (e) { toast(e.message, 'error'); } }));
+    $$('[data-clean-get]', el).forEach((b) => (b.onclick = async () => {
+      try { const f = await fileOf(b.dataset.cleanGet); saveBlob(new Blob([f.content], { type: 'text/plain' }), f.filename.split('/').pop()); } catch (e) { toast(e.message, 'error'); }
+    }));
+    const z = $('[data-clean-zip]', el);
+    if (z) z.onclick = async () => {
+      try {
+        const headers = EMB ? { Authorization: `Bearer ${await window.shopify.idToken()}` } : {};
+        const r = await fetch(`/api/stores/${storeId}/theme/clean.zip`, { headers, credentials: 'same-origin' });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Download failed. Try again.');
+        const name = (/filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'theme-clean.zip';
+        saveBlob(await r.blob(), name);
+      } catch (e) { toast(e.message, 'error'); }
+    };
+  }
+  function saveBlob(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
   const S = { me: null, admin: false, features: new Set(), stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
   /** Whether a feature is switched on in the founder console (the server enforces it too). */
   const feat = (k) => S.features.has(k);
@@ -215,6 +260,7 @@
     lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
     close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
     copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
+    download: '<path d="M12 4.5v11"/><path d="m7.5 11 4.5 4.5 4.5-4.5"/><path d="M5 19.5h14"/>',
     layers: '<path d="m12 4 8.5 4.5L12 13 3.5 8.5z"/><path d="m3.5 12.5 8.5 4.5 8.5-4.5"/><path d="m3.5 16.5 8.5 4.5 8.5-4.5"/>',
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.6 3.5 5.4 3.5 8.5s-1.1 5.9-3.5 8.5c-2.4-2.6-3.5-5.4-3.5-8.5s1.1-5.9 3.5-8.5z"/>',
   };
@@ -409,6 +455,8 @@
       ${feat('sale_report') ? item(`${base}/sale`, 'sparkle', 'Sale readiness', at('sale')) : ''}
       ${feat('app_health') ? item(`${base}/apps`, 'apps', 'App health', at('apps')) : ''}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
+      ${feat('security_checklist') ? item(`${base}/security`, 'shield', 'Security checklist', at('security')) : ''}
+      ${feat('incident_mode') ? item(`${base}/incident`, 'lock', 'Incident mode', at('incident'), cur.incident ? '<span class="badge" aria-label="Incident mode is on">On</span>' : '') : ''}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
       ${item(`${base}/monitoring`, 'monitoring', 'Monitoring', at('monitoring'))}
@@ -491,7 +539,7 @@
       if (!silent) { main.innerHTML = skeleton(); window.scrollTo(0, 0); }
       const ctx = { alive, main, r };
       // Pages of features that are switched off open the overview instead.
-      const PAGE_FEATURE = { sale: 'sale_report', apps: 'app_health' };
+      const PAGE_FEATURE = { sale: 'sale_report', apps: 'app_health', security: 'security_checklist', incident: 'incident_mode' };
       if (r.store) await ((!PAGE_FEATURE[r.module] || feat(PAGE_FEATURE[r.module])) && STORE_PAGES[r.module] || STORE_PAGES.overview)(ctx, S.stores.find((s) => s.id === r.store));
       else await PAGES[r.page](ctx);
       if (!silent && alive()) { const h1 = main.querySelector('h1'); document.title = `${h1 ? h1.textContent + ' – ' : ''}Tharam`; }
@@ -558,7 +606,7 @@
   function storeHead(s, title, { actions = '', crumb = '', meta = '' } = {}) {
     const name = esc(s.name || host(s.url));
     return `<div class="page-head"><div><div class="crumbs">${crumb || `<a href="#/s/${s.id}">${name}</a>`}</div><h1>${esc(title)}</h1>${meta ? `<div class="meta">${meta}</div>` : ''}</div>
-      ${actions ? `<div class="actions">${actions}</div>` : ''}</div>${s.blocked ? `<div class="notice warn-n"><p>${icon('lock', 16)} ${esc(s.blocked)} <a href="#/account/billing">See your plan</a></p></div>` : s.config?.saleUntil ? `<div class="notice sale-n"><p><b>Sale mode</b> is on until ${esc(dateOnly(s.config.saleUntil + ' 23:59:59'))}: shopping checks every 30 minutes and a full check every 6 hours${s.config.discountCodes?.length ? `, including your ${s.config.discountCodes.length === 1 ? 'discount code' : 'discount codes'}` : ''}.</p></div>` : ''}`;
+      ${actions ? `<div class="actions">${actions}</div>` : ''}</div>${s.incident && !location.hash.endsWith('/incident') ? `<div class="notice incident-n"><p><b>Incident mode is on</b> until ${esc(new Date(s.incident.endsAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}: checks every 10 minutes and alerts to your team. <a href="#/s/${s.id}/incident">Open incident mode</a></p></div>` : ''}${s.blocked ? `<div class="notice warn-n"><p>${icon('lock', 16)} ${esc(s.blocked)} <a href="#/account/billing">See your plan</a></p></div>` : s.config?.saleUntil ? `<div class="notice sale-n"><p><b>Sale mode</b> is on until ${esc(dateOnly(s.config.saleUntil + ' 23:59:59'))}: shopping checks every 30 minutes and a full check every 6 hours${s.config.discountCodes?.length ? `, including your ${s.config.discountCodes.length === 1 ? 'discount code' : 'discount codes'}` : ''}.</p></div>` : ''}`;
   }
   const openStore = (s) => `<a class="icon-btn bordered" href="${esc(s.url)}" target="_blank" rel="noopener" data-tip="Open store" aria-label="Open store in a new tab">${icon('external', 17)}</a>`;
   // Every way of starting a test goes through the Run validations page, so nothing starts without a preview.
@@ -574,14 +622,15 @@
   // What a run does, in order. Mirrors src/live.js on the server.
   const PHASES = [
     { key: 'open', label: 'Open your store', sub: 'On a desktop and a phone-sized screen' },
-    { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'errors.js', 'sale.discount'] },
+    { key: 'journey', label: 'Shop like a customer', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout', 'pricing.journey', 'errors.js', 'sale.discount'] },
     { key: 'quality', label: 'Measure speed, SEO and accessibility', groups: ['speed', 'seo', 'a11y', 'links', 'policies'], full: true },
     { key: 'regional', label: 'Check the laws where you sell', groups: ['law.de', 'law.cookies', 'access.law', 'law.us'], full: true },
     { key: 'visual', label: 'Compare screenshots with the approved look', groups: ['visual'], full: true },
     { key: 'catalog', label: 'Check every product', groups: ['catalog', 'ai.copy'], full: true },
+    { key: 'domain', label: 'Check your domain, certificate and email records', groups: ['security.domain'], full: true },
     { key: 'ai', label: 'AI review of how pages look', groups: ['ai.visual'], full: true },
   ];
-  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1 };
+  const EST = { 'journey.core': 14, 'journey.collection': 4, 'journey.search': 5, 'journey.variant': 4, 'journey.checkout': 8, 'pricing.journey': 3, 'errors.js': 1, speed: 24, seo: 5, a11y: 12, links: 14, policies: 4, catalog: 10, 'ai.visual': 20, 'ai.copy': 15, visual: 14, 'sale.discount': 10, 'law.de': 10, 'law.cookies': 12, 'access.law': 18, 'law.us': 1, 'security.domain': 3 };
   const estimate = (keys) => {
     const sec = 8 + keys.reduce((n, k) => n + (EST[k] || 5), 0);
     return sec < 60 ? 'under a minute' : `about ${Math.ceil(sec / 60)} minutes`;
@@ -959,10 +1008,10 @@
   STORE_PAGES.suite = async (ctx, s) => {
     S.catalog = S.catalog || (await api('/api/catalog'));
     if (!ctx.alive()) return;
-    const tab = ['product', 'codes'].includes(ctx.r.a) ? ctx.r.a : null;
+    const tab = ['product', 'codes', ...(feat('price_checks') ? ['prices'] : [])].includes(ctx.r.a) ? ctx.r.a : null;
     const base = `#/s/${s.id}/suite`;
     const shopify = !s.platform || /shopify/i.test(s.platform);
-    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes']], tab);
+    const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes'], ...(feat('price_checks') ? [['prices', 'Price rules']] : [])], tab);
     if (!tab) {
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id, saleTraffic: !!s.config.saleTraffic })}</form></div>`;
       const form = $('#suite');
@@ -971,6 +1020,34 @@
         onDiscard: () => render(),
       });
       form.addEventListener('change', (e) => { e.target.closest('.check-row')?.classList.toggle('off', !e.target.checked); mark(); });
+      return;
+    }
+    if (tab === 'prices') {
+      const limit = S.license?.limits?.priceRules ?? 10;
+      const rules = s.config.priceRules?.length ? s.config.priceRules : [{ product: '', variant: '', quantity: 1, price: '' }];
+      const row = (r, i) => `<div class="code-row price-rule"><div class="field"><label for="pr${i}">Product</label><input id="pr${i}" name="product" value="${esc(r.product)}" placeholder="Product link or handle, e.g. cotton-kurta" maxlength="300" autocomplete="off" spellcheck="false"></div>
+        <div class="field"><label for="pv${i}">Variant</label><input id="pv${i}" name="variant" value="${esc(r.variant || '')}" placeholder="Optional, e.g. Large" maxlength="100"></div>
+        <div class="field"><label for="pq${i}">Quantity</label><input id="pq${i}" name="quantity" type="number" min="1" max="99" value="${r.quantity ?? 1}"></div>
+        <div class="field"><label for="pp${i}">Price each</label><input id="pp${i}" name="price" inputmode="decimal" value="${r.price ?? ''}" placeholder="e.g. 1299"></div>
+        <button type="button" class="icon-btn" data-rm aria-label="Remove rule" data-tip="Remove">${icon('trash', 16)}</button></div>`;
+      ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}
+        <div class="form-section" style="border-top:0;padding-top:0"><div><h3>Prices you expect</h3><p class="explain">Every check already compares the price on the product page with what the cart and checkout ask for. Here you can add your own rules, like “3 of this kurta cost 1,299 each” for quantity or volume pricing. Each rule puts the product in a fresh cart and checks the price. Nothing is bought, and the cart is emptied.</p></div>
+          <div class="controls"><form id="prules">${rules.map(row).join('')}</form>
+            <div class="inline-row"><button type="button" class="btn secondary small" id="addr">${icon('add', 15)}Add a rule</button><span class="muted" style="font-size:12.5px">Your plan includes ${plural(limit, 'rule')} per store.</span></div>
+            <p class="error-msg" id="pr-err" role="alert"></p>
+            ${s.platform && !/shopify/i.test(s.platform) ? '<p class="hint">Price rules are checked on Shopify stores for now.</p>' : ''}</div></div></div>`;
+      const form = $('#prules');
+      const mark = savebar($('.main-inner', ctx.main), {
+        onSave: async () => {
+          const list = $$('.price-rule', form).map((r) => ({ product: r.querySelector('[name=product]').value.trim(), variant: r.querySelector('[name=variant]').value.trim() || null, quantity: r.querySelector('[name=quantity]').value, price: r.querySelector('[name=price]').value.trim() })).filter((x) => x.product || x.price);
+          try { await api(`/api/stores/${s.id}`, { method: 'PATCH', body: { config: { priceRules: list } } }); $('#pr-err').textContent = ''; } catch (ex) { $('#pr-err').textContent = ex.message; throw ex; }
+          await loadStores();
+        },
+        onDiscard: () => render(),
+      });
+      form.addEventListener('input', mark);
+      form.addEventListener('click', (e) => { const b = e.target.closest('[data-rm]'); if (!b) return; if ($$('.price-rule', form).length > 1) b.closest('.price-rule').remove(); else b.closest('.price-rule').querySelectorAll('input').forEach((i) => (i.value = i.name === 'quantity' ? '1' : '')); mark(); });
+      $('#addr').onclick = () => { if ($$('.price-rule', form).length >= limit) return toast(`Your plan includes ${plural(limit, 'rule')} per store`, 'error'); form.insertAdjacentHTML('beforeend', row({ product: '', variant: '', quantity: 1, price: '' }, Date.now())); mark(); form.lastElementChild.querySelector('input').focus(); };
       return;
     }
     if (tab === 'codes') {
@@ -1284,7 +1361,7 @@
       if (a.status === 'new') what.push(`First seen ${time(a.firstSeenAt)}.`);
       return `<tr class="app-row status-${a.status}" data-app="${esc(a.key)}">
         <td><span class="cell-main">${esc(a.name)}</span><div class="cell-sub">${esc(KIND[a.kind] || '')}</div></td>
-        <td><span class="pill ${cls}">${label}</span></td>
+        <td><span class="pill ${cls}">${label}</span>${(d.earlyWarnings || []).some((w) => w.appKey === a.key) ? '<div class="cell-sub">Changed on many stores</div>' : ''}</td>
         <td>${a.pages.map((p) => PG[p] || p).join(', ') || '–'}</td>
         <td class="num">${a.phone.bytes ? `${kb(a.phone.bytes)}<div class="cell-sub">about ${a.phone.slowS < 0.1 ? '<0.1' : a.phone.slowS} s on slow 4G</div>` : '–'}</td>
         <td class="num">${a.errors.length || '–'}</td>
@@ -1297,6 +1374,7 @@
     const t = d.totals;
     ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'App health')}${intro}
       <p class="muted" style="margin:-6px 0 14px">From the check ${time(d.checkedAt)}${d.compared ? `, compared with the one before (${time(d.comparedAt)})` : ''}.${d.phone ? ` Phone cost measured ${time(d.phone.at)}.` : ' Phone cost appears after the next full check.'}</p>
+      ${(d.earlyWarnings || []).map((w) => `<div class="notice early-warning" data-app="${esc(w.appKey)}"><p><b>Early warning: ${esc(w.appName)} changed its code on ${w.stores} stores we watch</b> (${time(w.at)}). ${w.changedHere ? 'The new code is already on your store. If something looks or works differently since then, this is the likely reason.' : 'It hasn\'t reached your store yet and may arrive soon.'} We keep checking and will tell you if buying breaks.</p></div>`).join('')}
       ${trouble.length ? `<div class="notice"><p>${trouble.map((a) => `<b>${esc(a.name)}</b> ${TROUBLE[a.status]}`).join('; ')}. Details below.</p></div>` : '<div class="notice ok"><p>No app is causing errors, every app from the last check still loads, and app widgets show for shoppers.</p></div>'}
       <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))">
         <div class="figure"><b>${t.apps}</b><span>apps and outside services</span></div>
@@ -1306,6 +1384,145 @@
         <tbody>${d.apps.map(row).join('')}</tbody></table></div>
         ${d.unattributedErrors ? `<p class="muted" style="margin:10px 4px 0">${plural(d.unattributedErrors, 'script error')} could not be traced to one app. See the latest report's checks.</p>` : ''}</section>
       ${tharamRow}</div>`;
+  };
+
+  // ---------- Security checklist (S11) ----------
+  STORE_PAGES.security = async (ctx, s) => {
+    let d = await api(`/api/stores/${s.id}/security-checklist`);
+    if (!ctx.alive()) return;
+    const day = (iso) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    const STATE = { done: ['healthy', 'Done'], due: ['warning', 'Review again'], todo: ['', 'To do'] };
+    const draw = () => {
+      const color = d.score >= 90 ? 'var(--pass)' : d.score >= 60 ? 'var(--warn)' : 'var(--fail)';
+      const rows = d.items.map((i) => `<li class="sc-item sc-${i.state}" data-item="${esc(i.key)}">
+        <label class="sc-tick"><input type="checkbox" ${i.state === 'done' ? 'checked' : ''} aria-label="${esc(i.title)}"><span class="sc-box">${icon('check', 15)}</span></label>
+        <div class="sc-body"><div class="sc-head"><b>${esc(i.title)}</b><span class="pill ${STATE[i.state][0]}">${STATE[i.state][1]}</span></div>
+          <p class="sc-why">${esc(i.why)}</p>
+          <p class="sc-how"><b>How:</b> ${esc(i.how)}</p>
+          <p class="sc-meta muted">${i.doneAt ? `Ticked ${day(i.doneAt)} · ${i.state === 'due' ? 'was due again' : 'review again by'} ${day(i.dueAt)}` : `Worth ${i.weight} points · confirm again every ${i.every >= 365 ? 'year' : `${Math.round(i.every / 30)} months`}`}${i.state === 'due' ? ' · tick it again once you have checked' : ''}</p></div></li>`).join('');
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Security checklist')}
+        <p class="lede-sm">Most store break-ins start with a stolen password, an old staff account or a forgotten app. Tharam can't see inside your admin, so these are things you do and tick off here. Reviews come due again every few months.</p>
+        <section class="panel sc-summary"><div class="dial" style="--v:${d.score};--c:${color}"><div><span><b>${d.score}</b><small>of 100</small></span></div></div>
+          <div><h2>${esc(d.grade)}</h2><p class="muted">${d.counts.done} of ${d.counts.total} done${d.counts.due ? ` · ${d.counts.due} to review again` : ''}${d.counts.todo ? ` · ${d.counts.todo} to do` : ''}.</p>
+          <label class="toggle-line" style="margin-top:10px"><span class="switch"><input type="checkbox" id="sc-remind" ${d.reminders ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Email me reminders</b><span>At most once a month, only while something is open. Sent to ${esc(s.alert_email || 'your email')}.</span></span></label></div></section>
+        <section class="panel"><h2>Checklist</h2><ul class="sc-list">${rows}</ul></section></div>`;
+      $$('.sc-item input', ctx.main).forEach((box) => box.addEventListener('change', async () => {
+        const key = box.closest('[data-item]').dataset.item;
+        box.disabled = true;
+        try { d = await api(`/api/stores/${s.id}/security-checklist/${key}`, { method: 'POST', body: { done: box.checked } }); if (ctx.alive()) draw(); }
+        catch (ex) { box.checked = !box.checked; box.disabled = false; toast(ex.message, 'error'); }
+      }));
+      $('#sc-remind').addEventListener('change', async (e) => {
+        try { d = await api(`/api/stores/${s.id}/security-checklist`, { method: 'PATCH', body: { reminders: e.target.checked } }); toast(d.reminders ? 'Reminders on' : 'Reminders off'); }
+        catch (ex) { e.target.checked = !e.target.checked; toast(ex.message, 'error'); }
+      });
+    };
+    draw();
+  };
+
+  // ---------- Incident mode (S12) ----------
+  STORE_PAGES.incident = async (ctx, s) => {
+    let d = await api(`/api/stores/${s.id}/incident`);
+    if (!ctx.alive()) return;
+    const when = (ts) => new Date(/Z$|[+-]\d\d:\d\d$/.test(ts) ? ts : ts.replace(' ', 'T') + 'Z').toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const VLABEL = { healthy: 'Healthy', warning: 'Needs attention', critical: 'Broken', locked: 'Password', blocked: 'Blocked' };
+    const refreshStore = async () => { try { const r = await api(`/api/stores/${s.id}`); Object.assign(s, r.store || r); const i = S.stores.findIndex((x) => x.id === s.id); if (i >= 0) S.stores[i] = { ...S.stores[i], incident: s.incident }; sidebar({ store: s.id, module: 'incident' }); } catch {} };
+    const changesHtml = (c) => {
+      if (!c) return '';
+      if (!c.healthy) return `<p class="muted">${esc(c.note)}</p>`;
+      const rows = [
+        ...(c.broken || []).map((b) => `<li><span class="sev ${b.status === 'fail' ? 'fail' : 'warn'}">${b.status === 'fail' ? 'Broken' : 'Check'}</span><span><b>${esc(b.title)}</b><span class="d">${esc(b.detail)}</span>${b.fix ? `<span class="fix-inline">Fix: ${esc(b.fix)}</span>` : ''}</span></li>`),
+        ...(c.theme ? [`<li><span class="sev warn">Theme</span><span><b>Published theme changed</b><span class="d">${esc(c.theme.before)} → ${esc(c.theme.after)}</span></span></li>`] : []),
+        ...(c.products ? [`<li><span class="sev warn">Products</span><span><b>${c.products.totals.changed} edited, ${c.products.totals.added} added, ${c.products.totals.removed} removed${c.products.totals.price ? ` · ${c.products.totals.price} with new prices` : ''}</b>${c.products.examples.map((x) => `<span class="d">${esc(x.title)}: ${esc(x.detail)}</span>`).join('')}</span></li>`] : []),
+        ...(c.looks || []).map((l) => `<li><span class="sev warn">Looks</span><span><b>${esc(l.key.replace('-', ' on '))} looks different</b><span class="d">${l.ratio}% of the page changed</span></span></li>`),
+        ...(c.alerts || []).map((a) => `<li><span class="sev fail">Alert</span><span><b>${esc(a.title)}</b><span class="d">${esc(when(a.at))} · ${esc(a.message || '')}</span></span></li>`),
+      ];
+      return `<p class="sub">Compared with the last healthy check, ${esc(when(c.healthy.created_at))}${c.latest ? ` and the latest check, ${esc(when(c.latest.created_at))}` : ''}. <a href="#/s/${s.id}/reports/${c.latest?.id || ''}">Open the latest report</a></p>
+        ${rows.length ? `<ul class="sale-items inc-changes">${rows.join('')}</ul>` : `<p class="muted">${esc(c.note || 'Nothing we check has changed since then.')}</p>`}`;
+    };
+    const draw = () => {
+      const a = d.active;
+      if (!a) {
+        ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Incident mode')}
+          <p class="lede-sm">Think your store was hacked, or something just broke badly? Switch on incident mode. For ${d.hours} hours we check your store every ${d.everyMinutes} minutes, show what changed since the last healthy check, give you a recovery checklist, and send every alert to the people you add below.</p>
+          <section class="panel inc-start"><h2>Start incident mode</h2>
+            <form id="inc-form" class="stack">
+              <div class="field"><label for="inc-reason">What happened? <span class="muted">(optional, goes in the emails)</span></label><input id="inc-reason" maxlength="500" placeholder="For example: prices changed by themselves, strange app installed"></div>
+              <div class="field"><label for="inc-team">Who else should get alerts? <span class="muted">(up to 5 emails, optional)</span></label><input id="inc-team" placeholder="developer@example.com, partner@example.com"></div>
+              <div><button class="btn danger" id="inc-go" type="submit">${icon('lock', 16)}Start incident mode</button></div>
+            </form></section>
+          <section class="panel"><h2>What you'll be asked to do</h2><ol class="inc-steps-preview">${d.steps.map((x) => `<li><b>${esc(x.title)}.</b> <span class="muted">${esc(x.how)}</span></li>`).join('')}</ol></section>
+          ${d.history.length ? `<section class="panel"><h2>Earlier incidents</h2><ul class="list">${d.history.map((h) => `<li><span>${esc(when(h.startedAt))} → ${esc(when(h.endedAt))}${h.reason ? ` · ${esc(h.reason)}` : ''}</span><span class="muted">${h.stepsDone} of ${h.steps} steps · ${h.endedBy === 'time' ? 'ended after 48 hours' : 'ended by you'}</span></li>`).join('')}</ul></section>` : ''}
+          <section class="panel" id="inc-packet"></section></div>`;
+        $('#inc-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const done = busy($('#inc-go'), 'Starting');
+          try {
+            d = await api(`/api/stores/${s.id}/incident`, { method: 'POST', body: { reason: $('#inc-reason').value, contacts: $('#inc-team').value } });
+            toast('Incident mode is on. A full check has started.');
+            await refreshStore();
+            if (ctx.alive()) draw();
+          } catch (ex) { toast(ex.message, 'error'); done(); }
+        });
+        packetSection();
+        return;
+      }
+      const stepsDone = a.steps.filter((x) => x.doneAt).length;
+      ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Incident mode', { actions: '<button class="btn secondary" id="inc-end">End incident mode</button>' })}
+        <section class="panel inc-on"><div class="inc-head"><span class="pill critical">On</span><h2>Incident mode is on${a.reason ? `: ${esc(a.reason)}` : ''}</h2></div>
+          <p class="muted">Started ${esc(when(a.startedAt))} · ends by itself ${esc(when(a.endsAt))}. Shopping checks every ${d.everyMinutes} minutes; every alert also goes to ${a.contacts.length ? esc(a.contacts.join(', ')) : 'nobody else yet'}.</p>
+          <div class="figures" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+            <div class="figure"><b>${a.runs.length}</b><span>checks since it started</span></div>
+            <div class="figure"><b>${a.runs[0] ? esc(VLABEL[a.runs[0].verdict] || (a.runs[0].status === 'done' ? '–' : 'Running')) : '–'}</b><span>latest check</span></div>
+            <div class="figure"><b>${stepsDone} of ${a.steps.length}</b><span>recovery steps done</span></div></div></section>
+        <section class="panel"><h2>What changed since the last healthy check</h2>${changesHtml(d.changes)}</section>
+        <section class="panel"><h2>Recovery checklist</h2><ul class="sc-list">${a.steps.map((x) => `<li class="sc-item ${x.doneAt ? 'sc-done' : ''}" data-step="${esc(x.key)}">
+            <label class="sc-tick"><input type="checkbox" ${x.doneAt ? 'checked' : ''} aria-label="${esc(x.title)}"><span class="sc-box">${icon('check', 15)}</span></label>
+            <div class="sc-body"><b>${esc(x.title)}</b><p class="sc-how">${esc(x.how)}</p>${x.doneAt ? `<p class="sc-meta muted">Done ${esc(when(x.doneAt))}</p>` : ''}</div></li>`).join('')}</ul></section>
+        <section class="panel"><h2>Team alerts</h2><p class="sub">These people get every alert until incident mode ends, plus the summary at the end.</p>
+          <form id="inc-team-form" class="inline-row"><input id="inc-team" value="${esc(a.contacts.join(', '))}" placeholder="developer@example.com" style="flex:1;min-width:0"><button class="btn secondary" type="submit">Save</button></form></section>
+        <section class="panel"><h2>Checks since it started</h2>${a.runs.length ? `<ul class="list">${a.runs.map((r) => `<li><a href="#/s/${s.id}/reports/${r.id}">${esc(when(r.created_at))} · ${r.kind === 'full' ? 'Full check' : 'Shopping check'}</a><span class="pill ${esc(r.verdict || '')}">${esc(r.status === 'done' ? VLABEL[r.verdict] || r.verdict : r.status)}</span></li>`).join('')}</ul>` : '<p class="muted">The first check starts in a moment.</p>'}</section>
+        <section class="panel" id="inc-packet"></section></div>`;
+      $$('[data-step] input', ctx.main).forEach((box) => box.addEventListener('change', async () => {
+        const key = box.closest('[data-step]').dataset.step;
+        box.disabled = true;
+        try { d = await api(`/api/stores/${s.id}/incident`, { method: 'PATCH', body: { steps: { [key]: box.checked } } }); if (ctx.alive()) draw(); }
+        catch (ex) { box.checked = !box.checked; box.disabled = false; toast(ex.message, 'error'); }
+      }));
+      $('#inc-team-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        try { d = await api(`/api/stores/${s.id}/incident`, { method: 'PATCH', body: { contacts: $('#inc-team').value } }); toast('Saved'); if (ctx.alive()) draw(); }
+        catch (ex) { toast(ex.message, 'error'); }
+      });
+      $('#inc-end').addEventListener('click', async (e) => {
+        if (!confirm('End incident mode? Checks go back to the usual schedule and your team stops getting alerts.')) return;
+        const done = busy(e.currentTarget, 'Ending');
+        try { d = await api(`/api/stores/${s.id}/incident/end`, { method: 'POST' }); toast('Incident mode ended. A summary is on its way.'); await refreshStore(); if (ctx.alive()) draw(); }
+        catch (ex) { toast(ex.message, 'error'); done(); }
+      });
+      packetSection();
+    };
+    // Recovery packet (S17): shown in both states, under everything else.
+    const packetSection = async () => {
+      const box = $('#inc-packet', ctx.main);
+      if (!box) return;
+      let p;
+      try { p = await api(`/api/stores/${s.id}/recovery-packet`); } catch (ex) { box.innerHTML = `<p class="muted">${esc(ex.message)}</p>`; return; }
+      if (!ctx.alive() || !box.isConnected) return;
+      box.innerHTML = `<h2>Recovery packet</h2><p class="sub">Locked out, or think someone else got in? Reset your password first, then send this message to ${p.support ? 'Shopify Support' : 'your platform\'s support'}. It says what changed and when, from our checks.</p>
+        <div class="rp-grid"><div class="rp-reset"><h3>1. Reset your password</h3><ol>${p.reset.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>
+          <p><a class="btn" id="rp-reset" href="${esc(p.reset.url)}" target="_blank" rel="noopener">${icon('lock', 16)}Reset password</a>${p.reset.help ? ` <a class="btn secondary" href="${esc(p.reset.help)}" target="_blank" rel="noopener">Shopify's help</a>` : ''}</p></div>
+        <div class="rp-msg"><h3>2. Send this to ${p.support ? 'Shopify Support' : 'support'}</h3>
+          <div class="field"><label for="rp-subject">Subject</label><input id="rp-subject" readonly value="${esc(p.message.subject)}"></div>
+          <div class="field"><label for="rp-text">Message</label><textarea id="rp-text" readonly rows="14">${esc(p.message.text)}</textarea></div>
+          <p class="inline-row"><button class="btn" type="button" id="rp-copy">${icon('copy', 16)}Copy message</button><a class="btn secondary" id="rp-download" href="/api/stores/${s.id}/recovery-packet.txt" download>Download</a>${p.support ? `<a class="btn secondary" href="${esc(p.support.url)}" target="_blank" rel="noopener">${icon('external', 16)}Contact Shopify Support</a>` : ''}</p></div></div>`;
+      $('#rp-copy').addEventListener('click', async () => {
+        const text = `Subject: ${p.message.subject}\n\n${p.message.text}`;
+        try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into your message to support.'); }
+        catch { const t = $('#rp-text'); t.focus(); t.select(); document.execCommand?.('copy'); toast('Copied. Paste it into your message to support.'); }
+      });
+    };
+    draw();
   };
 
   STORE_PAGES.visual = async (ctx, s) => {
@@ -1472,7 +1689,7 @@
           <span class="area-counts">${a.counts.pass ? `<span class="pill healthy">${a.counts.pass} passed</span>` : ''}${a.counts.warn ? `<span class="pill warning">${a.counts.warn} to check</span>` : ''}${a.counts.fail ? `<span class="pill critical">${a.counts.fail} failed</span>` : ''}${a.counts.skip ? `<span class="pill">${a.counts.skip} skipped</span>` : ''}</span>
           <span class="chev">${icon('chevron', 16)}</span></summary>
           <div class="table-wrap flat"><table class="data"><thead><tr><th style="width:84px">This report</th>${b ? '<th style="width:84px">Before</th>' : ''}<th>Check</th></tr></thead><tbody>
-          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
+          ${a.checks.map((x) => `<tr data-check="${esc(x.id)}" class="${x.change === 'new' || x.change === 'worse' ? 'row-new' : x.change === 'fixed' ? 'row-fixed' : ''}"><td>${stat(x.a)}</td>${b ? `<td>${stat(x.b)}</td>` : ''}<td><span class="cell-main">${esc(x.title)}</span>${x.change === 'new' ? ' <span class="tag-new">New</span>' : x.change === 'fixed' ? ' <span class="tag-fixed">Fixed</span>' : ''}<div class="cell-sub">${esc(x.detail || x.prevDetail)}</div>${x.evidence?.priceTrail ? window.priceTrailHtml(x.evidence.priceTrail) : ''}${x.fix && (x.a === 'fail' || x.a === 'warn') ? `<div class="fix-line"><b>How to fix:</b> ${esc(x.fix)}</div>` : ''}${x.evidence?.changes?.length ? `<table class="data record-changes"><thead><tr><th>What changed</th><th>Before</th><th>Now</th></tr></thead><tbody>${x.evidence.changes.map((r) => `<tr><td>${esc(r.what)}</td><td><code>${esc(r.before)}</code></td><td><code>${esc(r.after)}</code></td></tr>`).join('')}</tbody></table>` : ''}${x.evidence?.screenshot ? `<div class="evidence"><button type="button" class="btn small secondary" data-shot="${esc(x.evidence.screenshot)}">${icon('image', 14)}Screenshot</button></div>` : ''}${themeDiff(x.evidence)}${x.id === 'sec.theme' && x.a === 'fail' && x.evidence?.files ? '<div class="theme-restore" data-theme-restore></div>' : ''}${videoHtml(x.evidence)}${trafficHtml(x.evidence)}${x.evidence?.agent?.steps ? `<details class="agent-steps"><summary>What the AI shopper did (${x.evidence.agent.steps.length} steps)</summary><ol>${x.evidence.agent.steps.map((st) => `<li><b>${esc(st.did || st.action)}</b> <span class="muted">on ${esc(st.at)}</span>${st.thought ? `<br><span class="fix-inline">${esc(st.thought)}</span>` : ''}</li>`).join('')}</ol></details>` : ''}${x.evidence?.ai ? `<ul class="ai-findings" style="margin-left:0">${x.evidence.ai.map((f) => `<li><span class="sev ${f.severity === 'critical' ? 'fail' : f.severity === 'major' ? 'warn' : ''}">${esc(f.severity)}</span> ${esc(f.issue)} <span class="muted">(${esc(f.page)}, ${esc(f.device)})</span>${f.fix ? `<br><span class="fix-inline">Fix: ${esc(f.fix)}</span>` : ''}</li>`).join('')}</ul>` : ''}${x.evidence?.variants ? `<ul class="ai-findings variant-list" style="margin-left:0">${x.evidence.variants.map((v) => `<li><b>${esc(v.name)}</b> <span class="muted">(${v.problem === 'unpublished' ? 'cart can\'t find it' : v.problem === 'error' ? 'no answer' : 'cart refuses it'})</span>${v.message ? `<br><span class="fix-inline">Store said: ${esc(v.message)}</span>` : ''}</li>`).join('')}</ul>` : ''}</td></tr>`).join('')}
           </tbody></table></div></details>`;
       }).join('')}</section>`;
     const metrics = c.metrics.length ? `<section class="panel" id="speed"><h2>Speed and page weight</h2><p class="sub">Measured on a phone-sized screen. Changes under 10% are treated as noise.</p>
@@ -1547,6 +1764,8 @@
     $('#rep-base').onchange = (e) => go(run.id, e.target.value);
     $('#print').onclick = () => { $$('details', ctx.main).forEach((d) => (d.open = true)); const hidden = $$('[data-pane][hidden]', ctx.main); hidden.forEach((p) => (p.hidden = false)); window.print(); hidden.forEach((p) => (p.hidden = true)); };
     $$('[data-shot]', ctx.main).forEach((x) => (x.onclick = () => lightbox(x.dataset.shot, 'Screenshot')));
+    const restoreEl = $('[data-theme-restore]', ctx.main);
+    if (restoreEl) themeRestore(restoreEl, s.id, c.areas.flatMap((a) => a.checks).find((x) => x.id === 'sec.theme')?.evidence);
     const PAGE = { home: 'Homepage', product: 'Product page' };
     const drawDevice = (dev) => {
       const el = $('#dev-shots');
@@ -2657,7 +2876,8 @@
           <div class="field"><label>Full check, at most</label><select name="fullMinInterval">${Object.entries(FULL_EVERY).map(([k, l]) => opt(k, l, p.limits.fullMinInterval)).join('')}</select></div>
           <div class="field"><label>Environments per store</label><input name="environments" type="number" min="0" max="50" value="${p.limits.environments ?? 0}"></div>
           <div class="field"><label>Max stores</label><input name="maxStores" type="number" min="1" max="1000" value="${p.limits.maxStores ?? ''}" placeholder="No limit"></div>
-          <div class="field"><label>Tests a customer can start, per store per day</label><input name="manualRunsPerDay" type="number" min="1" max="500" value="${p.limits.manualRunsPerDay ?? 20}"></div></div>
+          <div class="field"><label>Tests a customer can start, per store per day</label><input name="manualRunsPerDay" type="number" min="1" max="500" value="${p.limits.manualRunsPerDay ?? 20}"></div>
+          <div class="field"><label>Price rules per store</label><input name="priceRules" type="number" min="0" max="10" value="${p.limits.priceRules ?? 10}"></div></div>
         <label class="check-line"><input type="checkbox" name="public" ${p.public ? 'checked' : ''}><span>Show on the pricing page</span></label>
         <label class="check-line"><input type="checkbox" name="highlight" ${p.highlight ? 'checked' : ''}><span>Highlight it</span></label>
         <label class="check-line"><input type="checkbox" name="active" ${p.active ? 'checked' : ''}><span>Available (untick to retire; existing customers keep it)</span></label>
@@ -2666,7 +2886,7 @@
         const prices = {};
         for (const c of ['USD', 'EUR', 'INR', 'GBP']) { const m = f[`pm_${c}`].value, y = f[`py_${c}`].value; if (m !== '' || y !== '') prices[c] = { month: m === '' ? null : toMinor(m), year: y === '' ? null : toMinor(y) }; }
         const b = { name: f.name.value, tagline: f.tagline.value, kind: f.kind.value, sort: Number(f.sort.value), prices, features: $$('input[name=f]:checked', f).map((x) => x.value),
-          limits: { journeyMinInterval: Number(f.journeyMinInterval.value), fullMinInterval: Number(f.fullMinInterval.value), environments: Number(f.environments.value || 0), maxStores: f.maxStores.value === '' ? null : Number(f.maxStores.value), manualRunsPerDay: Number(f.manualRunsPerDay.value || 20) },
+          limits: { journeyMinInterval: Number(f.journeyMinInterval.value), fullMinInterval: Number(f.fullMinInterval.value), environments: Number(f.environments.value || 0), maxStores: f.maxStores.value === '' ? null : Number(f.maxStores.value), manualRunsPerDay: Number(f.manualRunsPerDay.value || 20), priceRules: Number(f.priceRules.value === '' ? 10 : f.priceRules.value) },
           public: f.public.checked, highlight: f.highlight.checked, active: f.active.checked };
         return isNew ? api('/api/admin/plans', { method: 'POST', body: { ...b, key: f.key.value.trim() } }) : api(`/api/admin/plans/${p.key}`, { method: 'PATCH', body: b });
       } });
@@ -2903,7 +3123,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false; S.features = new Set(me.features || []);
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', suite: '/suite', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', security: '/security', incident: '/incident', suite: '/suite', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {

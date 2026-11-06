@@ -3,12 +3,14 @@ import { db, q } from './db.js';
 import { storePassword } from './secret.js';
 import { runScan } from './engine/index.js';
 import { handleAlerts } from './alerts.js';
+import { earlyWarning } from './early-warning.js';
 import { storeConfig, saleActive } from './scheduler.js';
 import { live } from './live.js';
 import { settleRelease } from './release.js';
 import { effectiveDisabled } from './engine/catalog.js';
 import { shopForStore, activeCodes } from './shopify.js';
 import { themeWatch } from './theme-watch.js';
+import { afterCheck } from './theme-clean.js';
 import { check } from './engine/checks.js';
 import { scoreChecks, summarize } from './engine/score.js';
 import { entitlements, lockedGroups, blockReason, has } from './license.js';
@@ -171,10 +173,12 @@ async function prepare(job) {
   if (store && !job.ownPassword) password = storePassword(store) || password;
   // Shopify stores: the store's active discount codes are picked up automatically, alongside any typed in.
   let codes = cfg.discountCodes || [];
+  let shopifyCodes = null; // every active Shopify code, for the tampering check (null when they couldn't be read)
   const link = store ? shopForStore(store.id) : null;
   if (link && kind === 'full') {
     try {
       const fromShopify = await Promise.race([activeCodes(link.shop), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
+      shopifyCodes = fromShopify;
       const seen = new Set(codes.map((c) => c.code.toUpperCase()));
       codes = [...codes, ...fromShopify.filter((c) => !seen.has(c.code.toUpperCase()))].slice(0, 5);
     } catch (e) { console.error('discount codes from Shopify', link.shop, e.message); }
@@ -185,11 +189,15 @@ async function prepare(job) {
     // A hand-picked selection overrides the store's suite for this run only.
     disabled: runDisabled,
     previousScripts: storeId && !release ? previousScripts(storeId, runId) : null,
-    testProduct: cfg.testProduct || null, discountCodes: codes, preview: preview || null, captureOnly: !!captureOnly,
+    testProduct: cfg.testProduct || null, discountCodes: codes, shopifyCodes, preview: preview || null, captureOnly: !!captureOnly,
+    // Price rules the owner set, as many as the plan allows.
+    priceRules: store && isOn('price_checks') ? (cfg.priceRules || []).slice(0, entitlements(store.user_id).limits.priceRules) : [],
+    release: !!release,
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).
     video: !!cfg.failureVideo && !release && isOn('failure_video'),
     // Sale traffic readiness: a few shoppers at once, when the store has it switched on (never for publish checks).
     traffic: !release && cfg.saleTraffic ? { shoppers: cfg.saleTrafficShoppers } : null,
+    woo: isOn('woocommerce'),
   };
 }
 
@@ -234,7 +242,13 @@ async function settle(job, result) {
   // A check that just broke: name the scripts that appeared since it last worked (report, email, Slack).
   if (storeId && !release) { try { attributeFailures(storeId, runId, result); } catch (e) { console.error('change attribution failed', runId, e.message); } }
   q.finishRun.run(result.score, result.verdict, JSON.stringify(result), runId);
-  if (job.theme?.commit && (result.checks || []).some((c) => c.id === 'sec.theme' && c.status !== 'skip')) { try { job.theme.commit(); } catch (e) { console.error('theme record save failed', storeId, e); } }
+  if (job.theme?.commit && (result.checks || []).some((c) => c.id === 'sec.theme' && c.status !== 'skip')) {
+    try {
+      job.theme.commit();
+      // A check where the theme is unchanged and no security check failed: this theme becomes the clean copy.
+      afterCheck(storeId, runId, result);
+    } catch (e) { console.error('theme record save failed', storeId, e); }
+  }
   // Publish-check runs (live and draft) never change the store's status and never alert.
   if (storeId && !release) {
     q.updateStoreAfterRun.run(result.verdict, result.score, storeId);
@@ -254,6 +268,8 @@ async function settle(job, result) {
     } else {
       await handleAlerts(storeId, runId, result).catch((e) => console.error('alerts failed', e));
     }
+    // Cross-store early warning: an app whose code changed on many stores at once (needs script watch).
+    if (result.scripts) await earlyWarning(storeId).catch((e) => console.error('early warning failed', e));
   }
 }
 

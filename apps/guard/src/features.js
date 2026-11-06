@@ -37,6 +37,13 @@ export const FLAGS = [
   { key: 'sale_traffic', area: 'Sales', label: 'Sale traffic test', about: 'Opt-in: up to 5 shoppers at once during the full check, to show slowdowns before a sale.', checks: ['sale.traffic'] },
   { key: 'ai_shopper', area: 'AI', label: 'AI shopper', about: 'A goal-driven shopper that browses and buys on any theme and reports friction, also on draft themes in Safe to publish. Needs the AI key.', checks: ['ai.shopper'] },
   { key: 'teams', area: 'Accounts', label: 'Team members (agencies)', about: 'Website accounts invite team members with roles. Members already invited can still switch back and leave while this is off.' },
+  { key: 'spam_watch', area: 'Security watch', label: 'Spam links and defacement', about: 'Hidden spam links in page code, and pages that look defaced.', checks: ['security.spam', 'security.deface'] },
+  { key: 'tamper_watch', area: 'Security watch', label: 'Product and discount tampering', about: 'Zero prices, mass edits, swapped products and unexpected discount codes, with before and after.', checks: ['security.tamper'] },
+  { key: 'domain_watch', area: 'Security watch', label: 'Domain, certificate and email records', about: 'Domain and certificate expiry warnings; DNS, SPF and DMARC changes.', checks: ['security.domain'] },
+  { key: 'security_checklist', area: 'Security watch', label: 'Security checklist', about: 'Owner-ticked checklist (two-step login, staff and app review, passwords) with reminders and a score.' },
+  { key: 'incident_mode', area: 'Security watch', label: 'Incident mode and recovery packet', about: 'One button for a suspected hack: changes since the last healthy check, frequent checks, recovery steps, team alerts and a ready message for Shopify support.' },
+  { key: 'price_checks', area: 'Checks', label: 'Prices stay the same', about: 'Records the price from product page to cart to checkout on every check; owners can add price rules under Test suite.', checks: ['pricing.journey'] },
+  { key: 'woocommerce', area: 'Platforms', label: 'WooCommerce shopping tests', about: 'Add to cart and checkout tests for WooCommerce stores through the public Store API. Off: WooCommerce stores get the same checks as other non-Shopify platforms.' },
   { key: 'laws', area: 'Checks', label: 'Laws where you sell', about: 'Checks for the German legal notice, EU cookie consent and US accessibility, and the "Where you sell" setting.', checks: ['law.de', 'law.cookies', 'access.law', 'law.us'] },
 ].map((f) => ({ area: 'Other', core: false, checks: [], ...f }));
 
