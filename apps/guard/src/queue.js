@@ -205,9 +205,20 @@ async function prepare(job) {
     // Price rules the owner set, as many as the plan allows.
     // The owner's own tests (Your tests), as many as the plan allows; never on publish checks.
     customTests: store && !release && isOn('custom_tests') ? testsForRun(store.id, kind, entitlements(store.user_id)) : [],
+    // Prices by country (Test suite → Price rules): the store's markets and the owner's settings.
+    markets: cfg.markets || [],
+    marketPrices: isOn('price_checks') ? cfg.marketPrices || null : null,
     // A/B test versions the owner listed (Test suite → A/B tests).
     abVariants: isOn('ab_tests') ? cfg.abVariants || [] : [],
-    priceRules: store && isOn('price_checks') ? (cfg.priceRules || []).slice(0, entitlements(store.user_id).limits.priceRules) : [],
+    // Price rules, quantity breaks, product options and offers the owner set, together as many as the plan allows (rules first).
+    ...(() => {
+      if (!store || !isOn('price_checks')) return { priceRules: [], priceTiers: [], priceConfigs: [], priceOffers: [] };
+      const n = entitlements(store.user_id).limits.priceRules;
+      const rules = (cfg.priceRules || []).slice(0, n);
+      const tiers = (cfg.priceTiers || []).slice(0, Math.max(0, n - rules.length));
+      const configs = (cfg.priceConfigs || []).slice(0, Math.max(0, n - rules.length - tiers.length));
+      return { priceRules: rules, priceTiers: tiers, priceConfigs: configs, priceOffers: (cfg.priceOffers || []).slice(0, Math.max(0, n - rules.length - tiers.length - configs.length)) };
+    })(),
     release: !!release,
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).
     video: !!cfg.failureVideo && !release && isOn('failure_video'),

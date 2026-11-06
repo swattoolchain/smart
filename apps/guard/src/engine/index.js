@@ -14,8 +14,12 @@ import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { runVariantSweep } from './variants.js';
 import { runTraffic } from './traffic.js';
-import { runPriceRules } from './pricing.js';
+import { runPriceRules, runPriceTiers } from './pricing.js';
+import { runPageTiers } from './page-tiers.js';
 import { runAbTests } from './abtest.js';
+import { runPriceConfigs, runAutoOptions } from './configurator.js';
+import { runOffers } from './offers.js';
+import { runMarketPrices } from './market-prices.js';
 import { reviewScreens } from './visual-ai.js';
 import { watchScripts, scriptChecks, pageKind } from './scripts.js';
 import { watchCost, watchWidgets, missingWidgets, widgetCheck } from './apps.js';
@@ -43,7 +47,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], abVariants = [], customTests = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], priceTiers = [], priceConfigs = [], priceOffers = [], markets = [], marketPrices = null, abVariants = [], customTests = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -182,7 +186,14 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (on('pricing.journey') && priceRules.length && info.isShopify) await runPriceRules({ page, rec, origin, rules: priceRules });
+      if (on('pricing.journey') && priceTiers.length && info.isShopify) await runPriceTiers({ page, rec, origin, sets: priceTiers });
+      // Breaks the product page itself promises (volume-discount app tables), checked in the cart without any setup.
+      if (on('pricing.journey') && info.isShopify && info.products[0]?.handle) await runPageTiers({ page, rec, origin, product: info.products[0].handle, listed: priceTiers.map((t) => t.product) });
+      if (on('pricing.journey') && priceConfigs.length && info.isShopify) await runPriceConfigs({ page, rec, origin, configs: priceConfigs, shot: () => shot(page, 'price-options') });
+      // Required options on the test product's page, filled with their first value, when the owner listed none (full checks).
+      if (kind === 'full' && on('pricing.journey') && info.isShopify && info.products[0]?.handle) await runAutoOptions({ page, rec, origin, product: info.products[0].handle, listed: priceConfigs.map((c) => c.product), shot: () => shot(page, 'price-options-auto') });
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
+      if (kind === 'full' && on('sale.discount') && priceOffers.length && info.isShopify) await runOffers({ page, rec, origin, offers: priceOffers });
       if (kind === 'full' && info.isShopify && on('sale.abtest')) {
         phase('abtest');
         await runAbTests({ page, rec, origin, info, password, variants: abVariants, shot }).catch((e) => rec.add(check('ab.tools', 'functional', 'A/B tests on your store', 'skip', { severity: 'minor', detail: `The A/B test check could not finish: ${shortErr(e)}` })));
@@ -241,6 +252,10 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
       if (kind === 'full' && storeId && !preview && !release && on('security.domain')) {
         phase('domain');
         await runDomain({ rec, request: ctx.request, origin, storeId }).catch((e) => rec.add(check('sec.domain.dns', 'security', 'Domain and email records unchanged', 'skip', { severity: 'minor', detail: shortErr(e) })));
+      }
+      // Prices by country switch the storefront's country, so they run after the other page checks.
+      if (kind === 'full' && on('pricing.journey') && marketPrices?.enabled && markets.length && info.isShopify) {
+        await runMarketPrices({ page, rec, origin, markets, settings: marketPrices, product: info.products[0]?.handle });
       }
       if (kind === 'full' && storeId && on('ai.visual') && aiEnabled()) {
         phase('ai');

@@ -276,3 +276,183 @@ export function cleanPriceRules(input) {
   if (out.length > MAX_PRICE_RULES) throw new Error(`Up to ${MAX_PRICE_RULES} price rules.`);
   return out;
 }
+
+/*
+ * Quantity breaks (tiered or volume pricing). The owner lists a product's breaks in Test suite → Price rules,
+ * for example "5+ 10%, 10+ 20%" or "5+ 450, 10+ 400". Each check puts the product in a fresh cart at every
+ * break and one below it (4, 5, 9 and 10 units) and checks the unit price and total the cart charges, then
+ * the checkout subtotal at the biggest break. Volume-discount apps and Shopify Functions both show up in
+ * Shopify's cart.js, so this works whatever gives the discount. Nothing is bought; the cart is emptied.
+ */
+export const MAX_TIER_SETS = 5;
+const MAX_TIERS = 5;
+const MAX_QTYS = 8;
+export const tierId = (i) => `fn.price.tiers-${i + 1}`;
+
+/** "5+ 10%, 10+ 20%" or "5+: 450, 10+ = 400" -> [{ min, percent } | { min, price }]. Throws a plain message. */
+export function parseTiers(text, product = 'this product') {
+  const s = String(text ?? '').trim();
+  if (!s) throw new Error(`Enter the quantity breaks for “${product}”, like 5+ 10%, 10+ 20%.`);
+  const out = [];
+  // Thousands commas (1,299.50) go first, so they are not read as a list separator. "450,100+ 400" stays a list.
+  for (const part of s.replace(/(\d),(?=\d{3}(?![\d+]))/g, '$1').split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean)) {
+    const m = /^(\d{1,2})\s*\+?\s*(?:units?|pcs|items?)?\s*[:=@→>-]*\s*(?:₹|rs\.?|\$|€|£)?\s*(\d{1,8}(?:\.\d{1,2})?)\s*(%|percent|off|% off)?$/i.exec(part);
+    if (!m) throw new Error(`“${part}” is not a quantity break. Write it like 5+ 10% (10% off from 5 units) or 5+ 450 (450 each from 5 units).`);
+    const min = Number(m[1]);
+    const val = Number(m[2]);
+    if (min < 2 || min > 99) throw new Error(`Quantity breaks start at 2 to 99 units (“${part}”).`);
+    if (m[3]) {
+      if (val <= 0 || val >= 100) throw new Error(`A percentage off must be between 0 and 100 (“${part}”).`);
+      out.push({ min, percent: val });
+    } else {
+      if (val <= 0 || val > 10000000) throw new Error(`Enter the price each for “${part}”, like 5+ 450.`);
+      out.push({ min, price: val });
+    }
+  }
+  out.sort((a, b) => a.min - b.min);
+  if (out.length > MAX_TIERS) throw new Error(`Up to ${MAX_TIERS} quantity breaks per product.`);
+  if (new Set(out.map((t) => t.min)).size !== out.length) throw new Error(`Each quantity can have only one break for “${product}”.`);
+  return out;
+}
+
+/** Shows tiers the way the owner writes them: "5+ 10%, 10+ 450". */
+export const tiersText = (tiers) => (tiers || []).map((t) => `${t.min}+ ${t.percent != null ? `${t.percent}%` : t.price}`).join(', ');
+
+/** Validates Test suite → Price rules → Quantity breaks. Throws an Error with a plain message. */
+export function cleanPriceTiers(input) {
+  if (!Array.isArray(input)) throw new Error('Quantity breaks must be a list.');
+  const out = [];
+  for (const raw of input) {
+    if (!raw || (!raw.product && !raw.tiers)) continue;
+    let product = String(raw.product || '').trim();
+    const m = /\/products\/([^/?#]+)/.exec(product);
+    if (m) product = decodeURIComponent(m[1]);
+    product = product.toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_-]{0,199}$/i.test(product)) throw new Error(`“${raw.product || ''}” is not a product. Use the product's link or its handle, like cotton-kurta.`);
+    const tiers = Array.isArray(raw.tiers) ? parseTiers(tiersText(raw.tiers), product) : parseTiers(raw.tiers, product);
+    const variant = raw.variant ? String(raw.variant).trim().slice(0, 100) : null;
+    out.push({ product, variant, tiers });
+  }
+  if (out.length > MAX_TIER_SETS) throw new Error(`Up to ${MAX_TIER_SETS} products with quantity breaks.`);
+  return out;
+}
+
+/** The quantities worth trying: each break and one below it, up to MAX_QTYS. */
+export function tierQuantities(tiers) {
+  const qs = new Set();
+  for (const t of tiers) { if (t.min - 1 >= 1) qs.add(t.min - 1); qs.add(t.min); }
+  return [...qs].sort((a, b) => a - b).slice(0, MAX_QTYS);
+}
+
+/** The unit price (minor units) the owner expects at a quantity, from the base unit price and the breaks. */
+export function tierUnit(tiers, qty, baseMinor) {
+  const t = [...tiers].reverse().find((x) => qty >= x.min);
+  if (!t) return baseMinor;
+  return t.price != null ? Math.round(t.price * 100) : Math.round((baseMinor * (100 - t.percent)) / 100);
+}
+
+/**
+ * Compares what the cart charged at each quantity with the breaks. rows: [{ qty, charged }] (charged in minor
+ * units, null when the cart refused). Returns { rows (with expected values), over, under, refused }.
+ * Shopify rounds each line, so up to one minor unit per item is not a difference.
+ */
+export function compareTiers(tiers, baseMinor, rows) {
+  const out = rows.map((r) => {
+    const unit = tierUnit(tiers, r.qty, baseMinor);
+    const expect = unit * r.qty;
+    const tol = Math.max(1, r.qty);
+    const state = r.charged == null ? 'refused' : r.charged > expect + tol ? 'over' : r.charged < expect - tol ? 'under' : 'ok';
+    return { ...r, unit, expect, state };
+  });
+  return { rows: out, over: out.filter((r) => r.state === 'over'), under: out.filter((r) => r.state === 'under'), refused: out.filter((r) => r.state === 'refused') };
+}
+
+/**
+ * Puts one variant in fresh carts at each break and one below it, then opens checkout at the biggest quantity the
+ * cart accepted. Returns { rows: [{ qty, charged }], checkout: { qty, minor, cart } | null, currency }.
+ */
+export async function cartAtQuantities({ page, origin, variantId, tiers }) {
+  const rows = [];
+  let currency = null;
+  let lastCart = null;
+  for (const qty of tierQuantities(tiers)) {
+    await api(page, '/cart/clear.js', {});
+    const added = await api(page, '/cart/add.js', { items: [{ id: variantId, quantity: qty }] });
+    if (added.status >= 400) { rows.push({ qty, charged: null }); continue; }
+    const cart = (await api(page, '/cart.js')).json;
+    currency = cart?.currency || currency;
+    const line = cartLine(cart, variantId);
+    rows.push({ qty, charged: line && line.quantity === qty ? line.charged : null });
+    lastCart = line && line.quantity === qty ? { qty, cart } : lastCart;
+  }
+  // The checkout at the biggest break the cart accepted: its subtotal must match the cart.
+  let checkout = null;
+  if (lastCart) {
+    await api(page, '/cart/clear.js', {});
+    await api(page, '/cart/add.js', { items: [{ id: variantId, quantity: lastCart.qty }] });
+    const cartNow = (await api(page, '/cart.js')).json;
+    await page.goto(origin + '/checkout', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+    if (/\/checkouts?\//.test(page.url())) {
+      const sub = await checkoutSubtotal(page);
+      const cartTotal = Number(cartNow?.items_subtotal_price ?? cartNow?.total_price);
+      checkout = { qty: lastCart.qty, minor: sub?.minor ?? null, cart: Number.isFinite(cartTotal) ? cartTotal : null };
+    }
+    await page.goto(origin + '/cart', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  }
+  await api(page, '/cart/clear.js', {});
+  return { rows, checkout, currency };
+}
+
+/** The quantity breaks, each product in fresh carts at every break. Runs with the price rules. */
+export async function runPriceTiers({ page, rec, origin, sets }) {
+  if (!sets?.length) return;
+  if (!page.url().startsWith(origin)) await page.goto(origin + '/cart', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  for (const [i, set] of sets.slice(0, MAX_TIER_SETS).entries()) {
+    const id = tierId(i);
+    let title = `Quantity breaks: ${set.product}`;
+    rec.step(`Check quantity breaks for ${set.product}`);
+    try {
+      const p = await api(page, `/products/${encodeURIComponent(set.product)}.js`);
+      if (p.status !== 200 || !p.json?.variants) {
+        rec.add(check(id, 'functional', title, 'warn', { severity: 'major', detail: `We couldn't find the product “${set.product}” on your store, so its quantity breaks weren't checked.`, fix: 'Open Test suite → Price rules and pick the product again. It may have been renamed, unpublished or deleted.' }));
+        continue;
+      }
+      const want = set.variant ? String(set.variant).toLowerCase() : null;
+      const v = p.json.variants.find((x) => want && (String(x.id) === want || String(x.title).toLowerCase() === want)) || (!want && p.json.variants.find((x) => x.available));
+      title = `Quantity breaks: ${p.json.title}${v && v.title !== 'Default Title' ? ` (${v.title})` : ''}`;
+      if (!v) {
+        rec.add(check(id, 'functional', title, 'warn', { severity: 'major', detail: want ? `“${p.json.title}” has no variant called “${set.variant}”, so its quantity breaks weren't checked.` : `“${p.json.title}” is sold out, so its quantity breaks weren't checked.` }));
+        continue;
+      }
+      const base = toMinor(v.price, true);
+      const { rows, checkout, currency } = await cartAtQuantities({ page, origin, variantId: v.id, tiers: set.tiers });
+      const cur = currency;
+      const r = compareTiers(set.tiers, base, rows);
+      const m = (x) => money(x, cur);
+      const tierTable = {
+        currency: cur,
+        rows: r.rows.map((x) => ({ qty: x.qty, expect: m(x.expect), expectEach: m(x.unit), charged: x.charged == null ? null : m(x.charged), chargedEach: x.charged == null ? null : m(Math.round(x.charged / x.qty)), state: x.state })),
+        checkout: checkout && checkout.minor != null ? { qty: checkout.qty, money: m(checkout.minor), cart: checkout.cart == null ? null : m(checkout.cart), higher: checkout.cart != null && checkout.minor > checkout.cart + 1 } : null,
+      };
+      const evidence = { tierTable };
+      const say = (x) => `${x.qty} cost${x.qty === 1 ? 's' : ''} ${m(x.charged)} (${m(Math.round(x.charged / x.qty))} each), but your breaks say ${m(x.expect)} (${m(x.unit)} each)`;
+      const coBad = checkout && checkout.minor != null && checkout.cart != null && checkout.minor > checkout.cart + 1;
+      if (r.over.length || coBad) {
+        const parts = r.over.map(say);
+        if (coBad) parts.push(`at checkout, ${checkout.qty} come to ${m(checkout.minor)} while the cart showed ${m(checkout.cart)}`);
+        rec.add(check(id, 'functional', title, 'fail', { severity: 'critical', detail: `Customers buying more are charged too much: ${parts.join('; ')}.`, evidence, fix: 'Check your volume or quantity discount app (or Shopify discount) for this product: is it on, does it include this product and variant, and do its breaks match these? If the breaks changed on purpose, update them in Test suite → Price rules.' }));
+      } else if (r.under.length) {
+        rec.add(check(id, 'functional', title, 'warn', { severity: 'major', detail: `The cart charges less than your breaks: ${r.under.map(say).join('; ')}. You may be giving a bigger discount than you meant.`, evidence, fix: 'Check that the discount app or Shopify discount has the breaks you meant, and that no other discount stacks on top. If the lower price is intended, update the breaks.' }));
+      } else if (r.refused.length === r.rows.length) {
+        rec.add(check(id, 'functional', title, 'warn', { severity: 'major', detail: `The cart did not accept ${r.rows.map((x) => x.qty).join(', ')} of this product, so the breaks could not be checked. It may be low on stock or limited per order.`, evidence }));
+      } else {
+        const ok = r.rows.filter((x) => x.state === 'ok');
+        rec.add(check(id, 'functional', title, 'pass', { severity: 'critical', detail: `Every quantity break works: ${ok.map((x) => `${x.qty} at ${m(x.unit)} each`).join(', ')}.${r.refused.length ? ` The cart did not accept ${r.refused.map((x) => x.qty).join(', ')}, so we skipped ${r.refused.length === 1 ? 'that one' : 'those'}.` : ''}${checkout?.minor != null ? ` Checkout shows the same ${m(checkout.minor)} for ${checkout.qty}.` : ''}`, evidence }));
+      }
+    } catch (e) {
+      rec.add(check(id, 'functional', title, 'skip', { severity: 'major', detail: shortErr(e) }));
+    }
+  }
+  await api(page, '/cart/clear.js', {});
+}

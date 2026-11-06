@@ -25,7 +25,13 @@
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
  *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
  *   checkoutprice (checkout subtotal ₹200 more than the cart), protection (a shipping-protection app adds a
- *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price)
+ *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price),
+ *   tiers (with MOCK_EXTRA=tiers: the 10+ quantity break stopped working),
+ *   autodiscount / autolow / bxgy / bundle / gift (with MOCK_EXTRA=offers: the spend-and-save offer stopped
+ *   working / is given from ₹3,000 instead of ₹5,000 / buy-2-get-1 stopped / the bundle stopped / the gift is charged),
+ *   with MOCK_EXTRA=markets: fx (the cart in euro markets charges €3 more than the page), fxcheckout (checkout
+ *   shows rupees in other countries), fxround (converted prices are not rounded to .99), fxfar (the UK price is
+ *   60% above the converted price), fxblock (the cart refuses the product in the United States)
  * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out), slowcart (each
  * add to cart takes 300 ms, like a store with a slow bundle or upsell app).
  * Extras (env MOCK_EXTRA) include offsite: links, page text and a script button that try to lead a shopper off the store
@@ -44,6 +50,17 @@ let B = BREAK; // the breakages for the request being handled
 let DRAFT = false;
 let COUNTRY = 'IN'; // the shopper's country for the request being handled (localization cookie)
 const carts = new Map();
+// MOCK_EXTRA=options: the Handwoven Silk Saree has a product-options app: "Engraving" (text, required) and
+// "Gift wrap" (No / Yes +₹99, added as a separate ₹99 add-on line). The page price updates with the upcharge.
+// MOCK_BREAK=upcharge (the add-on line costs ₹149, not the ₹99 shown), props (the choices are not saved on the
+// cart line), optional (Engraving is no longer required).
+const OPTIONS = (process.env.MOCK_EXTRA || '').split(',').includes('options');
+// MOCK_EXTRA=optionsapp: the Organic Cotton Kurta has an options app that draws its own widget outside the product
+// form: "Embroidery colour" (required swatches: Gold +₹100, Silver) and "Name on tag" (optional text). The app adds
+// the choices as line item properties and the upcharge to the line price, and refuses Add to cart without a colour.
+// Breaks: props (the choices are not saved on the cart line), optional (no colour needed), upcharge (the cart
+// charges ₹150 for Gold while the page shows +₹100).
+const OPTIONS_APP = (process.env.MOCK_EXTRA || '').split(',').includes('optionsapp');
 let PW_POSTS = 0; // how many times the password form was submitted
 const REQUESTS = [];
 
@@ -151,6 +168,21 @@ const FEATURE_HTML = `<p class="cod-note">Cash on delivery available</p><button 
 <button type="button" id="wish" onclick="this.insertAdjacentHTML('afterend','<span class=wish-done>Added to wishlist</span>')">Add to wishlist</button>
 <section class="reviews"><div class="review">Lovely fabric. ★★★★★</div><div class="review">Fits well. ★★★★</div></section><a class="wa" href="https://wa.me/919999999999">Chat on WhatsApp</a>`;
 const NEWSLETTER_HTML = `<form class="newsletter" onsubmit="event.preventDefault();this.insertAdjacentHTML('afterend','<p class=nl-done>Thanks for subscribing</p>')"><label for="nl">Get sale news</label> <input id="nl" type="email" name="contact[email]"> <button type="submit">Subscribe</button></form>`;
+const OFFERS = EXTRA.split(',').includes('offers');
+// MOCK_EXTRA=markets: Shopify Markets. The country picker (POST /localization) switches the shopper to the US
+// (USD), Germany, Austria or France (EUR) or the UK (GBP); other countries stay on India (INR, the store's own).
+// Converted prices are rounded up to .99, like Shopify's price rounding.
+const MARKETS = EXTRA.split(',').includes('markets');
+const FX = { IN: ['INR', 1], US: ['USD', 0.012], DE: ['EUR', 0.011], AT: ['EUR', 0.011], FR: ['EUR', 0.011], GB: ['GBP', 0.0095] };
+let CC = 'IN'; // the shopper's country for the request being handled
+const curOf = () => FX[CC][0];
+function conv(inrMinor) {
+  const [cur, rate] = FX[CC];
+  if (cur === 'INR') return inrMinor;
+  let raw = inrMinor * rate * (CC === 'GB' && B.has('fxfar') ? 1.6 : 1);
+  return B.has('fxround') ? Math.round(raw) : Math.ceil(raw / 100) * 100 - 1;
+}
+const fmt = (minor, cur = curOf()) => (cur === 'INR' ? '₹' + (minor / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : new Intl.NumberFormat('en', { style: 'currency', currency: cur }).format(minor / 100));
 const products = [
   { id: 1, title: 'Organic Cotton Kurta', handle: 'cotton-kurta', body_html: '<p>Soft breathable organic cotton kurta for everyday wear.</p>', product_type: 'Kurta', vendor: 'Tharam', tags: 'cotton, festive', images: [{ src: '/img/k.png' }], variants: [
     { id: 101, title: 'Small', sku: 'KUR-S', price: EXTRA.includes('price') ? '699.00' : '1499.00', compare_at_price: EXTRA.includes('sale') ? '1299.00' : null, available: true },
@@ -159,7 +191,7 @@ const products = [
   { id: 2, title: 'Handwoven Silk Saree', handle: 'silk-saree', product_type: 'Saree', vendor: 'Tharam', tags: 'silk', body_html: EXTRA.includes('placeholder') ? '<p>Lorem ipsum dolor sit amet, TBD description here.</p>' : '<p>Traditional handwoven silk saree with zari border and intricate detailing.</p>', images: [{ src: '/img/s.png' }], variants: [{ id: 201, title: 'Default Title', sku: 'SAR-1', price: '8999.00', available: true }] },
   CLEAN
     ? { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '<p>Set of four hand-cast brass diyas for Diwali and everyday puja.</p>', images: [{ src: '/img/d.png' }], variants: [{ id: 301, title: 'Default Title', sku: 'DIY-4', price: '799.00', available: true }] }
-    : { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: '0.00', available: true }] },
+    : { id: 3, title: 'Brass Diya Set', handle: 'brass-diya', product_type: 'Decor', vendor: 'Tharam', tags: 'brass', body_html: '', images: [], variants: [{ id: 301, title: 'Default Title', sku: 'KUR-S', price: OFFERS ? '499.00' : '0.00', available: true }] },
 ];
 if (EXTRA.includes('manyvariants')) products.push({ id: 4, title: 'Block Print Cushion Cover', handle: 'cushion-cover', product_type: 'Decor', vendor: 'Tharam', tags: 'cotton', body_html: '<p>Hand block printed cotton cushion cover, 16 by 16 inches.</p>', images: [{ src: '/img/c.png' }],
   variants: Array.from({ length: 40 }, (_, i) => ({ id: 401 + i, title: `Colour ${i + 1}`, sku: `CUS-${i + 1}`, price: '799.00', available: i !== 39 })) });
@@ -217,8 +249,49 @@ const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
 // MOCK_SALE.countryPct { 'CODE:CC': pct } gives a code another % in a country. MOCK_BREAK=localization: no country picker.
 const CURRENCY = { IN: 'INR', US: 'USD', DE: 'EUR', AT: 'EUR', FR: 'EUR', GB: 'GBP', SG: 'SGD', AU: 'AUD', CA: 'CAD' }; // the store doesn't sell in the UAE
 const countryOf = (req) => /localization=([A-Z]{2})/.exec(req.headers.cookie || '')?.[1] || 'IN';
+// MOCK_EXTRA=tiers: a volume-discount app on the Organic Cotton Kurta: 10% off each from 5, 20% off from 10,
+// given as a line discount in the cart (like Shopify Functions or a volume-discount app).
+// MOCK_BREAK=tiers: the 10+ break stopped working (still 10% off at 10 and more).
+const TIERS = EXTRA.split(',').includes('tiers');
+// MOCK_EXTRA=tiertable: the volume-discount app also shows its breaks on the kurta's product page, as a table near
+// Add to cart ("Buy 5+ · 10% off", "Buy 10+ · 20% off"). MOCK_BREAK=tierpage: the table says 25% at 10 (out of date).
+const TIER_TABLE = EXTRA.split(',').includes('tiertable');
+const tierTableHtml = () => `<table class="qty-breaks"><caption>Buy more, save more</caption><tr><th>Quantity</th><th>Discount</th></tr><tr><td>Buy 5+</td><td>10% off</td></tr><tr><td>Buy 10+</td><td>${B.has('tierpage') ? 25 : 20}% off</td></tr></table>`;
+function tierPct(i) {
+  if (!TIERS || ![101, 102, 103].includes(Number(i.id))) return 0;
+  if (i.quantity >= 10) return B.has('tiers') ? 10 : 20;
+  return i.quantity >= 5 ? 10 : 0;
+}
+// MOCK_EXTRA=offers: automatic offers like Shopify automatic discounts or offer apps.
+//   Buy 2 Large kurtas, get 1 free (line discount); any kurta + the silk saree is a bundle, ₹500 off the saree;
+//   the Brass Diya (₹499) is free in a cart of ₹3,000 or more (not counting the diya); spend ₹5,000 or more
+//   (after line discounts) and get 10% off the order, which does not combine with the bundle.
+function offerLineOff(i, items) {
+  if (!OFFERS) return [0, null];
+  const unit = Math.round(Number(i.price) * 100);
+  if (i.id === 103 && !B.has('bxgy')) { const free = Math.floor(i.quantity / 3); if (free) return [free * unit, 'Buy 2, get 1 free']; }
+  if (i.id === 201 && !B.has('bundle') && items.some((x) => [101, 102, 103].includes(x.id))) return [50000, 'Kurta + saree bundle'];
+  if (i.id === 301) {
+    const others = items.filter((x) => x.id !== 301).reduce((s, x) => s + x.quantity * Math.round(Number(x.price) * 100), 0);
+    if (others >= 300000 && !B.has('gift')) return [unit, 'Free diya over ₹3,000'];
+  }
+  return [0, null];
+}
+// In another market (MOCK_EXTRA=markets) the cart charges in that currency (fx: €3 more than the page in euro markets).
+const unitOf = (i) => { const u = MARKETS ? conv(Math.round(Number(i.price) * 100)) : Math.round(Number(i.price) * 100); return u + (MARKETS && B.has('fx') && curOf() === 'EUR' ? 300 : 0); };
 function cartJson(items, country = 'IN') {
-  const original = items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0);
+  const lines = items.map((i) => {
+    const unit = unitOf(i);
+    const full = unit * i.quantity;
+    // Line discounts: the volume-discount app (MOCK_EXTRA=tiers) and the automatic offers (MOCK_EXTRA=offers).
+    const tierOff = Math.round((full * tierPct(i)) / 100);
+    const [offerOff, title] = offerLineOff(i, items);
+    const off = tierOff + offerOff;
+    const allocations = [...(tierOff ? [{ amount: tierOff, discount_application: { type: 'automatic', title: 'Buy more, save more' } }] : []), ...(offerOff ? [{ amount: offerOff, discount_application: { type: 'automatic', title } }] : [])];
+    return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: Math.round((full - off) / i.quantity), line_price: full - off, original_line_price: full, final_line_price: full - off, line_level_discount_allocations: allocations };
+  });
+  const before = lines.reduce((s, i) => s + i.original_line_price, 0);
+  const original = lines.reduce((s, i) => s + i.final_line_price, 0);
   const code = items.discount;
   let rule = code && !(B.has('discount') && code === 'BF20') && !(saleEnded && code === 'BF20') ? CODES[code] : null;
   const only = SALE?.codeCountries?.[code];
@@ -227,17 +300,21 @@ function cartJson(items, country = 'IN') {
   if (rule && pct) rule = { ...rule, pct };
   const applicable = !!rule && original >= rule.min;
   const off = applicable ? Math.round((original * rule.pct) / 100) : 0;
+  const bundled = lines.some((l) => l.line_level_discount_allocations.some((d) => d.discount_application.title === 'Kurta + saree bundle'));
+  const spendMin = B.has('autolow') ? 300000 : 500000;
+  const autoOff = OFFERS && !off && !bundled && !B.has('autodiscount') && original >= spendMin ? Math.round((original * 10) / 100) : 0;
+  const apps = [...(off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : []), ...(autoOff ? [{ type: 'automatic', title: 'Spend 5,000, save 10%', total_allocated_amount: autoOff }] : [])];
   return {
     item_count: items.reduce((s, i) => s + i.quantity, 0),
-    original_total_price: original,
-    total_discount: off,
-    total_price: original - off,
+    original_total_price: before,
+    total_discount: before - original + off + autoOff,
+    total_price: original - off - autoOff,
     discount_codes: code ? [{ code, applicable }] : [],
-    cart_level_discount_applications: off ? [{ type: 'discount_code', title: code, total_allocated_amount: off }] : [],
+    cart_level_discount_applications: apps,
     items_subtotal_price: original,
-    currency: CURRENCY[country] || 'INR',
+    currency: MARKETS ? curOf() : CURRENCY[country] || 'INR',
     // Like Shopify's cart.js: prices in paise, one entry per line.
-    items: items.map((i) => { const unit = Math.round(Number(i.price) * 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: unit, line_price: unit * i.quantity, original_line_price: unit * i.quantity, final_line_price: unit * i.quantity }; }),
+    items: lines,
   };
 }
 function layout(title, body, { noindex = false } = {}) {
@@ -246,7 +323,7 @@ function layout(title, body, { noindex = false } = {}) {
 ${B.has('noindex') || noindex ? '<meta name="robots" content="noindex">' : ''}
 <meta name="description" content="Handmade Indian clothing and decor from small artisans.">
 <link rel="canonical" href="http://localhost:${PORT}/"><meta property="og:image" content="/img/og.png">
-${AB ? '<script>window._vwo_code={version:2};</script>' : ''}${CONVERT ? `<script>window.convert={currentData:{experiences:{"100":{variation:{id:"${CONVV}",name:"${CONV_NAMES[CONVV]}"}}}},data:{}};</script>` : ''}${OPTIMIZELY ? `<script>window.optimizely={get:function(k){if(k==='data')return{experiments:{"200":{id:"200",name:"Price test",audienceIds:[],variations:[{id:"2001",name:"Original",actions:[]},{id:"2002",name:"Lower price",actions:[]}]},"300":{id:"300",name:"Personal greeting",variations:[{id:"3001",name:"Greeting",actions:[]}]}},campaigns:{}};if(k==='visitor')return{visitorId:'v1'};return null;},current:"${OPTV}"};</script>` : ''}<script>window.Shopify={shop:'mock.myshopify.com',country:'${COUNTRY}',currency:{active:'${CURRENCY[COUNTRY] || 'INR'}'},theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : saleOn && SALE.themeId ? `{id:${Number(SALE.themeId)},name:'Dawn – Sale',role:'main'}` : "{id:111,name:'Dawn',role:'main'}"}};</script>
+${AB ? '<script>window._vwo_code={version:2};</script>' : ''}${CONVERT ? `<script>window.convert={currentData:{experiences:{"100":{variation:{id:"${CONVV}",name:"${CONV_NAMES[CONVV]}"}}}},data:{}};</script>` : ''}${OPTIMIZELY ? `<script>window.optimizely={get:function(k){if(k==='data')return{experiments:{"200":{id:"200",name:"Price test",audienceIds:[],variations:[{id:"2001",name:"Original",actions:[]},{id:"2002",name:"Lower price",actions:[]}]},"300":{id:"300",name:"Personal greeting",variations:[{id:"3001",name:"Greeting",actions:[]}]}},campaigns:{}};if(k==='visitor')return{visitorId:'v1'};return null;},current:"${OPTV}"};</script>` : ''}<script>window.Shopify={shop:'mock.myshopify.com',${MARKETS ? `country:'${CC}',currency:{active:'${curOf()}',rate:'${FX[CC][1]}'},` : `country:'${COUNTRY}',currency:{active:'${CURRENCY[COUNTRY] || 'INR'}'},`}theme:${DRAFT ? "{id:222,name:'Dawn – Diwali draft',role:'unpublished'}" : saleOn && SALE.themeId ? `{id:${Number(SALE.themeId)},name:'Dawn – Sale',role:'main'}` : "{id:111,name:'Dawn',role:'main'}"}};</script>
 ${B.has('jserror') ? '<script>setTimeout(function(){ undefinedAppFunction(); }, 10);</script>' : ''}<script src="/assets/theme.js?v=111"></script>${scriptTags()}
 ${B.has('theme') ? '<style>body{background:#fff4d6} h1{color:#b3261e;font-size:48px}</style>' : ''}${B.has('restyle') ? '<style>body{background:#111;color:#eee} a{color:#9cf}</style>' : ''}</head><body>${saleOn && SALE.banner && !DRAFT ? `<div class="announcement">${SALE.banner}</div>` : ''}${B.has('theme') ? '<div style="background:#b3261e;color:#fff;padding:18px;font:700 22px sans-serif">DIWALI SALE · 40% OFF</div>' : ''}<header><a href="/">Mock Store</a> <nav><a href="/collections/all">Shop</a> <a href="/pages/about">About</a> <a href="/search">Search</a> ${B.has('links') ? '<a href="/pages/old-sale">Sale</a> <a href="/collections/discontinued">Old</a>' : ''} <a href="/cart">Cart</a></nav></header>
 <main id="MainContent">${body}</main>${formBox()}${DRAFT ? '<iframe id="preview-bar-iframe" style="position:fixed;bottom:0;left:0;width:100%;height:60px;border:0;background:#222"></iframe>' : ''}${frameTags()}${B.has('spam') ? '<div style="position:absolute;left:-9999px;top:0"><a href="https://best-casino-bonus.example/">online casino</a> <a href="https://pills.example/buy">cheap viagra</a></div><p style="display:none">replica watches and payday loans at low prices</p>' : ''}${B.has('cloaked') ? '<a href="https://link-farm.example/" style="font-size:0">partner</a>' : ''}<footer><a href="/policies/privacy-policy">${DE ? 'Datenschutz' : 'Privacy'}</a> <a href="/policies/refund-policy">${DE ? 'Widerrufsbelehrung' : 'Refunds'}</a>${US ? ' <a href="/pages/data-sharing-opt-out">Your privacy choices</a>' : ''}${DE ? ' <a href="/pages/impressum">Impressum</a> <a href="/policies/terms-of-service">AGB</a> <a href="/pages/accessibility">Barrierefreiheit</a> <a href="https://ec.europa.eu/consumers/odr">OS-Plattform</a> <a class="withdraw" href="/pages/widerruf" style="font-weight:700">Vertrag widerrufen</a>' : ''}</footer>${TRACK ? '<script src="https://connect.facebook.net/en_US/fbevents.js" async></script>' : ''}</body></html>`;
@@ -278,6 +355,14 @@ const server = http.createServer(async (req, res) => {
   DRAFT = !!previewId || /preview_theme=\d+/.test(req.headers.cookie || '');
   saleClock();
   COUNTRY = countryOf(req);
+  CC = (MARKETS && /localization=([A-Z]{2})/.exec(req.headers.cookie || '')?.[1]) || 'IN';
+  if (MARKETS && p === '/localization' && req.method === 'POST') {
+    const f = new URLSearchParams(await readBody(req));
+    const cc = String(f.get('country_code') || '').toUpperCase();
+    // Countries without a market stay on the store's own (like Shopify, which falls back to the primary market).
+    res.writeHead(302, { Location: f.get('return_to') || '/', ...(FX[cc] ? { 'Set-Cookie': `localization=${cc}; Path=/` } : {}) });
+    return res.end();
+  }
   B = DRAFT ? DRAFT_BREAK : BREAK;
   REQ_PATH = u.pathname;
   ABV = '';
@@ -388,13 +473,23 @@ const server = http.createServer(async (req, res) => {
   }
   // Shopify's product JSON (prices in cents), used by themes and by our checks.
   { const m = /^\/products\/([\w-]+)\.js$/.exec(p); if (m) { const pr = products.find((x) => x.handle === m[1]); if (!pr) return send(res, 404, { status: 404 }, 'application/json');
-    return send(res, 200, { id: pr.id, title: pr.title, handle: pr.handle, variants: pr.variants.map((v) => ({ id: v.id, title: v.title, available: v.available, price: Math.round(Number(v.price) * 100) })) }, 'application/json'); } }
+    return send(res, 200, { id: pr.id, title: pr.title, handle: pr.handle, variants: pr.variants.map((v) => ({ id: v.id, title: v.title, available: v.available, price: conv(Math.round(Number(v.price) * 100)) })) }, 'application/json'); } }
   if (p.startsWith('/products/')) {
     const prod = products.find((x) => x.handle === p.split('/')[2]);
     if (!prod) return send(res, 404, layout('Not found', '<h1>404</h1>'));
     const vid = Number(u.searchParams.get('variant')) || prod.variants[0].id;
     const v = prod.variants.find((x) => x.id === vid) || prod.variants[0];
-    const breakAtc = B.has('atc') || ABV === 'b'
+    const opts = OPTIONS && prod.id === 2;
+    const app = OPTIONS_APP && prod.id === 1;
+    const appHtml = app ? `<div class="po-app" id="po-app"><p id="po-colour-label">Embroidery colour *</p><div role="radiogroup" aria-labelledby="po-colour-label" ${B.has('optional') ? '' : 'aria-required="true"'}><span role="radio" aria-checked="false" data-value="Gold" tabindex="0">Gold (+₹100)</span> <span role="radio" aria-checked="false" data-value="Silver" tabindex="0">Silver</span></div>
+<label for="po-name">Name on tag</label> <input id="po-name" name="properties[Name on tag]" maxlength="20"><p class="po-error" role="alert"></p></div>
+<script>(function(){var base=${Number(v.price)};document.querySelectorAll('#po-app [role=radio]').forEach(function(r){r.addEventListener('click',function(){document.querySelectorAll('#po-app [role=radio]').forEach(function(x){x.setAttribute('aria-checked','false');});r.setAttribute('aria-checked','true');document.querySelector('.price').textContent='₹'+(base+(r.dataset.value==='Gold'?100:0)).toFixed(2);});});
+document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();var c=document.querySelector('#po-app [aria-checked=true]');if(!c&&${B.has('optional') ? 'false' : 'true'}){document.querySelector('.po-error').textContent='Choose an embroidery colour';return;}var props={};if(c)props['Embroidery colour']=c.dataset.value;var n=document.getElementById('po-name').value;if(n)props['Name on tag']=n;fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:[{id:Number(f.id.value),quantity:1${B.has('props') ? '' : ',properties:props'},upcharge:c&&c.dataset.value==='Gold'?${B.has('upcharge') ? 150 : 100}:0}]})}).then(function(){document.getElementById('cart-count').textContent='1';});});})();</script>` : '';
+    const optionsHtml = opts ? `<label for="eng">Engraving</label> <input id="eng" name="properties[Engraving]" maxlength="20" ${B.has('optional') ? '' : 'required'}>
+<label for="gw">Gift wrap</label> <select id="gw" name="properties[Gift wrap]"><option>No</option><option>Yes (+₹99)</option></select>
+<script>document.getElementById('gw').addEventListener('change',function(e){document.querySelector('.price').textContent='₹'+(${Number(v.price)}+(/^Yes/.test(e.target.value)?99:0)).toFixed(2);});</script>` : '';
+    const optionsAtc = `<script>document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();var props={};[].forEach.call(f.querySelectorAll('[name^="properties["]'),function(x){props[x.name.slice(11,-1)]=x.value;});var items=[{id:Number(f.id.value),quantity:1${B.has('props') ? '' : ',properties:props'}}];if(/^Yes/.test(props['Gift wrap']||''))items.push({id:902,quantity:1});fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:items})}).then(function(){document.getElementById('cart-count').textContent='1';});});</script>`;
+    const breakAtc = app ? appHtml : opts ? optionsAtc : B.has('atc') || ABV === 'b'
       ? `<script>document.addEventListener('submit',function(e){e.preventDefault();},true);</script>`
       : `<script>document.addEventListener('submit',function(e){var f=e.target;if(!f.action.includes('/cart/add'))return;e.preventDefault();fetch('/cart/add.js',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:[{id:Number(f.id.value),quantity:1}]})}).then(function(){document.getElementById('cart-count').textContent='1';});});</script>`;
     return send(
@@ -402,11 +497,11 @@ const server = http.createServer(async (req, res) => {
       200,
       layout(
         `${prod.title} – Mock Store`,
-        `<h1>${prod.title}</h1>${B.has('noprice') ? '' : `<div class="price">₹${ABV === 'c' ? (Number(v.price) - 200).toFixed(2) : v.price}</div>`}
+        `<h1>${prod.title}</h1>${B.has('noprice') ? '' : `<div class="price">${MARKETS && CC !== 'IN' ? fmt(conv(Math.round(Number(v.price) * 100))) : `₹${ABV === 'c' ? (Number(v.price) - 200).toFixed(2) : v.price}`}</div>`}
 <form method="post" action="/cart/add"><input type="hidden" name="id" value="${v.id}">
-<select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>
+<select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>${optionsHtml}
 <button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>${DE ? '<p class="tax-note">inkl. MwSt., zzgl. <a href="/policies/shipping-policy">Versandkosten</a></p>' : ''}
-<span id="cart-count">0</span>${FEATURES ? FEATURE_HTML : ''}${PINCODE ? `<div class="pin-check"><label for="pincode">Delivery pincode</label> <input id="pincode" inputmode="numeric"> <button type="button" id="pin-btn">Check</button><p class="delivery-result" aria-live="polite"></p><a id="partner-link" href="http://127.0.0.1:${PORT}/pages/about">Our delivery partner</a></div><script>document.getElementById('pin-btn').addEventListener('click',function(){var v=document.getElementById('pincode').value.trim();var ok=${B.has('pincode') ? 'false' : "/^5\\d{5}$/.test(v)"};setTimeout(function(){document.querySelector('.delivery-result').textContent=ok?'Delivery available in 2 days':'Sorry, we do not deliver to '+v;},300);});</script>` : ''}${breakAtc}`
+<span id="cart-count">0</span>${TIER_TABLE && prod.handle === 'cotton-kurta' ? tierTableHtml() : ''}${FEATURES ? FEATURE_HTML : ''}${PINCODE ? `<div class="pin-check"><label for="pincode">Delivery pincode</label> <input id="pincode" inputmode="numeric"> <button type="button" id="pin-btn">Check</button><p class="delivery-result" aria-live="polite"></p><a id="partner-link" href="http://127.0.0.1:${PORT}/pages/about">Our delivery partner</a></div><script>document.getElementById('pin-btn').addEventListener('click',function(){var v=document.getElementById('pincode').value.trim();var ok=${B.has('pincode') ? 'false' : "/^5\\d{5}$/.test(v)"};setTimeout(function(){document.querySelector('.delivery-result').textContent=ok?'Delivery available in 2 days':'Sorry, we do not deliver to '+v;},300);});</script>` : ''}${breakAtc}`
       )
     );
   }
@@ -420,11 +515,13 @@ const server = http.createServer(async (req, res) => {
     for (const it of body.items || [{ id: body.id, quantity: body.quantity || 1 }]) {
       const refused = CART_REFUSES.get(Number(it.id));
       if (refused) return send(res, refused[0], refused[1], 'application/json');
+      // options: the gift-wrap add-on line an options app adds next to the product.
+      if (OPTIONS && Number(it.id) === 902) { items.push({ id: 902, title: 'Gift wrap', quantity: 1, price: B.has('upcharge') ? '149.00' : '99.00', handle: 'gift-wrap' }); continue; }
       const hit = byId.get(Number(it.id));
-      if (!hit || !hit.v.available) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
+      if (!hit || !hit.v.available || (MARKETS && CC === 'US' && B.has('fxblock'))) return send(res, 422, { status: 422, description: 'Sold out' }, 'application/json');
       // pricedrift / pricelow: an app or cart script changes the price after the shopper saw it.
-      const price = (Number(hit.v.price) + (B.has('pricedrift') ? 150 : B.has('pricelow') ? -100 : 0)).toFixed(2);
-      items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price, handle: hit.p.handle });
+      const price = (Number(hit.v.price) + (B.has('pricedrift') ? 150 : B.has('pricelow') ? -100 : 0) + (Number(it.upcharge) || 0)).toFixed(2);
+      items.push({ id: hit.v.id, title: hit.p.title, quantity: it.quantity || 1, price, handle: hit.p.handle, properties: it.properties || null });
     }
     // protection: an app adds its own paid line to every cart, once.
     if (B.has('protection') && !items.some((i) => i.id === 901)) items.push({ id: 901, title: 'Shipping protection', quantity: 1, price: '99.00', handle: 'shipping-protection' });
@@ -475,7 +572,7 @@ const server = http.createServer(async (req, res) => {
     // Order summary like Shopify's checkout: lines and a subtotal, before any payment details.
     const c = cartJson(cartFor(req, res), countryOf(req));
     const sub = c.items_subtotal_price + (B.has('checkoutprice') ? 20000 : 0);
-    const inr = (m) => '₹' + (m / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+    const inr = (m) => (B.has('fxcheckout') ? '₹' + (m / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : fmt(m));
     return send(res, 200, layout('Checkout', `<h2>Contact</h2><input type="email" name="email" autocomplete="email"><h2>Delivery</h2>
 <select name="countryCode" autocomplete="shipping country">${['IN', 'US', 'GB', 'DE', 'AT', 'FR', 'SG', 'AU', 'CA', 'AE'].map((c) => `<option value="${c}">${c}</option>`).join('')}</select>
 <input name="firstName" autocomplete="shipping given-name"><input name="lastName" autocomplete="shipping family-name"><input name="address1" autocomplete="shipping address-line1">
