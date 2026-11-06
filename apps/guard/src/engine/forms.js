@@ -5,9 +5,14 @@
  * details (email, phone, address, name, card fields). It records which outside script
  *   - reads such a field's value (input.value, new FormData(form)), or
  *   - listens to typing in such a field (input, change, key and blur listeners on the field),
- * using the calling script's address from the call stack. To see what such a script does with the data, it
- * then puts a made-up marker (never real data, never a password) into each empty field and fires the usual
- * events, and watches whether the marker leaves for an outside site. No form is ever submitted.
+ * using the calling script's address from the call stack (frames from well-known library CDNs such as jQuery
+ * are skipped, so the store's own code using a library is never blamed on the CDN). To see what such a script
+ * does with the data, it then puts a made-up marker (never real data, never a password) into the empty fields
+ * that an outside, unknown script uses, and fires the usual events, and watches whether the marker leaves for an
+ * outside site. No form is ever submitted. Fields that no outside script uses, or that a known service (an email
+ * sign-up popup, an analytics or ad pixel) also uses, are never filled: those services may turn whatever is typed
+ * into a contact in the merchant's account. The marker is the same on every run for a store, so even a service
+ * we don't know about sees one made-up contact at most, not a new one every hour.
  *
  * The store's own scripts and Shopify's are never reported; well-known services that legitimately read form
  * fields (analytics, email marketing, payments) are listed in FORM_SERVICES and are not reported either,
@@ -25,10 +30,27 @@ const FORM_SERVICES = [
   'klaviyo.com', 'omnisend.com', 'privy.com', 'attn.tv', 'attentivemobile.com', 'mailchimp.com', 'list-manage.com',
   'paypal.com', 'paypalobjects.com', 'stripe.com', 'stripe.network', 'razorpay.com', 'judge.me', 'okendo.io', 'yotpo.com',
 ];
+const envList = (name) => String(process.env[name] || '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
+const formServices = () => [...FORM_SERVICES, ...envList('FORM_SERVICES')];
 export function isFormService(host) {
   const h = String(host || '').toLowerCase().replace(/:\d+$/, '');
-  const extra = String(process.env.FORM_SERVICES || '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
-  return [...FORM_SERVICES, ...extra].some((d) => h === d || h.endsWith('.' + d));
+  return formServices().some((d) => h === d || h.endsWith('.' + d));
+}
+
+/**
+ * Public CDNs that host shared libraries (jQuery and the like). A field read through a library loaded from one
+ * of these is blamed on the code that called the library. Extra ones: FORM_LIBRARY_CDNS env (comma separated).
+ */
+const LIBRARY_CDNS = [
+  'ajax.googleapis.com', 'code.jquery.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'unpkg.com',
+  'ajax.aspnetcdn.com', 'stackpath.bootstrapcdn.com', 'maxcdn.bootstrapcdn.com', 'cdn.bootcdn.net', 'lib.baomitu.com',
+];
+const libraryCdns = () => [...LIBRARY_CDNS, ...envList('FORM_LIBRARY_CDNS')];
+
+/** The made-up marker typed for a store: the same on every run, different for each store. */
+export function markerFor(origin) {
+  const host = new URL(origin).host.toLowerCase();
+  return 'tharam' + crypto.createHash('sha256').update(`tharam-form-marker|${host}`).digest('hex').slice(0, 10);
 }
 
 /** Field names, ids, autocomplete hints and labels that hold personal or payment details. */
@@ -37,7 +59,7 @@ export const FIELD_PATTERN = 'e-?mail|phone|mobile|\\btel\\b|address|street|city
 const PAGES = { product: 'product page', cart: 'cart page' };
 
 // Runs in the page before any of its own scripts. Kept dependency-free: it is serialised into the browser.
-function init({ marker, email, pattern }) {
+function init({ marker, email, pattern, services, libs, store }) {
   const kind = /^\/(collections\/[^/]+\/)?products\/[^/]+\/?$/.test(location.pathname) ? 'product' : /^\/cart\/?$/.test(location.pathname) ? 'cart' : null;
   if (!kind) return;
   const re = new RegExp(pattern, 'i');
@@ -51,13 +73,29 @@ function init({ marker, email, pattern }) {
     return re.test([el.name, el.id, el.getAttribute('autocomplete'), el.getAttribute('placeholder'), el.getAttribute('aria-label')].join(' '));
   };
   const describe = (el) => `${String(el.type || el.tagName).toLowerCase()}${el.name ? ` “${el.name}”` : el.id ? ` #${el.id}` : ''}`;
+  const hostOf = (u) => { try { return new URL(u).host.toLowerCase().replace(/:\d+$/, ''); } catch { return ''; } };
+  const inList = (h, list) => list.some((d) => h === d || h.endsWith('.' + d));
+  // The script responsible for a call: the innermost frame that is not the page itself and not a shared library
+  // from a public CDN. A library called by the page's own code is the store's own doing (nothing to report);
+  // code that only ever runs from a library CDN is blamed on that CDN address.
   const caller = () => {
     const urls = (new Error().stack || '').match(/https?:\/\/[^\s()]+?(?=:\d+:\d+)/g) || [];
-    return urls.find((u) => !u.startsWith(location.origin + location.pathname)) || null;
+    const pageUrl = location.origin + location.pathname;
+    let lib = null;
+    for (const u of urls) {
+      if (inList(hostOf(u), libs)) { lib = lib || u; continue; }
+      if (u.startsWith(pageUrl)) { if (lib) return null; continue; }
+      return u;
+    }
+    return lib;
   };
+  const outside = new WeakSet(); // fields an outside, unknown script uses
+  const serviced = new WeakSet(); // fields a known service uses (email popups, pixels): never filled in
   const seen = new Set();
   const report = (how, el, script) => {
     if (!script) return;
+    const h = hostOf(script);
+    if (h === store) { /* the store's own script */ } else if (inList(h, services)) serviced.add(el); else outside.add(el);
     const key = `${how}|${script}|${describe(el)}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -89,11 +127,17 @@ function init({ marker, email, pattern }) {
       if (d) Object.defineProperty(C.prototype, p, { ...d, set(v) { if (sensitive(this)) report('listen', this, caller()); d.set.call(this, v); } });
     }
   }
-  // A made-up value in each empty field, with the events a shopper's typing fires. Never a password, never submitted.
+  // A made-up value in the empty fields an outside, unknown script uses (and no known service does), with the
+  // events a shopper's typing fires. Never a password, never submitted.
+  const filled = new WeakSet();
+  let total = 0;
   const probe = () => {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    const fields = [...document.querySelectorAll('input')].filter((el) => sensitive(el) && el.type !== 'password' && !el.value && !el.disabled && !el.readOnly).slice(0, 5);
+    const fields = [...document.querySelectorAll('input')].filter((el) => sensitive(el) && outside.has(el) && !serviced.has(el) && !filled.has(el)
+      && el.type !== 'password' && !el.value && !el.disabled && !el.readOnly).slice(0, Math.max(0, 5 - total));
+    total += fields.length;
     for (const el of fields) {
+      filled.add(el);
       setter.call(el, el.type === 'email' || /mail/i.test(el.name + el.id) ? email : marker);
       for (const t of ['input', 'change']) el.dispatchEvent(new Event(t, { bubbles: true }));
       el.dispatchEvent(new FocusEvent('blur'));
@@ -101,7 +145,7 @@ function init({ marker, email, pattern }) {
     }
     try { window.__tharamForm({ how: 'probed', fields: fields.length }); } catch {}
   };
-  addEventListener('load', () => setTimeout(probe, 300));
+  addEventListener('load', () => { setTimeout(probe, 300); setTimeout(probe, 1500); });
 }
 
 /**
@@ -110,17 +154,18 @@ function init({ marker, email, pattern }) {
  */
 export async function watchForms(page, origin) {
   const storeHost = new URL(origin).host;
-  const marker = 'tharam' + crypto.randomBytes(5).toString('hex');
+  const marker = markerFor(origin);
   const email = `${marker}@example.invalid`;
   const variants = [...new Set([marker, email, encodeURIComponent(email), Buffer.from(email).toString('base64'), Buffer.from(marker).toString('base64')])];
   const found = new Map();
   const pages = new Set();
+  let probed = 0; // fields that got the made-up value
   const own = (host) => host === storeHost || isFormService(host);
   await page.exposeBinding('__tharamForm', (source, r) => {
     let kind;
     try { if (source.frame !== source.page.mainFrame()) return; kind = pageKind(source.frame.url()); } catch { return; }
     if (!PAGES[kind] || !r || typeof r !== 'object') return;
-    if (r.how === 'probed') { pages.add(kind); return; }
+    if (r.how === 'probed') { pages.add(kind); probed += Math.max(0, Math.min(5, Number(r.fields) || 0)); return; }
     let u;
     try { u = new URL(String(r.script)); } catch { return; }
     if (own(u.host) && !isBadHost(u.host)) return;
@@ -130,7 +175,11 @@ export async function watchForms(page, origin) {
     (r.how === 'read' ? f.reads : f.listens).add(String(r.field).slice(0, 80));
     found.set(key, f);
   });
-  await page.addInitScript(init, { marker, email, pattern: FIELD_PATTERN });
+  const services = formServices();
+  await page.addInitScript(init, {
+    marker, email, pattern: FIELD_PATTERN, services, libs: libraryCdns(),
+    store: storeHost.toLowerCase().replace(/:\d+$/, ''),
+  });
   const sent = new Map(); // host -> page kind
   page.on('request', (req) => {
     let u;
@@ -153,6 +202,7 @@ export async function watchForms(page, origin) {
     }
     return {
       pages: [...pages],
+      probed,
       readers: list.map((f) => ({ script: f.script, host: f.host, page: f.page, reads: [...f.reads], listens: [...f.listens], sentTo: [...f.sentTo], bad: f.bad })),
       sentTo: leaks,
     };

