@@ -42,7 +42,7 @@ export function catalogReport(storeId, runId, base) {
 
   const products = cur.products
     .map((p) => ({
-      handle: p.handle, title: p.title, image: p.image, available: p.available,
+      handle: p.handle, url: p.url || null, title: p.title, image: p.image, available: p.available,
       price: p.minPrice, maxPrice: p.maxPrice, variants: p.variants.length, images: p.images,
       issues: (issuesByHandle.get(p.handle) || []).length,
       worst: (issuesByHandle.get(p.handle) || []).some((i) => i.severity === 'critical') ? 'critical' : (issuesByHandle.get(p.handle) || []).some((i) => i.severity === 'major') ? 'major' : (issuesByHandle.get(p.handle) || []).length ? 'minor' : null,

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
 import { check, shortErr, plural } from './checks.js';
-import { fetchCatalog, validateCatalog, diffCatalog } from './products.js';
+import { fetchCatalog, fetchWooCatalog, validateCatalog, diffCatalog } from './products.js';
 import { aiEnabled, reviewCopy } from '../ai.js';
 import { findTampering, tamperCheck } from './tamper.js';
 
@@ -39,6 +39,25 @@ async function sitemapProductCount(request, origin) {
   }
 }
 
+/** WordPress writes its sitemaps as wp-sitemap.xml (core) or sitemap_index.xml (Yoast and others). */
+async function wooSitemapProductCount(request, origin) {
+  try {
+    for (const root of ['/wp-sitemap.xml', '/sitemap_index.xml', '/sitemap.xml']) {
+      const r = await request.get(origin + root, { timeout: 20000 });
+      if (!r.ok()) continue;
+      const subs = [...(await r.text()).matchAll(/<loc>([^<]*)<\/loc>/g)].map((m) => m[1].replace(/&amp;/g, '&')).filter((u) => /product/i.test(u) && !/(cat|tag|brand|taxonom)/i.test(u)).slice(0, 10);
+      if (!subs.length) continue;
+      let n = 0;
+      for (const u of subs) {
+        const sr = await request.get(u, { timeout: 20000 });
+        if (sr.ok()) n += ((await sr.text()).match(/<loc>[^<]*\/product\/[^<]*<\/loc>/g) || []).length;
+      }
+      return n;
+    }
+  } catch { /* no sitemap */ }
+  return null;
+}
+
 async function emptyCollections(request, origin, collections) {
   const empty = [];
   for (const c of collections.slice(0, 8)) {
@@ -54,7 +73,9 @@ async function emptyCollections(request, origin, collections) {
 export async function runCatalog({ request, origin, storeId, runId, rec, info, on, keep = null, shopifyCodes = null }) {
   const out = { count: 0 };
   try {
-    const snap = await fetchCatalog(request, origin);
+    const woo = !!info.isWoo;
+    const admin = woo ? 'WordPress admin → Products' : 'Shopify admin → Products';
+    const snap = woo ? await fetchWooCatalog(request, origin, info.woo?.base) : await fetchCatalog(request, origin);
     if (keep) keep.snap = snap; // shared with the variant sweep, so the catalog is read once
     if (!snap.count) return out;
     // The store's active Shopify discount codes (null when unknown), kept with the snapshot for tampering checks.
@@ -78,26 +99,26 @@ export async function runCatalog({ request, origin, storeId, runId, rec, info, o
     rec.add(check('cat.pricing', 'trust', 'Prices and discounts are valid', zeroPrice ? 'fail' : pricing.length ? 'warn' : 'pass', {
       severity: 'major',
       detail: pricing.length ? `${plural(pricing.length, 'pricing issue')} across ${snap.count} products. ${first(pricing)}` : `All ${snap.count} products have valid prices and discounts.`,
-      fix: pricing.length ? 'Open each product in Shopify admin → Products and correct the price or compare-at price. Zero prices and fake discounts are often bulk-edit or import mistakes.' : '',
+      fix: pricing.length ? `Open each product in ${admin} and correct the price or compare-at price. Zero prices and fake discounts are often bulk-edit or import mistakes.` : '',
     }));
     const content = by('content');
     rec.add(check('cat.content', 'trust', 'Product text is clean', content.some((i) => i.severity === 'major') ? 'warn' : 'pass', {
       severity: 'minor',
       detail: content.length ? `${plural(content.length, 'text issue')}: placeholders, duplicates, empty or short descriptions, formatting. ${first(content)}` : `Titles and descriptions of all ${snap.count} products look clean.`,
-      fix: content.length ? 'Edit the product title or description in Shopify admin. Placeholder text usually comes from a theme demo or an import template.' : '',
+      fix: content.length ? `Edit the product title or description in ${admin}. Placeholder text usually comes from a theme demo or an import template.` : '',
     }));
     const media = by('media');
     rec.add(check('cat.media', 'trust', 'Products have images', media.some((i) => i.severity === 'major') ? 'warn' : 'pass', {
       severity: 'minor',
       detail: media.length ? `${plural(media.length, 'image issue')}. ${first(media)}` : `All ${snap.count} products have images.`,
-      fix: media.length ? 'Add product images in Shopify admin → Products → Media.' : '',
+      fix: media.length ? `Add product images in ${admin}.` : '',
     }));
     const data = by('data');
     if (data.length) rec.add(check('cat.data', 'trust', 'SKUs are unique', 'warn', { severity: 'minor', detail: `${plural(data.length, 'product')} share SKUs with others. ${first(data)}`, fix: 'Give every variant its own SKU so inventory and fulfilment apps track it correctly.' }));
 
     // Counts: catalog vs sitemap vs collections.
-    const inSitemap = await sitemapProductCount(request, origin);
-    const empty = await emptyCollections(request, origin, info.collections || []);
+    const inSitemap = woo ? await wooSitemapProductCount(request, origin) : await sitemapProductCount(request, origin);
+    const empty = woo ? [] : await emptyCollections(request, origin, info.collections || []);
     out.sitemapCount = inSitemap;
     const gap = inSitemap != null && !snap.truncated ? snap.count - inSitemap : 0;
     const countProblems = [];

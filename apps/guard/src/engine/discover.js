@@ -2,6 +2,7 @@
  * Store discovery: learns what to test from the store's public Shopify endpoints
  * (products.json, collections.json) so merchants don't have to configure anything.
  */
+import { wooToRaw } from './products.js';
 
 function pickProducts(products) {
   const withStock = products
@@ -215,6 +216,7 @@ async function discoverWoo(request, origin, out, { testProduct } = {}) {
     out.woo = { base };
     out.sampleSize = json.length;
     out.products = wooPick(json, testProduct);
+    out.quality = dataQuality(json.map(wooToRaw));
     out.catalog = json.filter((p) => p.is_in_stock !== false).slice(0, 50).map((p) => ({ title: decodeEntities(p.name), handle: p.slug, variants: Math.max(1, (p.variations || []).length) }));
     if (testProduct && out.products[0]?.handle !== testProduct) out.notes.push(`Chosen test product "${testProduct}" was not found or is sold out; used another product.`);
     try {

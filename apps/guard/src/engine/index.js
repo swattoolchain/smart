@@ -203,7 +203,7 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
         // Defacement is judged against the approved look, so it rides on the visual screenshots.
         await runVisual({ page, mobilePage, rec, origin, info, password, runDir, baselineDir: path.join(config.dataDir, 'baselines', `store-${storeId}`), captureOnly, prime: preview ? (p) => openPreview(p, preview.url, { password }) : null, deface: on('security.deface') && !preview });
       }
-      if (kind === 'full' && storeId && info.isShopify && (on('catalog') || on('security.tamper'))) {
+      if (kind === 'full' && storeId && (info.isShopify || info.isWoo) && (on('catalog') || on('security.tamper'))) {
         phase('catalog');
         const cat = await runCatalog({ request: ctx.request, origin, storeId, runId, rec, info, on, keep: catalogKeep, shopifyCodes });
         // The full catalog checks supersede the quick sample check; reporting both double-counts one mistake.
