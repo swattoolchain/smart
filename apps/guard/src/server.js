@@ -41,6 +41,7 @@ import { teamRoutes, membership, memberMay, teamAllowed, redactForViewer } from 
 import * as themeClean from './theme-clean.js';
 import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
 import { recoveryPacket } from './recovery-packet.js';
+import { recoveryRoutes, recoverySession, recoveryMay } from './recovery.js';
 import { incidentView, startIncident, updateIncident, endIncident, incidentBrief, startEmail as incidentStartEmail, endEmail as incidentEndEmail } from './incident.js';
 import { warningsFor } from './early-warning.js';
 import { cspMiddleware, cspReportRoute } from './csp.js';
@@ -128,6 +129,15 @@ function requireUser(req, res, next) {
       return res.status(401).json({ error: 'Your Shopify session has expired. Reload the page.', reauth: true });
     }
   }
+  // A recovery session (T40) is read-only and not a login: reports, incident mode, recovery packet, clean theme.
+  if (!req.session?.uid && req.session?.recover) {
+    const ru = recoverySession(req);
+    if (!ru) { req.session = null; return res.status(401).json({ error: 'Your recovery session has ended. Start again at /recover.' }); }
+    if (!recoveryMay(req.method, req.path)) return res.status(403).json({ error: 'This is a read-only recovery session. Sign in the usual way to change anything.', recovery: true });
+    req.user = ru; req.recovery = true;
+    const json = res.json.bind(res); res.json = (body) => json(redactForViewer(body));
+    return next();
+  }
   const u = req.session?.uid && q.userById.get(req.session.uid);
   if (!u) return res.status(401).json({ error: 'Please log in' });
   // Signed out everywhere, or the Shopify app was uninstalled: this browser session no longer counts.
@@ -190,6 +200,7 @@ app.post('/api/scan', async (req, res) => {
 
 /** The signed-in user: a login cookie on the website, or a Shopify session token inside Shopify admin. */
 function currentUserId(req) {
+  if (!req.session?.uid && req.session?.recover) return recoverySession(req)?.id || null;
   if (req.session?.uid) {
     if (!sessionValid(req, req.session.uid).ok) return null;
     // A team member sees the workspace they are working in (screenshots, reports), and only while still a member.
@@ -398,9 +409,11 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/me', requireUser, (req, res) => {
   const member = req.member ? { email: req.member.user.email, name: req.member.user.name, role: req.member.role } : null;
   // Founder access belongs to the person, never to a workspace they visit.
-  res.json({ user: req.user, member, admin: !req.member && isAdmin(req.user), license: licenseView(req.user.id), team: !req.member && isOn('teams') && teamAllowed(req.user.id), features: enabledKeys() });
+  res.json({ user: req.user, recovery: !!req.recovery, member, admin: !req.member && isAdmin(req.user), license: licenseView(req.user.id), team: !req.member && isOn('teams') && teamAllowed(req.user.id), features: enabledKeys() });
 });
 teamRoutes(app, { requireUser });
+recoveryRoutes(app, { requireUser, admins: ADMINS });
+app.get('/recover', (req, res) => res.redirect('/app#/recover'));
 
 // The customer's own plan and payment history.
 app.get('/api/account/billing', requireUser, (req, res) => {

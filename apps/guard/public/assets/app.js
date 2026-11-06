@@ -326,6 +326,7 @@
           <p class="error-msg" id="auth-err" role="alert">${esc(notice || '')}</p>
         </form>
         ${mode === 'signup' ? '' : '<p class="switch-mode"><button type="button" data-m="link">Email me a sign-in link instead</button></p>'}
+        ${mode === 'signup' ? '' : '<p class="switch-mode"><a href="/recover">Locked out? Use your recovery code</a></p>'}
         <p class="switch-mode">${mode === 'signup' ? 'Already have an account? <button type="button" data-m="login">Log in</button>' : 'New to Tharam? <button type="button" data-m="signup">Create an account</button>'}</p>
       </div></main></div>`;
     $$('[data-m]').forEach((b) => (b.onclick = (e) => authView(e.target.dataset.m)));
@@ -438,9 +439,10 @@
     if (navMenu) document.body.prepend(navMenu);
     const userBtn = $('#user-btn'), userPop = $('#user-pop');
     userBtn.onclick = (e) => { e.stopPropagation(); const open = userPop.hidden; closePops(); userPop.hidden = !open; userBtn.setAttribute('aria-expanded', String(open)); };
-    document.body.classList.toggle('role-viewer', S.member?.role === 'viewer');
+    document.body.classList.toggle('role-viewer', S.member?.role === 'viewer' || !!S.recovery);
+    if (S.recovery && !$('#rec-banner')) document.body.insertAdjacentHTML('afterbegin', '<div id="rec-banner" class="notice" role="status" style="margin:0;border-radius:0;text-align:center"><b>Recovery mode.</b> You can read your reports, use incident mode and download your clean theme. Nothing can be changed. The session ends after an hour.</div>');
     // Workspaces this person belongs to, in the account menu.
-    if (!EMB) api('/api/team/workspaces').then((w) => {
+    if (!EMB && !S.recovery) api('/api/team/workspaces').then((w) => {
       if (!w.workspaces.length) return;
       const el = $('#ws-list');
       if (!el) return;
@@ -544,7 +546,7 @@
     const h = hash.replace(/^#/, '').split('?')[0] || '/';
     let m;
     if ((m = /^\/s\/(\d+)(?:\/([a-z]+))?(?:\/([\w-]+))?(?:\/([\w-]+))?$/.exec(h))) return { store: Number(m[1]), module: m[2] || 'overview', a: m[3] || null, b: m[4] || null };
-    if ((m = /^\/account(?:\/(password|billing|team))?$/.exec(h))) return { page: 'account', a: m[1] || null };
+    if ((m = /^\/account(?:\/(password|billing|team|security))?$/.exec(h))) return { page: 'account', a: m[1] || null };
     if (h === '/stores') return { page: 'stores' };
     if (h === '/add') return { page: 'add' };
     if (h === '/guide') return { page: 'guide' };
@@ -3287,11 +3289,12 @@
   }
 
   PAGES.account = async (ctx) => {
-    const tab = ['password', 'billing', 'team'].includes(ctx.r.a) ? ctx.r.a : null;
+    const tab = ['password', 'billing', 'team', 'security'].includes(ctx.r.a) && (ctx.r.a !== 'security' || feat('recovery')) ? ctx.r.a : null;
     if (S.member) { ctx.main.innerHTML = `<div class="main-inner"><div class="panel empty"><h2>Account settings belong to the account owner</h2><p>You're working in ${esc(S.me.name || S.me.email)}'s workspace. Switch back to your own account in the account menu to see your settings.</p></div></div>`; return; }
-    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing']] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password'], ...(S.team ? [['team', 'Team']] : [])], tab);
+    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing'], ...(feat('recovery') ? [['security', 'Security']] : [])] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password'], ...(S.team ? [['team', 'Team']] : []), ...(feat('recovery') ? [['security', 'Security']] : [])], tab);
     if (tab === 'billing') return billingPage(ctx, head);
     if (tab === 'team') return teamPage(ctx, head);
+    if (tab === 'security') return securityPage(ctx, head);
     if (tab === 'password') {
       ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="pwf"><div class="form-section"><div><h3>Change password</h3><p class="explain">Use at least 8 characters. You'll stay logged in on this device.</p></div>
         <div class="controls"><div class="field"><label for="cur">Current password</label><input id="cur" name="current" type="password" autocomplete="current-password" required></div>
@@ -3321,6 +3324,72 @@
     });
     form.addEventListener('input', mark);
   };
+
+  // Account > Security: the optional recovery code (T40).
+  async function securityPage(ctx, head) {
+    const d = await api('/api/account/recovery');
+    if (!ctx.alive()) return;
+    const draw = (shown) => {
+      ctx.main.innerHTML = `<div class="main-inner">${head}<section class="settings-card"><div class="form-section"><div><h3>Recovery code</h3>
+        <p class="explain">If you ever lose your way into Tharam, for example after a hack, a recovery code lets you read your reports from <b>tharam.store/recover</b>. You get a link by email and then type this code. A recovery session is read-only: reports, incident mode, the message for Shopify support and the clean copy of your theme. It can't change anything.</p></div>
+        <div class="controls">
+          ${shown ? `<div class="notice"><p><b>Your recovery code</b></p><p style="font-size:22px;letter-spacing:.08em;margin:8px 0" id="rc-code"><code>${esc(shown.code)}</code></p><p class="hint">Write it down or save it in a password manager. We show it only once and can't show it again. ${shown.replaced ? 'Your old code no longer works.' : ''}</p></div>` : ''}
+          <p style="margin:0">${d.hasCode ? `A recovery code is set${d.createdAt ? ` (made ${esc(dateOnly(d.createdAt))})` : ''}.` : 'You have no recovery code. It is optional.'}</p>
+          <p class="hint">The recovery link is emailed to ${d.sendsTo.length ? d.sendsTo.map((e) => `<b>${esc(e)}</b>`).join(' and ') : 'your account email. Add an email under Profile first, because this account has none we can write to'}. It never goes to your store's alert email.</p>
+          <div class="inline-row"><button type="button" class="btn" id="rc-make">${d.hasCode ? 'Make a new code' : 'Make a recovery code'}</button>${d.hasCode ? '<button type="button" class="btn link danger" id="rc-off">Remove the code</button>' : ''}</div>
+          <p class="error-msg" id="rc-err" role="alert"></p></div></div></section></div>`;
+      $('#rc-make').onclick = async (e) => {
+        if (d.hasCode && !(await confirmDialog({ title: 'Make a new recovery code?', body: 'The old code stops working at once, and so does any recovery session opened with it.', confirm: 'Make new code' }))) return;
+        const done = busy(e.currentTarget, 'Making');
+        try { const r = await api('/api/account/recovery/code', { method: 'POST' }); d.hasCode = true; d.createdAt = new Date().toISOString().slice(0, 19).replace('T', ' '); draw(r); }
+        catch (ex) { done(); $('#rc-err').textContent = ex.message; }
+      };
+      $('#rc-off')?.addEventListener('click', async (e) => {
+        if (!(await confirmDialog({ title: 'Remove the recovery code?', body: 'You will not be able to use tharam.store/recover until you make a new code.', confirm: 'Remove code' }))) return;
+        const done = busy(e.currentTarget, 'Removing');
+        try { await api('/api/account/recovery/code', { method: 'DELETE' }); d.hasCode = false; d.createdAt = null; toast('Recovery code removed'); draw(); }
+        catch (ex) { done(); $('#rc-err').textContent = ex.message; }
+      });
+    };
+    draw();
+  }
+
+  // tharam.store/recover: ask for a link; open it and type the code; read your reports (read-only).
+  async function recoverView(token) {
+    clearTimeout(S.timer);
+    authView('login');
+    const card = $('.auth-card');
+    try { await api('/api/recover'); }
+    catch { card.innerHTML = '<h1>Recovery isn’t available</h1><p class="sub">Account recovery is not switched on. Log in the usual way, or write to hello@tharam.store.</p><p class="switch-mode"><a href="/app">Back to log in</a></p>'; return; }
+    if (token) {
+      card.innerHTML = `<h1>Type your recovery code</h1><p class="sub">You opened the link from your email. Type the recovery code you saved in Account > Security.</p>
+        <form id="rv" novalidate><div class="field"><label for="rc">Recovery code</label><input id="rc" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX" required></div>
+        <button class="btn block" type="submit">Open my reports</button><p class="error-msg" id="auth-err" role="alert"></p></form>
+        <p class="hint" style="margin-top:14px">This opens a read-only session for one hour. Nothing can be changed from it.</p>`;
+      $('#rv').onsubmit = async (e) => {
+        e.preventDefault();
+        const done = busy(e.target.querySelector('button'), 'Checking');
+        try { await api('/api/recover/verify', { method: 'POST', body: { token, code: new FormData(e.target).get('code') } }); history.replaceState(null, '', '/app#/'); boot(); }
+        catch (ex) { $('#auth-err').textContent = ex.message; done(); }
+      };
+      $('#rc').focus();
+      return;
+    }
+    card.innerHTML = `<h1>Get back into your reports</h1><p class="sub">Enter the email of your Tharam account. If you made a recovery code, we email a link. You'll need the link and the code.</p>
+      <form id="rs" novalidate><div class="field"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required></div>
+      <button class="btn block" type="submit">Email me a recovery link</button><p class="error-msg" id="auth-err" role="alert"></p></form>
+      <p class="switch-mode"><a href="/app">Back to log in</a></p>`;
+    $('#rs').onsubmit = async (e) => {
+      e.preventDefault();
+      const email = new FormData(e.target).get('email');
+      const done = busy(e.target.querySelector('button'), 'Sending');
+      try {
+        await api('/api/recover/start', { method: 'POST', body: { email } });
+        card.innerHTML = `<h1>Check your email</h1><p class="sub">If <b>${esc(email)}</b> has a Tharam account with a recovery code, a link is on its way to the account's email. It works once, for 30 minutes. Open it and type your recovery code.</p><p class="switch-mode"><a href="/app">Back to log in</a></p>`;
+      } catch (ex) { $('#auth-err').textContent = ex.message; done(); }
+    };
+    $('#email').focus();
+  }
 
   // Team: invite people to work on this account's stores (website accounts only).
   async function teamPage(ctx, head) {
@@ -4036,9 +4105,11 @@
     render();
   }
   // A sign-in link opened in a tab that already shows Tharam: start over so it is used.
-  window.addEventListener('hashchange', () => { if (!EMB && /^#\/signin\//.test(location.hash)) location.reload(); });
+  window.addEventListener('hashchange', () => { if (!EMB && /^#\/(signin|recover)\b/.test(location.hash)) location.reload(); });
   async function boot() {
     if (EMB) return bootEmbedded();
+    const rec = /^#\/recover(?:\/([\w-]{40,60}))?$/.exec(location.hash);
+    if (rec) { if (rec[1]) history.replaceState(null, '', '/app#/recover'); return recoverView(rec[1] || null); }
     const link = /^#\/signin\/([\w-]{40,60})$/.exec(location.hash);
     if (link) {
       history.replaceState(null, '', '/app#/');
@@ -4063,7 +4134,7 @@
       } catch (ex) { S.flash = ex.message; }
       history.replaceState(null, '', '/app#/stores');
     }
-    S.me = r.user; S.admin = r.admin; S.features = new Set(r.features || []); S.member = r.member || null; S.team = !!r.team;
+    S.me = r.user; S.admin = r.admin; S.features = new Set(r.features || []); S.member = r.member || null; S.team = !!r.team; S.recovery = !!r.recovery;
     shell();
     if (location.hash === '#signup') location.replace('#/');
     render();

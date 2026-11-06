@@ -47,6 +47,16 @@ describe('Feature switches', () => {
     note(t, 'laws off by default: not in /api/me features, not in the catalog, skipped by the run even when asked for');
   });
 
+  it('the recovery console is hidden and refused while its switch is off', async (t) => {
+    assert.ok(!(await owner.get('/api/me')).json.features.includes('recovery'));
+    assert.equal((await owner.get('/api/account/recovery')).status, 404);
+    assert.equal((await owner.post('/api/account/recovery/code')).status, 404);
+    assert.equal((await P.session().get('/api/recover')).status, 404);
+    assert.equal((await P.session().post('/api/recover/start', { email: owner.email })).status, 404);
+    assert.equal((await P.session().post('/api/recover/verify', { token: 'x'.repeat(43), code: 'AAAA' })).status, 404);
+    note(t, 'recovery off: no feature key, code routes 404, /recover start and verify 404');
+  });
+
   it('every extra starts off, so a fresh install shows the simple product', async (t) => {
     const list = (await founder.get('/api/admin/features')).json.features;
     assert.ok(list.length >= 20, `all extras have a switch (${list.length})`);
