@@ -61,7 +61,28 @@ async function cartCount(page, api) {
 }
 
 async function clearCart(page, api) {
-  await storeApi(page, api('/cart/items'), { method: 'DELETE', nonceUrl: api('/cart') });
+  return storeApi(page, api('/cart/items'), { method: 'DELETE', nonceUrl: api('/cart') });
+}
+
+/**
+ * Empties the test cart after the journey, whatever happened: through the Store API, and when that is refused
+ * or the cart can't be read back as empty, through the cart page's own remove links (as a shopper would).
+ * Nothing we added is ever left in the store's cart session for abandoned-cart plugins to see.
+ */
+export async function emptyCart(page, api, origin) {
+  const r = await clearCart(page, api);
+  const after = await storeApi(page, api('/cart'));
+  if (r.status >= 200 && r.status < 300 && after.json && after.json.items_count === 0) return 'store-api';
+  for (let i = 0; i < 10; i++) {
+    if (!page.url().replace(/[?#].*$/, '').replace(/\/$/, '').endsWith('/cart')) await page.goto(`${origin}/cart/`, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+    const href = await page.locator('.woocommerce-cart-form a.remove[href*="remove_item="], a.remove[href*="remove_item="], .product-remove a[href*="remove_item="]').first().getAttribute('href', { timeout: 3000 }).catch(() => null);
+    if (href) { await page.goto(new URL(href, page.url()).href, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {}); continue; }
+    // Cart and Checkout blocks: a remove button per line.
+    const btn = page.locator('.wc-block-cart-item__remove-link').first();
+    if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) { await btn.click({ timeout: 5000 }).catch(() => {}); await page.waitForTimeout(800); continue; }
+    return i ? 'cart-page' : 'none';
+  }
+  return 'cart-page';
 }
 
 const decode = (t) => t.replace(/&quot;/g, '"').replace(/&#0?39;|&#8217;/g, '’').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
@@ -136,6 +157,7 @@ export async function runWooJourney({ page, rec, origin, info, shot, on = () => 
   await clearCart(page, api);
   rec.step(`Open product "${product.title}"`);
   let atcOk = false;
+  let attempted = false;
   try {
     const res = await page.goto(product.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await settle(page, 1000);
@@ -155,6 +177,7 @@ export async function runWooJourney({ page, rec, origin, info, shot, on = () => 
     }
 
     rec.step('Click Add to cart');
+  attempted = true; // from here on, something may be in the cart: it is always emptied at the end
     const options = await chooseOptions(page);
     const before = (await cartCount(page, api)).items_count;
     const btn = await firstVisible(page, ATC);
@@ -264,6 +287,6 @@ export async function runWooJourney({ page, rec, origin, info, shot, on = () => 
       rec.add(check('fn.checkout', 'functional', 'Checkout opens', 'fail', { severity: 'critical', detail: shortErr(e) }));
     }
   }
-  if (atcOk) await clearCart(page, api);
+  if (atcOk || attempted) await emptyCart(page, api, origin).catch(() => {});
   return {};
 }
