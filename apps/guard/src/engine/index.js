@@ -14,7 +14,8 @@ import { runRegional } from './regional.js';
 import { runDiscounts } from './discount.js';
 import { runVariantSweep } from './variants.js';
 import { runTraffic } from './traffic.js';
-import { runPriceRules } from './pricing.js';
+import { runPriceRules, runPriceTiers } from './pricing.js';
+import { runPageTiers } from './page-tiers.js';
 import { runAbTests } from './abtest.js';
 import { reviewScreens } from './visual-ai.js';
 import { watchScripts, scriptChecks, pageKind } from './scripts.js';
@@ -43,7 +44,7 @@ async function isLocked(ctx, origin) {
  *       'journeys' (fast functional monitoring)
  *       'full' (everything including visual regression)
  */
-export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], abVariants = [], customTests = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
+export async function runScan({ runId, origin, kind = 'full', password, storeId, disabled = [], testProduct = null, discountCodes = [], shopifyCodes = null, priceRules = [], priceTiers = [], abVariants = [], customTests = [], signal, progress, preview = null, captureOnly = false, previousScripts = null, extraChecks = [], video = false, traffic = null, release = false, woo = true }) {
   const on = (k) => !disabled.includes(k);
   const started = Date.now();
   const rec = new Recorder();
@@ -182,6 +183,9 @@ export async function runScan({ runId, origin, kind = 'full', password, storeId,
     if (!fn.locked && !fn.down && !fn.blocked) {
       if (on('errors.js')) jsErrorCheck(rec, fn.pageErrors || []);
       if (on('pricing.journey') && priceRules.length && info.isShopify) await runPriceRules({ page, rec, origin, rules: priceRules });
+      if (on('pricing.journey') && priceTiers.length && info.isShopify) await runPriceTiers({ page, rec, origin, sets: priceTiers });
+      // Breaks the product page itself promises (volume-discount app tables), checked in the cart without any setup.
+      if (on('pricing.journey') && info.isShopify && info.products[0]?.handle) await runPageTiers({ page, rec, origin, product: info.products[0].handle, listed: priceTiers.map((t) => t.product) });
       if (kind === 'full' && on('sale.discount') && discountCodes.length) await runDiscounts({ page, rec, origin, info, password, codes: discountCodes, shot });
       if (kind === 'full' && info.isShopify && on('sale.abtest')) {
         phase('abtest');

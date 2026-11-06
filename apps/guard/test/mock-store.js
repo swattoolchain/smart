@@ -25,7 +25,8 @@
  * Breakage switches (env MOCK_BREAK, comma separated): atc, search, checkout, noindex, links, jserror, password,
  *   pricedrift (cart charges ₹150 more than the product page), pricelow (cart charges ₹100 less, no discount),
  *   checkoutprice (checkout subtotal ₹200 more than the cart), protection (a shipping-protection app adds a
- *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price)
+ *   paid ₹99 line to every cart, like Route or Navidium), noprice (the product page shows no readable price),
+ *   tiers (with MOCK_EXTRA=tiers: the 10+ quantity break stopped working)
  * (cart can't find Kurta Medium), manyvariants (a 40-colour cushion cover, one colour sold out), slowcart (each
  * add to cart takes 300 ms, like a store with a slow bundle or upsell app).
  * Extras (env MOCK_EXTRA) include offsite: links, page text and a script button that try to lead a shopper off the store
@@ -217,8 +218,22 @@ const CODES = { BF20: { pct: 20, min: 0 }, MIN5000: { pct: 10, min: 500000 } };
 // MOCK_SALE.countryPct { 'CODE:CC': pct } gives a code another % in a country. MOCK_BREAK=localization: no country picker.
 const CURRENCY = { IN: 'INR', US: 'USD', DE: 'EUR', AT: 'EUR', FR: 'EUR', GB: 'GBP', SG: 'SGD', AU: 'AUD', CA: 'CAD' }; // the store doesn't sell in the UAE
 const countryOf = (req) => /localization=([A-Z]{2})/.exec(req.headers.cookie || '')?.[1] || 'IN';
+// MOCK_EXTRA=tiers: a volume-discount app on the Organic Cotton Kurta: 10% off each from 5, 20% off from 10,
+// given as a line discount in the cart (like Shopify Functions or a volume-discount app).
+// MOCK_BREAK=tiers: the 10+ break stopped working (still 10% off at 10 and more).
+const TIERS = EXTRA.split(',').includes('tiers');
+// MOCK_EXTRA=tiertable: the volume-discount app also shows its breaks on the kurta's product page, as a table near
+// Add to cart ("Buy 5+ · 10% off", "Buy 10+ · 20% off"). MOCK_BREAK=tierpage: the table says 25% at 10 (out of date).
+const TIER_TABLE = EXTRA.split(',').includes('tiertable');
+const tierTableHtml = () => `<table class="qty-breaks"><caption>Buy more, save more</caption><tr><th>Quantity</th><th>Discount</th></tr><tr><td>Buy 5+</td><td>10% off</td></tr><tr><td>Buy 10+</td><td>${B.has('tierpage') ? 25 : 20}% off</td></tr></table>`;
+function tierPct(i) {
+  if (!TIERS || ![101, 102, 103].includes(Number(i.id))) return 0;
+  if (i.quantity >= 10) return B.has('tiers') ? 10 : 20;
+  return i.quantity >= 5 ? 10 : 0;
+}
 function cartJson(items, country = 'IN') {
-  const original = items.reduce((s, i) => s + i.quantity * Math.round(Number(i.price) * 100), 0);
+  const lines = items.map((i) => { const unit = Math.round(Number(i.price) * 100); const full = unit * i.quantity; const off = Math.round((full * tierPct(i)) / 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: Math.round((full - off) / i.quantity), line_price: full - off, original_line_price: full, final_line_price: full - off, line_level_discount_allocations: off ? [{ amount: off, discount_application: { type: 'automatic', title: 'Buy more, save more' } }] : [] }; });
+  const original = lines.reduce((s, i) => s + i.final_line_price, 0);
   const code = items.discount;
   let rule = code && !(B.has('discount') && code === 'BF20') && !(saleEnded && code === 'BF20') ? CODES[code] : null;
   const only = SALE?.codeCountries?.[code];
@@ -237,7 +252,7 @@ function cartJson(items, country = 'IN') {
     items_subtotal_price: original,
     currency: CURRENCY[country] || 'INR',
     // Like Shopify's cart.js: prices in paise, one entry per line.
-    items: items.map((i) => { const unit = Math.round(Number(i.price) * 100); return { ...i, variant_id: i.id, price: unit, original_price: unit, final_price: unit, line_price: unit * i.quantity, original_line_price: unit * i.quantity, final_line_price: unit * i.quantity }; }),
+    items: lines,
   };
 }
 function layout(title, body, { noindex = false } = {}) {
@@ -406,7 +421,7 @@ const server = http.createServer(async (req, res) => {
 <form method="post" action="/cart/add"><input type="hidden" name="id" value="${v.id}">
 <select onchange="location.search='?variant='+this.value">${prod.variants.map((x) => `<option value="${x.id}" ${x.id === v.id ? 'selected' : ''}>${x.title}</option>`).join('')}</select>
 <button type="submit" name="add" class="product-form__submit" ${v.available ? '' : 'disabled'}>${v.available ? 'Add to cart' : 'Sold out'}</button></form>${DE ? '<p class="tax-note">inkl. MwSt., zzgl. <a href="/policies/shipping-policy">Versandkosten</a></p>' : ''}
-<span id="cart-count">0</span>${FEATURES ? FEATURE_HTML : ''}${PINCODE ? `<div class="pin-check"><label for="pincode">Delivery pincode</label> <input id="pincode" inputmode="numeric"> <button type="button" id="pin-btn">Check</button><p class="delivery-result" aria-live="polite"></p><a id="partner-link" href="http://127.0.0.1:${PORT}/pages/about">Our delivery partner</a></div><script>document.getElementById('pin-btn').addEventListener('click',function(){var v=document.getElementById('pincode').value.trim();var ok=${B.has('pincode') ? 'false' : "/^5\\d{5}$/.test(v)"};setTimeout(function(){document.querySelector('.delivery-result').textContent=ok?'Delivery available in 2 days':'Sorry, we do not deliver to '+v;},300);});</script>` : ''}${breakAtc}`
+<span id="cart-count">0</span>${TIER_TABLE && prod.handle === 'cotton-kurta' ? tierTableHtml() : ''}${FEATURES ? FEATURE_HTML : ''}${PINCODE ? `<div class="pin-check"><label for="pincode">Delivery pincode</label> <input id="pincode" inputmode="numeric"> <button type="button" id="pin-btn">Check</button><p class="delivery-result" aria-live="polite"></p><a id="partner-link" href="http://127.0.0.1:${PORT}/pages/about">Our delivery partner</a></div><script>document.getElementById('pin-btn').addEventListener('click',function(){var v=document.getElementById('pincode').value.trim();var ok=${B.has('pincode') ? 'false' : "/^5\\d{5}$/.test(v)"};setTimeout(function(){document.querySelector('.delivery-result').textContent=ok?'Delivery available in 2 days':'Sorry, we do not deliver to '+v;},300);});</script>` : ''}${breakAtc}`
       )
     );
   }

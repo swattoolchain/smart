@@ -207,7 +207,13 @@ async function prepare(job) {
     customTests: store && !release && isOn('custom_tests') ? testsForRun(store.id, kind, entitlements(store.user_id)) : [],
     // A/B test versions the owner listed (Test suite → A/B tests).
     abVariants: isOn('ab_tests') ? cfg.abVariants || [] : [],
-    priceRules: store && isOn('price_checks') ? (cfg.priceRules || []).slice(0, entitlements(store.user_id).limits.priceRules) : [],
+    // Price rules and quantity breaks the owner set, together as many as the plan allows (rules first).
+    ...(() => {
+      if (!store || !isOn('price_checks')) return { priceRules: [], priceTiers: [] };
+      const n = entitlements(store.user_id).limits.priceRules;
+      const rules = (cfg.priceRules || []).slice(0, n);
+      return { priceRules: rules, priceTiers: (cfg.priceTiers || []).slice(0, Math.max(0, n - rules.length)) };
+    })(),
     release: !!release,
     // Video replay of a failed journey, when the store has it switched on (never for publish checks).
     video: !!cfg.failureVideo && !release && isOn('failure_video'),
