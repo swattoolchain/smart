@@ -1,6 +1,7 @@
 import { config } from './config.js';
-import { q } from './db.js';
+import { db, q } from './db.js';
 import { runScan } from './engine/index.js';
+import { MIN_GAP_HOURS } from './engine/traffic.js';
 import { handleAlerts } from './alerts.js';
 import { storeConfig } from './scheduler.js';
 import { live } from './live.js';
@@ -68,6 +69,19 @@ function pump() {
   }
 }
 
+/**
+ * The sale traffic test runs at most every MIN_GAP_HOURS per store, whichever machine runs the check. The main
+ * server keeps the time in the database and claims the slot before the check starts (one atomic update, so two
+ * checks at once can't both take it). Returns what to tell the check: { lastAt } when it must skip, else {}.
+ */
+export function claimTrafficSlot(storeId, now = Date.now()) {
+  const at = new Date(now).toISOString();
+  const cutoff = new Date(now - MIN_GAP_HOURS * 3600e3).toISOString();
+  const r = db.prepare('UPDATE stores SET traffic_last_at = ? WHERE id = ? AND (traffic_last_at IS NULL OR traffic_last_at <= ?)').run(at, storeId, cutoff);
+  if (r.changes) return {};
+  return { lastAt: db.prepare('SELECT traffic_last_at AS t FROM stores WHERE id = ?').get(storeId)?.t || at };
+}
+
 async function execute({ runId, origin, kind, password, ownPassword, storeId, confirmed, disabled, preview, captureOnly, release }) {
   const controller = new AbortController();
   running.set(runId, controller);
@@ -99,9 +113,13 @@ async function execute({ runId, origin, kind, password, ownPassword, storeId, co
         codes = [...codes, ...live.filter((c) => !seen.has(c.code.toUpperCase()))].slice(0, 5);
       } catch (e) { console.error('discount codes from Shopify', link.shop, e.message); }
     }
+    const off = planDisabled(store, cfg, disabled);
+    // Sale traffic (opt-in): claim the store's 6-hour slot here, on the main server, only when the test will run.
+    const traffic = store && kind === 'full' && !release && !preview && cfg.saleTraffic && !off.includes('sale.traffic')
+      ? { shoppers: cfg.saleTrafficShoppers, ...claimTrafficSlot(store.id) } : null;
     const result = await Promise.race([
       // A hand-picked selection overrides the store's suite for this run only.
-      runScan({ runId, origin, kind, password, storeId, disabled: planDisabled(store, cfg, disabled), testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly, traffic: !release && cfg.saleTraffic ? { shoppers: cfg.saleTrafficShoppers } : null }),
+      runScan({ runId, origin, kind, password, storeId, disabled: off, testProduct: cfg.testProduct || null, discountCodes: codes, signal: controller.signal, progress: live.get(runId), preview, captureOnly, traffic }),
       hardLimit,
     ]);
     // Steps swallow their own errors, so a stopped run can still "finish". Never save or alert on it.

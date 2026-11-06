@@ -110,6 +110,8 @@ ensureColumn('stores', 'config_json', "TEXT NOT NULL DEFAULT '{}'");
 ensureColumn('stores', 'platform', 'TEXT');
 ensureColumn('runs', 'trigger', 'TEXT');
 ensureColumn('alerts', 'title', 'TEXT');
+// Sale traffic test: when it last ran for the store (kept here, not on the machine that ran it).
+ensureColumn('stores', 'traffic_last_at', 'TEXT');
 ensureColumn('releases', 'environment_id', 'INTEGER');
 // Numbers people see (#1, #2, ...) count per store, never across all customers.
 ensureColumn('runs', 'seq', 'INTEGER');
