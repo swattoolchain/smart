@@ -25,7 +25,8 @@ function triggerRun(store, groups, trigger, gapMin) {
   const chosen = new Set(groups);
   for (const g of GROUPS) if (g.locked) chosen.add(g.key);
   const disabled = GROUPS.filter((g) => !chosen.has(g.key)).map((g) => g.key);
-  return startRun({ storeId: store.id, origin: store.url, kind: 'full', password: storePassword(store), trigger, disabled });
+  try { return startRun({ storeId: store.id, origin: store.url, kind: 'full', password: storePassword(store), trigger, disabled }); }
+  catch (e) { if (e.code === 'QUEUE_FULL') { pending.delete(key); return null; } throw e; }
 }
 
 export function shopifyRoutes(app, { requireUser, appHtml, version }) {

@@ -9,7 +9,8 @@ import { normalizeStoreUrl, assertPublicTarget, newContext, gotoStore, settleCha
 import { discover } from './engine/discover.js';
 import { GROUPS, INTERVALS, FULL_INTERVALS, MARKETS, normalizeConfig } from './engine/catalog.js';
 import { startRun, startScheduler, storeConfig, intervals, nextRunIn, saleActive } from './scheduler.js';
-import { queueDepth, cancelRun } from './queue.js';
+import { queueDepth, cancelRun, queueRoom } from './queue.js';
+import { withLookupSlot } from './lookups.js';
 import { liveView } from './live.js';
 import { scorecard, weekBuyability } from './scorecard.js';
 import crypto from 'node:crypto';
@@ -157,6 +158,7 @@ app.post('/api/scan', async (req, res) => {
   if (cached) return res.json({ runId: cached.public_id, cached: true });
   if (q.recentFreeRunsByIp.get(ip(req)).n >= config.freeScansPerIpPerHour)
     return res.status(429).json({ error: 'You have reached the free scan limit for this hour. Create a free account to keep monitoring.' });
+  if (!queueRoom({ free: true })) return res.status(503).json({ error: 'We’re checking a lot of stores right now. Try your free check again in a few minutes.', busy: true });
   const id = startRun({ origin, kind: 'free', ip: ip(req), trigger: 'free' });
   const publicId = crypto.randomBytes(16).toString('hex');
   q.setPublicId.run(publicId, id);
@@ -413,12 +415,15 @@ async function discoverStore(origin, password) {
   }
 }
 
-app.post('/api/discover', requireUser, async (req, res) => {
-  const k = req.user.id;
+/** 30 store lookups per account per hour, counted for new and existing stores alike. */
+function countLookup(k) {
   const c = discoverCounts.get(k) || { n: 0, t: Date.now() };
   if (Date.now() - c.t > 3600 * 1000) Object.assign(c, { n: 0, t: Date.now() });
-  if (++c.n > 30) return res.status(429).json({ error: 'Too many lookups this hour. Try again later.' });
   discoverCounts.set(k, c);
+  return ++c.n <= 30;
+}
+app.post('/api/discover', requireUser, async (req, res) => {
+  if (!countLookup(req.user.id)) return res.status(429).json({ error: 'Too many lookups this hour. Try again later.' });
   let origin;
   try {
     origin = normalizeStoreUrl(req.body?.url);
@@ -428,8 +433,9 @@ app.post('/api/discover', requireUser, async (req, res) => {
   }
   if (q.storesByUser.all(req.user.id).some((s) => s.url === origin)) return res.status(409).json({ error: 'This store is already in your account.' });
   try {
-    res.json({ origin, ...(await discoverStore(origin, req.body?.password || null)) });
+    res.json({ origin, ...(await withLookupSlot(req.user.id, () => discoverStore(origin, req.body?.password || null))) });
   } catch (e) {
+    if (e.code === 'QUEUE_FULL') return res.status(e.status).json({ error: e.message, busy: true });
     res.status(502).json({ error: 'We could not look at this store right now. Try again in a minute.' });
   }
 });
@@ -489,7 +495,9 @@ app.post('/api/stores', requireUser, async (req, res) => {
     alertEmail || req.user.email, slack || null, JSON.stringify(cfg), platform ? String(platform).slice(0, 60) : null, monitoring ? 1 : 0
   );
   const id = Number(info.lastInsertRowid);
-  const runId = runNow ? startRun({ storeId: id, origin, kind: 'full', password, trigger: 'setup' }) : null;
+  // A full waiting line doesn't stop the store being added; its first check can be started again later.
+  let runId = null;
+  if (runNow) { try { runId = startRun({ storeId: id, origin, kind: 'full', password, trigger: 'setup' }); } catch (e) { if (e.code !== 'QUEUE_FULL') throw e; } }
   res.json({ id, runId });
 });
 
@@ -886,9 +894,11 @@ app.post('/api/stores/:id/discover', requireUser, async (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   if (!entitlements(s.user_id).usable) return refuse(res, blockReason(entitlements(s.user_id)));
+  if (!countLookup(req.user.id)) return res.status(429).json({ error: 'Too many lookups this hour. Try again later.' });
   try {
-    res.json(await discoverStore(s.url, storePassword(s)));
-  } catch {
+    res.json(await withLookupSlot(req.user.id, () => discoverStore(s.url, storePassword(s))));
+  } catch (e) {
+    if (e.code === 'QUEUE_FULL') return res.status(e.status).json({ error: e.message, busy: true });
     res.status(502).json({ error: 'We could not look at this store right now. Try again in a minute.' });
   }
 });
@@ -1144,6 +1154,11 @@ app.get('/checks', old('checks.html', { path: '/checks' }));
 app.get('/demo', old('demo.html', { path: '/demo' }));
 app.use(express.static(config.publicDir, { maxAge: '1h', index: false }));
 app.use((req, res) => res.status(404).type('html').send(site.legacy(config.publicDir, '404.html', { title: 'Page not found', noindex: true })));
+// A full waiting line anywhere (manual checks, publish checks, Shopify app actions): a plain "busy" answer.
+app.use((err, req, res, next) => {
+  if (err?.code !== 'QUEUE_FULL') return next(err);
+  res.status(err.status || 503).json({ error: err.message, busy: true });
+});
 
 app.listen(config.port, () => {
   console.log(`Tharam Store Guard on ${config.baseUrl} (port ${config.port})`);

@@ -3,6 +3,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+/** A number from the environment; unset or empty means the default (so a blank line in .env never means 0). */
+const numEnv = (name, dflt) => (process.env[name] === undefined || process.env[name] === '' ? dflt : Number(process.env[name]));
+
 export const config = {
   port: Number(process.env.PORT || 3000),
   baseUrl: (process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, ''),
@@ -23,7 +26,14 @@ export const config = {
     explainModel: process.env.AI_EXPLAIN_MODEL || 'claude-sonnet-5-5',
     visionCapable: process.env.AI_VISION !== '0',
   },
-  concurrency: Number(process.env.RUN_CONCURRENCY || 2),
+  concurrency: numEnv('RUN_CONCURRENCY', 2),
+  // Waiting checks are capped so a flood of requests can't pile up without end. Free checks get a smaller share.
+  queueMax: Number(process.env.RUN_QUEUE_MAX || 200),
+  freeQueueMax: Number(process.env.FREE_QUEUE_MAX || 20),
+  // Looking at a store before it is added opens a browser too: a few at a time, one per account.
+  lookupConcurrency: Number(process.env.LOOKUP_CONCURRENCY || 2),
+  lookupQueueMax: numEnv('LOOKUP_QUEUE_MAX', 10),
+  lookupWaitMs: Number(process.env.LOOKUP_WAIT_MS || 60000),
   smtp: {
     host: process.env.SMTP_HOST || '',
     port: Number(process.env.SMTP_PORT || 587),

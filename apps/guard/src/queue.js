@@ -62,6 +62,12 @@ export function enqueue(job) {
   pump();
 }
 
+/** Whether `need` more checks fit in the waiting line. Free checks may only use a small part of it. */
+export function queueRoom({ free = false, need = 1 } = {}) {
+  const limit = free ? Math.min(config.freeQueueMax, config.queueMax) : config.queueMax;
+  return waiting.length + need <= limit;
+}
+
 /** Checks running right now, on this server and on workers (for the founder console's Runners page). */
 export function currentChecks() {
   const main = mainRunner();

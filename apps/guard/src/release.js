@@ -6,6 +6,8 @@ import { q } from './db.js';
 import { seal, readSecret, storePassword } from './secret.js';
 import { comparePair } from './compare.js';
 import { startRun, storeConfig } from './scheduler.js';
+import { queueRoom } from './queue.js';
+import { Busy } from './lookups.js';
 import { config } from './config.js';
 import { effectiveDisabled } from './engine/catalog.js';
 import { entitlements, has, blockReason, envAllowed } from './license.js';
@@ -60,6 +62,8 @@ export function cleanEnvironment(store, input = {}, base = {}) {
  * are tested side by side with the same suite. Returns the check's id.
  */
 export function startRelease(store, { url, label, env = null, trigger = 'manual' }) {
+  // Two checks (live and candidate) need room in the waiting line before anything is saved.
+  if (!queueRoom({ need: 2 })) throw new Busy();
   const info = q.insertRelease.run(store.id, url, label || null, env?.id || null, trigger, store.id);
   const id = Number(info.lastInsertRowid);
   const disabled = [...new Set([...effectiveDisabled(storeConfig(store)), ...SKIP])];
