@@ -15,6 +15,7 @@ import { chromium } from 'playwright';
 import { db } from './db.js';
 import { config } from './config.js';
 import { audit } from './license.js';
+import { sendMail } from './alerts.js';
 import { isOn, requireFeature } from './features.js';
 import { queueDepth } from './queue.js';
 import { checkStore, parseRobots, robotsAllows, MAX_CRAWL_DELAY_MS } from './prospect.js';
@@ -56,14 +57,21 @@ CREATE TABLE IF NOT EXISTS prospect_blocked (
   reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS prospect_notice (key TEXT PRIMARY KEY, at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS prospect_daily (day TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0);`);
 
+// Stores that were contacted, answered or asked not to be contacted are never read or checked again.
+const LEFT_ALONE = "'contacted', 'replied', 'opted_out', 'do_not_contact'";
 const S = {
   insert: db.prepare('INSERT OR IGNORE INTO prospects (domain, source) VALUES (?, ?)'),
   blocked: db.prepare('SELECT 1 FROM prospect_blocked WHERE domain = ?'),
   block: db.prepare('INSERT OR IGNORE INTO prospect_blocked (domain, reason) VALUES (?, ?)'),
   get: db.prepare('SELECT * FROM prospects WHERE domain = ?'),
-  next: db.prepare("SELECT domain FROM prospects WHERE state = 'queued' AND status NOT IN ('opted_out', 'do_not_contact') ORDER BY rowid LIMIT 1"),
+  next: db.prepare(`SELECT domain FROM prospects WHERE state = 'queued' AND status NOT IN (${LEFT_ALONE}) ORDER BY rowid LIMIT 1`),
+  waiting: db.prepare(`SELECT COUNT(*) AS n FROM prospects WHERE state = 'queued' AND status NOT IN (${LEFT_ALONE})`),
+  noticed: db.prepare("SELECT 1 FROM prospect_notice WHERE key = 'idle'"),
+  notice: db.prepare("INSERT OR IGNORE INTO prospect_notice (key) VALUES ('idle')"),
+  wake: db.prepare("DELETE FROM prospect_notice WHERE key = 'idle'"),
   day: db.prepare('SELECT n FROM prospect_daily WHERE day = ?'),
   bump: db.prepare("INSERT INTO prospect_daily (day, n) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET n = n + 1"),
 };
@@ -85,6 +93,7 @@ export function importDomains(text, { source = 'import', actor = '' } = {}) {
     }
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
+  if (added) S.wake.run(); // new work: the idle message and the one-time email start over
   if (actor) audit(actor, null, 'prospects.import', { added, already, blocked, invalid, source });
   return { total: domains.length, added, already, blocked, invalid, truncated };
 }
@@ -100,6 +109,16 @@ export function blockDomains(text, reason = 'do_not_contact', actor = '') {
   }
   if (actor) audit(actor, null, 'prospects.block', { count: n, reason });
   return { blocked: n };
+}
+
+/** Reads one store again (a founder's choice). Never for a store that was contacted, answered or asked to be left alone. */
+export function checkAgain(domain, actor = '') {
+  const row = S.get.get(domain);
+  if (!row) throw Object.assign(new Error('Store not found'), { code: 404 });
+  if (['contacted', 'replied', ...NEVER_CONTACT].includes(row.status)) throw new Error(`This store is marked "${STATUS_LABEL[row.status]}", so it is not checked again.`);
+  db.prepare("UPDATE prospects SET state = 'queued', updated_at = datetime('now') WHERE domain = ?").run(domain);
+  S.wake.run();
+  if (actor) audit(actor, null, 'prospects.check_again', { domain });
 }
 
 export function setStatus(domain, status, actor = '') {
@@ -143,9 +162,17 @@ export function listProspects(filters = {}, { limit = 100, offset = 0 } = {}) {
 }
 
 export function summary() {
+  const out = summaryBase();
+  // Nothing left to read: one plain line for the founder console until an import adds something new.
+  out.idle = out.total > 0 && out.waiting === 0;
+  out.idleMessage = out.idle ? `All ${out.total} imported stores are checked. Import more to continue.` : '';
+  return out;
+}
+function summaryBase() {
   const by = (col) => Object.fromEntries(db.prepare(`SELECT ${col} AS k, COUNT(*) AS n FROM prospects GROUP BY ${col}`).all().map((r) => [r.k, r.n]));
   return {
     total: db.prepare('SELECT COUNT(*) AS n FROM prospects').get().n, byStatus: by('status'), byState: by('state'),
+    waiting: S.waiting.get().n, idle: false, idleMessage: '',
     checkedToday: dailyUsed(), dailyCap: dailyCap(), countries: db.prepare("SELECT country AS k, COUNT(*) AS n FROM prospects WHERE country != '' GROUP BY country ORDER BY n DESC").all(),
   };
 }
@@ -278,6 +305,17 @@ export async function enrichProspect(domain, { browser, check = checkStore, log 
   }
 }
 
+/** The queue is empty: the founder is emailed once (not again until an import adds new stores). */
+async function tellIdle() {
+  const sm = summary();
+  if (!sm.idle || S.noticed.get()) return;
+  S.notice.run();
+  if (config.adminEmail) {
+    await sendMail({ to: config.adminEmail, subject: `Prospects: all ${sm.total} stores are checked`, text: `${sm.idleMessage}\n\nOpen Founder console → Prospects to import more. Nothing more runs until an import adds a new store.` })
+      .catch((e) => console.error('prospect idle mail failed', e.message));
+  }
+}
+
 // ---------- the worker: one store at a time, only when no customer check is running ----------
 let running = false;
 const idle = () => { const d = queueDepth(); return d.waiting === 0 && d.active === 0; };
@@ -289,7 +327,7 @@ export async function enrichTick({ budgetMs = 50000, max = Infinity, check, log 
   if (!isOn('prospects')) return { ran: 0, stopped: 'off' };
   if (running) return { ran: 0, stopped: 'busy' };
   running = true;
-  let browser, ran = 0, stopped = 'empty';
+  let browser, ran = 0, stopped = null;
   const t0 = Date.now();
   try {
     while (ran < max) {
@@ -297,12 +335,15 @@ export async function enrichTick({ budgetMs = 50000, max = Infinity, check, log 
       if (!idle()) { stopped = 'customers'; break; }
       if (dailyUsed() >= dailyCap()) { stopped = 'cap'; break; }
       const next = S.next.get();
-      if (!next) break;
+      if (!next) { stopped = 'empty'; break; }
       S.bump.run(today());
       browser ||= check ? null : await chromium.launch({ executablePath: config.chromePath || process.env.CHROME_PATH || undefined, args: ['--no-sandbox'] });
       await enrichProspect(next.domain, { browser, check, log });
       ran++;
     }
+    const left = S.waiting.get().n;
+    if (!stopped) stopped = left === 0 ? 'empty' : 'max';
+    if (left === 0) await tellIdle();
     return { ran, stopped };
   } finally {
     running = false;
@@ -355,7 +396,8 @@ export function prospectRoutes(app, { requireUser, isAdmin }) {
     if (!text.trim()) return res.status(400).json({ error: 'Paste some store addresses or choose a file' });
     try {
       const r = importDomains(text, { source: String(req.query.source || 'import'), actor: actor(req) });
-      res.json({ ...r, message: `${r.added} new, ${r.already} already there${r.blocked ? `, ${r.blocked} on the do-not-contact list` : ''}` });
+      const extra = r.blocked ? `, ${r.blocked} on the do-not-contact list` : '';
+      res.json({ ...r, message: r.added === 0 && r.total > 0 && !r.blocked ? `Nothing new: all ${r.total} were already there` : `${r.added} new, ${r.already} already there${extra}` });
     } catch (e) { fail(res, e); }
   });
 
@@ -369,6 +411,12 @@ export function prospectRoutes(app, { requireUser, isAdmin }) {
     const domain = normalizeDomain(req.params.domain);
     if (!domain) return res.status(400).json({ error: 'That is not a store address' });
     try { setStatus(domain, String(req.body?.status || ''), actor(req)); res.json({ ok: true }); } catch (e) { fail(res, e); }
+  });
+
+  app.post('/api/admin/prospects/:domain/check-again', ...gate, (req, res) => {
+    const domain = normalizeDomain(req.params.domain);
+    if (!domain) return res.status(400).json({ error: 'That is not a store address' });
+    try { checkAgain(domain, actor(req)); res.json({ ok: true }); } catch (e) { fail(res, e); }
   });
 
   // Reads a few queued stores now (the same work the server does by itself every minute).
