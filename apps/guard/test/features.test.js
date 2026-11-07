@@ -143,6 +143,17 @@ describe('Feature switches', () => {
     note(t, 'off: sale readiness and webhook routes 404, saving a webhook refused, Shopify menu without the link; on: routes answer again');
   });
 
+  it('agency branding answers "not found" while off, and the report keeps Tharam\'s header', async (t) => {
+    assert.equal((await owner.get('/api/branding')).status, 404);
+    assert.equal((await owner.req('PUT', '/api/branding', { name: 'Acme' })).status, 404);
+    assert.equal((await owner.req('PUT', '/api/branding/logo', 'x', { 'content-type': 'image/png' })).status, 404);
+    assert.ok(!(await owner.get('/api/me')).json.features.includes('agency_branding'));
+    await founder.patch('/api/admin/features/agency_branding', { on: true });
+    assert.equal((await owner.get('/api/branding')).status, 200, 'answers once on');
+    await founder.patch('/api/admin/features/agency_branding', { on: false });
+    note(t, 'off: branding routes 404 and the feature is not offered in the app; on: the owner can reach them');
+  });
+
   it('screens: the founder console Features tab, and store settings without the extra', async (t) => {
     browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, args: ['--no-sandbox'] });
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });

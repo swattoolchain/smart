@@ -8,6 +8,8 @@ import { config } from './config.js';
 import { db, q } from './db.js';
 import { groupOf, GROUPS } from './engine/catalog.js';
 import { sendMail } from './alerts.js';
+import { isOn } from './features.js';
+import { brandingFor } from './branding.js';
 
 export const SECTIONS = [
   { key: 'buying', title: 'Customers can buy', groups: ['journey.core', 'journey.collection', 'journey.search', 'journey.variant', 'journey.checkout'],
@@ -99,7 +101,7 @@ const ICON = { ready: '✅', attention: '🟠', blocker: '🔴', not_checked: '�
 const escHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** The email version: subject, plain text and HTML. */
-export function saleEmail(r) {
+export function saleEmail(r, agency = null) {
   const subject = `Sale readiness for ${r.store.name}: ${r.verdict === 'ready' ? 'ready' : r.verdict === 'blocked' ? `fix ${r.counts.blockers} thing${r.counts.blockers === 1 ? '' : 's'} first` : r.verdict === 'attention' ? 'almost ready' : 'ready where checked'}`;
   const when = new Date(r.checkedAt).toUTCString().replace(':00 GMT', ' UTC');
   const text = [
@@ -115,11 +117,12 @@ export function saleEmail(r) {
     `Full report with screenshots: ${r.reportUrl}`,
     `Sale readiness page: ${r.pageUrl}`,
     '',
-    '— Tharam',
+    agency ? `— ${agency}` : '— Tharam',
+    ...(agency ? ['Checked by Tharam'] : []),
   ].join('\n');
   const color = { ready: '#15803d', attention: '#b45309', blocker: '#b91c1c', not_checked: '#78716c' };
   const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#1c1917;max-width:640px">
-<p style="font-size:13px;color:#78716c;margin:0">Sale readiness · ${escHtml(r.store.name)}</p>
+<p style="font-size:13px;color:#78716c;margin:0">${agency ? `<b style="color:#1c1917">${escHtml(agency)}</b> · ` : ''}Sale readiness · ${escHtml(r.store.name)}</p>
 <h2 style="margin:4px 0 6px">${escHtml(r.headline)}</h2>
 <p style="color:#57534e;margin:0 0 16px">From the full check on ${escHtml(when)}.</p>
 ${r.sections.map((s) => `<div style="border:1px solid #e7e5e4;border-left:4px solid ${color[s.status]};border-radius:8px;padding:10px 14px;margin:0 0 10px">
@@ -128,7 +131,7 @@ ${r.sections.map((s) => `<div style="border:1px solid #e7e5e4;border-left:4px so
 ${s.items.length ? `<ul style="margin:8px 0 0;padding-left:18px">${s.items.map((i) => `<li><b>${escHtml(i.title)}</b>: ${escHtml(i.detail)}${i.fix ? `<br><span style="color:#57534e">Fix: ${escHtml(i.fix)}</span>` : ''}</li>`).join('')}${s.more ? `<li>and ${s.more} more in the report</li>` : ''}</ul>` : ''}
 </div>`).join('')}
 <p style="margin:18px 0"><a href="${escHtml(r.reportUrl)}" style="background:#14532d;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Open the full report</a></p>
-<p style="color:#78716c;font-size:13px">Tharam · Run a fresh sale readiness check any time from the Sale readiness page.</p></div>`;
+<p style="color:#78716c;font-size:13px">${agency ? `${escHtml(agency)} · Checked by Tharam` : 'Tharam'} · Run a fresh sale readiness check any time from the Sale readiness page.</p></div>`;
   return { subject, text, html };
 }
 
@@ -138,7 +141,8 @@ export async function emailSaleReadiness(store, r, to) {
   const recent = (SENT.get(store.id) || []).filter((t) => now - t < 3600e3);
   if (recent.length >= 5) { const e = new Error('You have emailed this report 5 times in the last hour. Try again later.'); e.status = 429; throw e; }
   SENT.set(store.id, [...recent, now]);
-  const m = saleEmail(r);
+  const agency = isOn('agency_branding') ? brandingFor(store.user_id)?.name || null : null;
+  const m = saleEmail(r, agency);
   await sendMail({ to, ...m });
   return { to, subject: m.subject };
 }

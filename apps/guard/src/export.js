@@ -11,6 +11,8 @@ import { CATEGORIES } from './engine/checks.js';
 import { catalogReport } from './catalog-report.js';
 import { loadSnapshot } from './engine/catalog-check.js';
 import { getBrowser } from './engine/browser.js';
+import { isOn } from './features.js';
+import { brandingFor } from './branding.js';
 
 // ---------- CSV ----------
 /** One CSV cell. Text that a spreadsheet would run as a formula (=, +, -, @) is prefixed with ' so it stays text. */
@@ -142,6 +144,8 @@ export function reportHtml(store, run, { autoPrint = false } = {}) {
   let shots = 0;
   const when = new Date(iso(run.finished_at || run.created_at)).toUTCString().replace(' GMT', ' UTC');
   const cover = shotData(run.id, r.cover);
+  // The agency's own name and logo, when the account has set them (website accounts, feature switch on).
+  const brand = isOn('agency_branding') ? brandingFor(store.user_id) : null;
   const problemHtml = (c) => {
     const img = shots < 6 ? shotData(run.id, c.evidence?.screenshot) : null;
     if (img) shots++;
@@ -158,6 +162,7 @@ export function reportHtml(store, run, { autoPrint = false } = {}) {
   header h1 { font-size: 22px; margin: 0 0 2px; }
   header .host { color: #4b5563; }
   header .brand { text-align: right; color: #4b5563; font-size: 12px; }
+  header .brand .logo { display: block; margin: 0 0 4px auto; max-width: 180px; max-height: 60px; }
   header .brand b { color: #111827; font-size: 15px; letter-spacing: .02em; }
   .summary { display: flex; gap: 18px; align-items: center; margin-bottom: 16px; }
   .score { width: 86px; height: 86px; border-radius: 50%; border: 6px solid var(--c); display: grid; place-items: center; font-size: 26px; font-weight: 700; flex: none; }
@@ -177,7 +182,7 @@ export function reportHtml(store, run, { autoPrint = false } = {}) {
   @media print { body { padding: 0; } .noprint { display: none; } }
 </style></head><body>
 <header><div><h1>${esc(name)}</h1><div class="host">${esc(hostOf(store.url))}</div><div class="host">${esc(KIND[run.kind] || 'Check')} #${esc(run.seq ?? run.id)} · ${esc(when)}</div></div>
-<div class="brand"><b>THARAM</b><br>Store check report</div></header>
+${brand ? `<div class="brand agency">${brand.logo ? `<img class="logo" src="${brand.logo}" alt="${esc(brand.name || 'Agency logo')}">` : ''}${brand.name ? `<b>${esc(brand.name)}</b><br>` : ''}Store check report</div>` : '<div class="brand"><b>THARAM</b><br>Store check report</div>'}</header>
 ${r.verdict ? `<section class="summary" style="--c:${{ healthy: '#1b7f3b', warning: '#b26a00', critical: '#c62828' }[r.verdict] || '#b26a00'}"><div class="score">${esc(r.score ?? '–')}</div><div><div class="verdict">${esc(VERDICT[r.verdict] || r.verdict)}</div><div>${esc(r.summary || '')}</div><div class="host">${checks.length} checks · ${problems.filter((c) => c.status === 'fail').length} to fix · ${problems.filter((c) => c.status === 'warn').length} to look at · ${passed.length} passed</div></div></section>` : `<p>This check did not finish${run.error ? `: ${esc(run.error)}` : ''}.</p>`}
 ${(r.categories || []).length ? `<div class="cats">${r.categories.map((c) => `<div class="cat"><span>${esc(c.label)}</span><b>${!c.tested ? 'Not tested' : CATEGORIES[c.key]?.rules ? `${c.counts.pass}/${c.counts.pass + c.counts.warn + c.counts.fail} rules met` : esc(c.score)}</b></div>`).join('')}</div>` : ''}
 <h2>What needs fixing (${problems.length})</h2>
@@ -185,7 +190,7 @@ ${problems.length ? problems.map(problemHtml).join('') : '<p>Nothing to fix. Cus
 ${passed.length ? `<h2>Passed (${passed.length})</h2><ul class="passed">${passed.map((c) => `<li>${esc(c.title)}</li>`).join('')}</ul>` : ''}
 ${skipped.length ? `<h2>Not checked this time (${skipped.length})</h2><ul class="passed">${skipped.map((c) => `<li>${esc(c.title)}${c.detail ? ` – <span class="host">${esc(c.detail)}</span>` : ''}</li>`).join('')}</ul>` : ''}
 ${cover ? `<h2>What customers saw</h2><div class="cover"><img src="${cover}" alt="Store as customers saw it"></div>` : ''}
-<footer>Report for ${esc(name)} (${esc(hostOf(store.url))}) from Tharam Store Guard · ${esc(config.baseUrl.replace(/^https?:\/\//, ''))} · Generated ${esc(new Date().toUTCString().replace(' GMT', ' UTC'))}</footer>
+<footer>Report for ${esc(name)} (${esc(hostOf(store.url))}) ${brand ? `prepared by ${esc(brand.name || 'your agency')} · checked by Tharam` : 'from Tharam Store Guard'} · ${esc(config.baseUrl.replace(/^https?:\/\//, ''))} · Generated ${esc(new Date().toUTCString().replace(' GMT', ' UTC'))}</footer>
 ${autoPrint ? '<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},300)})</script>' : ''}
 </body></html>`;
 }
