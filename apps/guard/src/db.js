@@ -204,7 +204,7 @@ export const q = {
   runByPublicId: db.prepare("SELECT * FROM runs WHERE public_id = ? AND kind = 'free'"),
   setPublicId: db.prepare("UPDATE runs SET public_id = ? WHERE id = ?"),
   recentFreeRunForUrl: db.prepare(
-    "SELECT * FROM runs WHERE kind = 'free' AND url = ? AND status IN ('queued','running','done') AND created_at > datetime('now', '-1 hour') ORDER BY id DESC LIMIT 1"
+    "SELECT * FROM runs WHERE kind = 'free' AND (trigger IS NULL OR trigger != 'removal_watch') AND url = ? AND status IN ('queued','running','done') AND created_at > datetime('now', '-1 hour') ORDER BY id DESC LIMIT 1"
   ),
   activeRunForStore: db.prepare(
     "SELECT id FROM runs WHERE store_id = ? AND status IN ('queued','running') LIMIT 1"

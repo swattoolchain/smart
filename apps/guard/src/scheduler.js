@@ -18,6 +18,7 @@ import { queueDepth } from './queue.js';
 import { pruneVideos } from './video.js';
 import { dueSaleRehearsals } from './sale-plans.js';
 import { isOn } from './features.js';
+import { removalWatchTick } from './removal-watch.js';
 import { dueSaleBursts, dueSaleEndChecks } from './sale-live.js';
 
 export function minutesSince(ts) {
@@ -104,6 +105,7 @@ export function startScheduler() {
     }
     // Incident mode ends by itself after 48 hours; owner and team get the summary.
     try { for (const row of expiredIncidents()) { const st = q.storeById.get(row.store_id); if (st) sendMail(incidentEndEmail(st, row)).catch(() => {}); } } catch (e) { console.error('incident expiry failed', e); }
+    removalWatchTick({ startRun, busy: (e) => e instanceof Busy }).catch((e) => console.error('removal watch failed', e));
     try { dueEnvironmentChecks(); } catch (e) { console.error('environment checks failed', e); }
     if (isOn('sale_plans')) {
     try { dueSaleRehearsals(); } catch (e) { console.error('sale rehearsals failed', e); }

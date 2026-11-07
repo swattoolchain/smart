@@ -57,6 +57,20 @@ describe('Feature switches', () => {
     note(t, `${list.length} switches, all extras off by default: ${list.map((f) => f.key).join(', ')}`);
   });
 
+  it('keeping watch after removal is off by default: removing the app starts nothing', async (t) => {
+    const { shopifyHmac, shopifyOpen } = await import('./lib/harness.js');
+    const list = (await founder.get('/api/admin/features')).json.features;
+    const f = list.find((x) => x.key === 'removal_watch');
+    assert.ok(f && f.on === false && f.core === false, 'has a switch, off');
+    await shopifyOpen(P, 'offwatch.myshopify.com');
+    const raw = JSON.stringify({ domain: 'offwatch.myshopify.com' });
+    const r = await fetch(`${P.base}/shopify/webhooks`, { method: 'POST', body: raw, headers: { 'content-type': 'application/json', 'x-shopify-topic': 'app/uninstalled', 'x-shopify-shop-domain': 'offwatch.myshopify.com', 'x-shopify-hmac-sha256': shopifyHmac(raw) } });
+    assert.equal(r.status, 200);
+    await new Promise((res) => setTimeout(res, 800));
+    assert.equal(P.db().prepare('SELECT COUNT(*) AS n FROM removal_watch').get().n, 0, 'no watch while the switch is off');
+    note(t, 'removal_watch off by default; uninstall created no watch');
+  });
+
   it('page-content blocking (CSP) starts in report-only, and the switch turns blocking on and off', async (t) => {
     const h = async () => (await fetch(`${P.base}/app`)).headers;
     let hd = await h();

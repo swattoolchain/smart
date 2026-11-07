@@ -16,6 +16,7 @@ import { db, q } from './db.js';
 import { ensureLicense, updateLicense, listPlans, getPlan, audit, setting } from './license.js';
 import { seal, open } from './secret.js';
 import { sendMail } from './alerts.js';
+import { startRemovalWatch, endRemovalWatch, purgeRemovalWatch } from './removal-watch.js';
 
 const S = config.shopify;
 export const shopifyEnabled = () => !!(S.apiKey && S.apiSecret);
@@ -178,6 +179,7 @@ async function ensureShopOnce(shop, idToken, { startRun, isPublic } = {}) {
     db.prepare('UPDATE stores SET monitoring = 1 WHERE user_id = ?').run(row.user_id);
     const signup = getPlan(setting('signup_plan')) || getPlan('beta');
     updateLicense('shopify', row.user_id, { plan_key: signup.key, seats: 1, status: signup.kind === 'trial' ? 'trial' : 'active', billing: 'custom', price_override: null, expires_at: null });
+    endRemovalWatch(shop);
     audit('shopify', row.user_id, 'note', { text: `Reinstalled from Shopify (${shop})` });
   }
   if (row.user_id && q.userById.get(row.user_id) && row.store_id && q.storeById.get(row.store_id)) return { userId: row.user_id, storeId: row.store_id, created: false };
@@ -270,6 +272,9 @@ export function uninstalled(shop) {
   db.prepare('UPDATE stores SET monitoring = 0 WHERE user_id = ?').run(row.user_id);
   try { updateLicense('shopify', row.user_id, { status: 'cancelled' }); } catch (e) { console.error('licence on uninstall', e); }
   audit('shopify', row.user_id, 'note', { text: `Uninstalled from Shopify (${shop})` });
+  if (wasInstalled) {
+    try { startRemovalWatch(shop, row.user_id, q.storesByUser.all(row.user_id), removalRecipients(row.user_id)); } catch (e) { console.error('removal watch', shop, e.message); }
+  }
   if (wasInstalled) removalAlarm(shop, row.user_id).catch((e) => console.error('removal alarm', shop, e.message));
 }
 
@@ -316,6 +321,7 @@ export async function removalAlarm(shop, userId) {
 export function redactShop(shop) {
   const row = Q.get.get(shop);
   if (row?.uninstalled_at == null && row?.access_token) return false; // reinstalled since; keep
+  purgeRemovalWatch(shop);
   if (row?.user_id) {
     // Shopify's shop/redact: every file and row for this shop goes (screenshots, approved looks, product snapshots).
     for (const s of q.storesByUser.all(row.user_id)) purgeStoreFiles(s.id);
