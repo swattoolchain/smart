@@ -36,9 +36,10 @@ import { catalogReport } from './catalog-report.js';
 import { saleReadiness, emailSaleReadiness, saleRecipients, saleGroups } from './sale-readiness.js';
 import { appHealth } from './app-health.js';
 import { runnerRoutes } from './runner-routes.js';
-import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportName } from './export.js';
+import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, htmlToPdf, runFor, exportName } from './export.js';
 import { teamRoutes, membership, memberMay, teamAllowed, redactForViewer } from './team.js';
 import * as themeClean from './theme-clean.js';
+import { securityReport, reportHtml as securityReportHtml, emailReport as emailSecurityReport, reportRecipient as securityReportRecipient, monthlyOn as securityMonthlyOn, setMonthly as setSecurityMonthly } from './security-report.js';
 import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
 import { recoveryPacket } from './recovery-packet.js';
 import { incidentView, startIncident, updateIncident, endIncident, incidentBrief, startEmail as incidentStartEmail, endEmail as incidentEndEmail } from './incident.js';
@@ -691,6 +692,44 @@ app.patch('/api/stores/:id/security-checklist', requireUser, requireFeature('sec
   if (typeof req.body?.reminders !== 'boolean') return res.status(400).json({ error: 'Say whether reminders are on (true or false).' });
   setSecurityReminders(s.id, req.body.reminders);
   res.json(securityView(s));
+});
+
+// ---------- Monthly security report (S13): last 30 days as a page, a PDF and an email ----------
+const securityReportOf = (s) => securityReport(s, { shopify: !!shopify.shopForStore(s.id) || /shopify/i.test(s.platform || '') });
+app.get('/api/stores/:id/security-report', requireUser, requireFeature('security_report'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.json({ ...securityReportOf(s), monthly: securityMonthlyOn(s.id), recipient: securityReportRecipient(s) });
+});
+app.patch('/api/stores/:id/security-report', requireUser, requireFeature('security_report'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  if (typeof req.body?.monthly !== 'boolean') return res.status(400).json({ error: 'Say whether the monthly email is on (true or false).' });
+  setSecurityMonthly(s.id, req.body.monthly);
+  res.json({ monthly: securityMonthlyOn(s.id) });
+});
+app.get('/api/stores/:id/security-report.html', requireUser, requireFeature('security_report'), (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  res.set({ 'Cache-Control': 'private, no-store', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" });
+  res.type('html').send(securityReportHtml(securityReportOf(s), { autoPrint: req.query.print === '1' }));
+});
+app.get('/api/stores/:id/security-report.pdf', requireUser, requireFeature('security_report'), async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  try {
+    sendFile(res, exportName(s, 'security-report', 'pdf'), 'application/pdf', await htmlToPdf(securityReportHtml(securityReportOf(s))));
+  } catch (e) {
+    console.error('security report pdf failed', e.message);
+    res.status(503).json({ error: 'The PDF could not be made right now. Try again in a minute, or use Print instead.' });
+  }
+});
+app.post('/api/stores/:id/security-report/email', requireUser, requireFeature('security_report'), async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  const to = securityReportRecipient(s);
+  if (!to) return res.status(400).json({ error: 'Add an alert email under Alerts first.' });
+  try { res.json(await emailSecurityReport(s, securityReportOf(s), to)); } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : 'The email could not be sent. Try again in a minute.' }); }
 });
 
 // ---------- Incident mode (S12): one button when the store may be hacked or badly broken ----------

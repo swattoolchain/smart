@@ -190,9 +190,9 @@ ${autoPrint ? '<script>window.addEventListener("load",function(){setTimeout(func
 </body></html>`;
 }
 
-/** The same report as a PDF, made by our own browser. One at a time, so exports never compete with checks. */
+/** Any self-contained HTML page as a PDF, made by our own browser. One at a time, so exports never compete with checks. */
 let pdfChain = Promise.resolve();
-export function reportPdf(store, run) {
+export function htmlToPdf(html) {
   const job = pdfChain.then(async () => {
     const browser = await getBrowser();
     const ctx = await browser.newContext({ javaScriptEnabled: false });
@@ -200,10 +200,12 @@ export function reportPdf(store, run) {
       const page = await ctx.newPage();
       // Nothing outside the report may load: everything it shows is inline.
       await page.route('**/*', (route) => (route.request().url().startsWith('data:') ? route.continue() : route.abort()));
-      await page.setContent(reportHtml(store, run), { waitUntil: 'load', timeout: 30000 });
+      await page.setContent(html, { waitUntil: 'load', timeout: 30000 });
       return await page.pdf({ format: 'A4', printBackground: true, margin: { top: '14mm', bottom: '14mm', left: '12mm', right: '12mm' } });
     } finally { await ctx.close().catch(() => {}); }
   });
   pdfChain = job.catch(() => {});
   return job;
 }
+/** The same report as a PDF. */
+export const reportPdf = (store, run) => htmlToPdf(reportHtml(store, run));
