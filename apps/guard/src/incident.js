@@ -246,12 +246,12 @@ export function startEmail(store, row, { shopify = false } = {}) {
   const since = c.healthy ? `Since the last healthy check (${c.healthy.created_at} UTC):` : c.note;
   const steps = STEPS.map((s, i) => `${i + 1}. ${s.title}. ${shopify ? s.shopify : s.other}`);
   const subject = `Incident mode is on for ${name}`;
-  const text = `Incident mode is on for ${name}${row.reason ? ` (${row.reason})` : ''}.\n\nFor the next ${INCIDENT_HOURS} hours Tharam checks the store every ${INCIDENT_JOURNEY_MIN} minutes and sends every alert to everyone on this email. A full check has started now.\n\n${since}\n${changed.length ? changed.map((x) => `- ${x}`).join('\n') : c.healthy ? '- Nothing we check has changed yet.' : ''}\n\nWhat to do now:\n${steps.join('\n')}\n\nFollow along and tick off steps: ${link}\n\n— Tharam Store Guard`;
+  const text = `Incident mode is on for ${name}${row.reason ? ` (${row.reason})` : ''}.\n\nFor the next ${INCIDENT_HOURS} hours Tharam checks the store every ${INCIDENT_JOURNEY_MIN} minutes and sends every alert to everyone on this email. A full check has started now.\n\n${since}\n${changed.length ? changed.map((x) => `- ${x}`).join('\n') : c.healthy ? '- Nothing we check has changed yet.' : ''}\n\nFirst, close your store to shoppers: switch on Shopify's password page (Online Store → Preferences → Password protection). Switch it off again after you recover. Details: ${link}\n\nThen:\n${steps.join('\n')}\n\nFollow along and tick off steps: ${link}\n\n— Tharam Store Guard`;
   const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#1c1917">
 <p><b>Incident mode is on for ${esc(name)}</b>${row.reason ? ` (${esc(row.reason)})` : ''}.</p>
 <p>For the next ${INCIDENT_HOURS} hours Tharam checks the store every ${INCIDENT_JOURNEY_MIN} minutes and sends every alert to everyone on this email. A full check has started now.</p>
 <p><b>${esc(since)}</b></p>${changed.length ? `<ul>${changed.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : c.healthy ? '<p>Nothing we check has changed yet.</p>' : ''}
-<p><b>What to do now</b></p><ol>${STEPS.map((s) => `<li><b>${esc(s.title)}.</b> ${esc(shopify ? s.shopify : s.other)}</li>`).join('')}</ol>
+<p><b>First, close your store to shoppers.</b> Switch on Shopify's password page (Online Store → Preferences → Password protection) and switch it off again after you recover.</p><p><b>Then</b></p><ol>${STEPS.map((s) => `<li><b>${esc(s.title)}.</b> ${esc(shopify ? s.shopify : s.other)}</li>`).join('')}</ol>
 <p><a href="${link}" style="background:#991b1b;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">Open incident mode</a></p></div>`;
   return { to: incidentRecipients(store, row).join(', '), subject, text, html };
 }

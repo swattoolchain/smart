@@ -12,6 +12,7 @@ import { sendLicenseNotices } from './billing-mail.js';
 import { syncAllBilling, shopForStore } from './shopify.js';
 import { activeIncident, expiredIncidents, endEmail as incidentEndEmail, INCIDENT_JOURNEY_MIN } from './incident.js';
 import { sendMail } from './alerts.js';
+import { dueClosedChecks } from './store-closed.js';
 import { sendChecklistReminders } from './security-checklist.js';
 import { checkCapacityAlerts, sqlTime } from './capacity.js';
 import { queueDepth } from './queue.js';
@@ -104,6 +105,7 @@ export function startScheduler() {
     }
     // Incident mode ends by itself after 48 hours; owner and team get the summary.
     try { for (const row of expiredIncidents()) { const st = q.storeById.get(row.store_id); if (st) sendMail(incidentEndEmail(st, row)).catch(() => {}); } } catch (e) { console.error('incident expiry failed', e); }
+    if (isOn('incident_mode')) dueClosedChecks().catch((e) => console.error('closed checks failed', e));
     try { dueEnvironmentChecks(); } catch (e) { console.error('environment checks failed', e); }
     if (isOn('sale_plans')) {
     try { dueSaleRehearsals(); } catch (e) { console.error('sale rehearsals failed', e); }

@@ -47,6 +47,15 @@ describe('Feature switches', () => {
     note(t, 'laws off by default: not in /api/me features, not in the catalog, skipped by the run even when asked for');
   });
 
+  it('incident mode, its "close your store" step and the storefront check are refused while the switch is off', async (t) => {
+    const storeId = (await owner.get('/api/stores')).json.stores?.[0]?.id ?? (await owner.get('/api/stores')).json[0]?.id;
+    assert.ok(storeId, 'the owner has a store from the first test');
+    for (const [method, path] of [['get', 'incident'], ['post', 'incident/closed-check'], ['get', 'recovery-packet']]) {
+      assert.equal((await owner[method](`/api/stores/${storeId}/${path}`, ...(method === 'post' ? [{}] : []))).status, 404, `${path} is hidden while incident_mode is off`);
+    }
+    note(t, 'incident_mode off: incident page, the storefront closed-check and the recovery packet all answer 404');
+  });
+
   it('every extra starts off, so a fresh install shows the simple product', async (t) => {
     const list = (await founder.get('/api/admin/features')).json.features;
     assert.ok(list.length >= 20, `all extras have a switch (${list.length})`);
