@@ -180,6 +180,14 @@ export const PROMISES = [
   ['check', 'Free while in beta'],
 ];
 
+/** What the WooCommerce page says once its shopping tests are switched on (feature switch 'woocommerce'). */
+export const WOO_AVAILABLE = {
+  status: 'live',
+  blurb: 'Shopping tests for your WooCommerce store: we add a product to the cart and open checkout like a customer, and tell you in plain words when that breaks. Plus speed, Google, mobile, broken link, product and design checks, and a WordPress plugin.',
+  caps: { experience: 'live', journey: 'live', catalog: 'live', publish: 'live', app: 'planned' },
+  notes: ['Nothing to install: we read your shop’s public product list, the same one your cart uses.', 'Add your store, and the shopping tests start with the first check.', 'The plugin will also check order emails.'],
+};
+
 export const FAQ = [
   ['Do I need to be technical?', 'No. You enter your store address and choose how often to check. Tharam tells you in plain words what broke and how to fix it, or we fix it for you with the managed service.'],
   ['Will the tests place fake orders?', 'No. Our test adds one item to a new cart, opens checkout to make sure it loads, then stops and empties the cart. It never enters payment details, so no order is ever created.'],

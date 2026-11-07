@@ -450,6 +450,7 @@ async function discoverStore(origin, password) {
       wrongPassword: !!nav.wrongPassword,
       platform: info.platform,
       isShopify: info.isShopify,
+      isWoo: !!info.isWoo && isOn('woocommerce'),
       productCount: info.sampleSize,
       catalog: info.catalog,
       suggested: info.products[0] ? info.products[0].handle : null,
