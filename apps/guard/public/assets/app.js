@@ -3545,6 +3545,78 @@
   }
 
   // Browser minutes per store and account, by plan, with an estimated cost next to what each customer pays.
+  // Prospects: stores worth helping. Import lists, see what was found, mark where each one stands. Founders only.
+  async function adminProspects(ctx, head) {
+    const qs = new URLSearchParams((location.hash.split('?')[1] || ''));
+    const keys = ['q', 'country', 'min_products', 'has_email', 'finding', 'status'];
+    const filt = new URLSearchParams(); keys.forEach((k) => { if (qs.get(k)) filt.set(k, qs.get(k)); });
+    const page = Math.max(0, Number(qs.get('page')) || 0);
+    const d = await api(`/api/admin/prospects?${filt}&limit=100&offset=${page * 100}`);
+    if (!ctx.alive()) return;
+    const sm = d.summary;
+    const cur = (k) => esc(qs.get(k) || '');
+    const sel = (k, opts) => `<select name="${k}" aria-label="${esc(k)}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${(qs.get(k) || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+    const STATE = { queued: 'Waiting to be read', skipped: 'Left out', failed: 'Could not be read' };
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <div class="figures" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+        <div class="figure"><b>${sm.total}</b><span>stores in the list</span></div>
+        <div class="figure"><b>${sm.byState.done || 0}</b><span>read and checked</span></div>
+        <div class="figure"><b>${sm.byState.queued || 0}</b><span>waiting to be read</span></div>
+        <div class="figure"><b>${sm.checkedToday} / ${sm.dailyCap}</b><span>read today</span></div></div>
+      ${sm.idle ? `<p class="muted" role="status" id="pidle">${esc(sm.idleMessage)}</p>` : ''}
+      <section class="panel"><h2>Add stores</h2>
+        <p class="muted">Paste store addresses or choose a CSV or text file with one store a line (up to 100,000). Each store is kept once, however it is written. Stores marked opted out or do not contact are never added again.</p>
+        <form id="pimport"><div class="field"><label for="ptext">Store addresses</label><textarea id="ptext" rows="4" placeholder="shop.example.com&#10;https://www.another-store.in/products/x"></textarea></div>
+          <div class="field"><label for="pfile">Or a file</label><input id="pfile" type="file" accept=".csv,.txt,text/plain,text/csv"></div>
+          <button class="btn" type="submit">Add to the list</button> <span id="pmsg" class="muted" role="status"></span></form></section>
+      <section class="panel"><h2>Stores</h2>
+        <form id="pfilter" class="row" style="gap:8px;flex-wrap:wrap;align-items:end">
+          <input name="q" placeholder="Search" aria-label="Search" value="${cur('q')}">
+          <input name="country" placeholder="Country (IN)" aria-label="Country" size="8" maxlength="2" value="${cur('country')}">
+          <input name="min_products" type="number" min="0" placeholder="Products from" aria-label="Products from" style="width:120px" value="${cur('min_products')}">
+          ${sel('has_email', [['', 'Any email'], ['1', 'Has an email'], ['0', 'No email']])}
+          ${sel('finding', [['', 'Any result'], ['any', 'Something is wrong'], ['none', 'Nothing wrong found']])}
+          ${sel('status', [['', 'Any status'], ...d.statuses.map((x) => [x.key, x.label])])}
+          <button class="btn secondary" type="submit">Filter</button>
+          <button class="btn secondary" type="button" data-download="/api/admin/prospects.csv?${filt}">Export CSV</button>
+          <button class="btn secondary" type="button" id="prun">Read a store now</button></form>
+        ${d.rows.length ? `<div class="table-wrap"><table class="data" id="ptable"><thead><tr><th>Store</th><th>Where</th><th class="num">Products</th><th>Contact</th><th>What we found</th><th class="num">Risk</th><th>Status</th></tr></thead><tbody>${d.rows.map((r) => `<tr>
+          <td><span class="cell-main">${esc(r.domain)}</span>${r.store_name ? `<div class="cell-sub">${esc(r.store_name)}</div>` : ''}</td>
+          <td>${esc([r.city, r.country].filter(Boolean).join(', ') || '–')}</td><td class="num">${r.products ?? '–'}</td>
+          <td>${r.email ? esc(r.email) : '<span class="muted">–</span>'}${r.phone ? `<div class="cell-sub">${esc(r.phone)}</div>` : ''}</td>
+          <td>${r.state === 'done' ? esc(r.finding || 'Nothing wrong found') : `<span class="muted">${esc(STATE[r.state] || '')}${r.note ? `: ${esc(r.note)}` : ''}</span>`}</td>
+          <td class="num">${r.state === 'done' ? r.score : '–'}</td>
+          <td><select class="pstatus" data-domain="${esc(r.domain)}" aria-label="Status of ${esc(r.domain)}">${d.statuses.map((x) => `<option value="${x.key}" ${x.key === r.status ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>${['new', 'drafted'].includes(r.status) && r.state !== 'queued' ? ` <button type="button" class="btn small secondary pagain" data-domain="${esc(r.domain)}">Check again</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+          <p class="muted">Showing ${page * 100 + 1}–${page * 100 + d.rows.length} of ${d.total}. ${page > 0 ? `<a href="#/admin/prospects?${new URLSearchParams({ ...Object.fromEntries(filt), page: page - 1 })}">Previous</a> ` : ''}${(page + 1) * 100 < d.total ? `<a href="#/admin/prospects?${new URLSearchParams({ ...Object.fromEntries(filt), page: page + 1 })}">Next</a>` : ''}</p>`
+          : '<p class="muted">No stores match. Add some above.</p>'}</section></div>`;
+    const msg = $('#pmsg', ctx.main);
+    $('#pimport', ctx.main).onsubmit = async (e) => {
+      e.preventDefault();
+      const file = $('#pfile', ctx.main).files[0];
+      const text = [$('#ptext', ctx.main).value, file ? await file.text() : ''].join('\n');
+      if (!text.trim()) { msg.textContent = 'Paste some addresses or choose a file first.'; return; }
+      msg.textContent = 'Adding…';
+      try { const r = await (await ytRaw('/api/admin/prospects/import?source=console', { method: 'POST', text })).json(); toast(r.message); adminProspects(ctx, head); } catch (ex) { msg.textContent = ex.message; }
+    };
+    $('#pfilter', ctx.main).onsubmit = (e) => {
+      e.preventDefault();
+      const f = new FormData(e.target), p = new URLSearchParams();
+      keys.forEach((k) => { const v = String(f.get(k) || '').trim(); if (v) p.set(k, v); });
+      location.hash = `#/admin/prospects${p.toString() ? `?${p}` : ''}`;
+    };
+    $('#prun', ctx.main).onclick = async (e) => {
+      e.target.disabled = true;
+      try { const r = await api('/api/admin/prospects/run', { method: 'POST', body: { max: 1 } }); toast(r.ran ? 'One store read' : ({ cap: 'Today’s limit is reached', customers: 'Customer checks are running; try again soon', empty: 'No stores are waiting', busy: 'A store is being read already', off: 'Prospects are switched off' }[r.stopped] || 'Nothing to read')); adminProspects(ctx, head); } catch (ex) { toast(ex.message); e.target.disabled = false; }
+    };
+    ctx.main.querySelectorAll('.pagain').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await api(`/api/admin/prospects/${encodeURIComponent(b.dataset.domain)}/check-again`, { method: 'POST', body: {} }); toast('It will be checked again soon'); adminProspects(ctx, head); } catch (ex) { toast(ex.message); b.disabled = false; }
+    }));
+    ctx.main.querySelectorAll('.pstatus').forEach((el) => el.addEventListener('change', async () => {
+      try { await api(`/api/admin/prospects/${encodeURIComponent(el.dataset.domain)}`, { method: 'PATCH', body: { status: el.value } }); toast('Status saved'); } catch (ex) { toast(ex.message); adminProspects(ctx, head); }
+    }));
+  }
+
   async function adminUsage(ctx, head) {
     const qs = new URLSearchParams(location.hash.split('?')[1] || '');
     const period = qs.get('period') === 'day' ? 'day' : 'month';
@@ -3590,7 +3662,7 @@
   const METHODS = { bank: 'Bank transfer', upi: 'UPI', card: 'Card', razorpay: 'Razorpay', stripe: 'Stripe', shopify: 'Shopify billing', cash: 'Cash', other: 'Other' };
   const CURS = ['USD', 'EUR', 'INR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'];
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(v) === String(cur ?? '') ? 'selected' : ''}>${esc(l)}</option>`;
-  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed', 'store.sale': 'Sale mode', 'feature.change': 'Feature switched' };
+  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed', 'store.sale': 'Sale mode', 'feature.change': 'Feature switched', 'prospects.import': 'Prospects imported', 'prospects.block': 'Do not contact added', 'prospects.status': 'Prospect status', 'prospects.check_again': 'Prospect checked again' };
   function auditText(a) {
     const d = a.detail_json ? JSON.parse(a.detail_json) : {};
     if (a.action === 'note') return esc(d.text);
@@ -3609,7 +3681,7 @@
     if (!S.admin) { location.hash = '#/'; return; }
     const tab = ctx.r.a;
     const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Founder console</h1><div class="meta">Customers, plans and revenue · only visible to founders</div></div></div>`
-      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['features', 'Features'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity'], ['runners', 'Runners'], ['usage', 'Usage']], tab);
+      + tabs('#/admin', [[null, 'Overview'], ['customers', 'Customers'], ['plans', 'Plans'], ['payments', 'Payments'], ['audit', 'Audit log'], ['settings', 'Settings'], ['features', 'Features'], ['leads', 'Leads and free checks'], ['capacity', 'Capacity'], ['runners', 'Runners'], ['usage', 'Usage'], ...(feat('prospects') ? [['prospects', 'Prospects']] : [])], tab);
     if (tab === 'customers' && ctx.r.b) return adminCustomer(ctx, head, ctx.r.b);
     if (tab === 'customers') return adminCustomers(ctx, head);
     if (tab === 'plans') return adminPlans(ctx, head);
@@ -3621,6 +3693,7 @@
     if (tab === 'capacity') return adminCapacity(ctx, head);
     if (tab === 'runners') return adminRunners(ctx, head);
     if (tab === 'usage') return adminUsage(ctx, head);
+    if (tab === 'prospects' && feat('prospects')) return adminProspects(ctx, head);
     const d = await api('/api/admin/billing');
     if (!ctx.alive()) return;
     const c = d.counts;
