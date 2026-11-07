@@ -48,6 +48,7 @@ export const FLAGS = [
   { key: 'ab_tests', area: 'Checks', label: 'A/B test versions', about: 'Finds A/B and price-test apps and shops once in every test version (owner-listed, or found automatically for Convert and Optimizely). Adds Test suite → A/B tests.', checks: ['sale.abtest'] },
   { key: 'woocommerce', area: 'Platforms', label: 'WooCommerce shopping tests', about: 'Add to cart and checkout tests for WooCommerce stores through the public Store API. Off: WooCommerce stores get the same checks as other non-Shopify platforms.' },
   { key: 'csp_enforce', area: 'Security', label: 'Block unsafe page content (CSP)', about: 'Off: browsers only report scripts our pages did not expect (report-only). On: they block them. Turn on once the CSP reports stay quiet. CSP_MODE on the server overrides this.' },
+  { key: 'prospects', area: 'Founder tools', label: 'Prospects (founders only)', about: 'Founder console → Prospects: import store lists, keep each store once, read public store details and run a light check. For finding stores to help; customers never see it.' },
   { key: 'laws', area: 'Checks', label: 'Laws where you sell', about: 'Checks for the German legal notice, EU cookie consent and US accessibility, and the "Where you sell" setting.', checks: ['law.de', 'law.cookies', 'access.law', 'law.us'] },
 ].map((f) => ({ area: 'Other', core: false, checks: [], ...f }));
 
