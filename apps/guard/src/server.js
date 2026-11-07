@@ -8,6 +8,8 @@ import { db, q } from './db.js';
 import { normalizeStoreUrl, assertPublicTarget, newContext, gotoStore, settleChallenge } from './engine/browser.js';
 import { discover } from './engine/discover.js';
 import { GROUPS, INTERVALS, FULL_INTERVALS, MARKETS, normalizeConfig } from './engine/catalog.js';
+import { removalWatchTick } from './removal-watch.js';
+import { Busy } from './lookups.js';
 import { startRun, startScheduler, storeConfig, intervals, nextRunIn, saleActive } from './scheduler.js';
 import { queueDepth, cancelRun, queueRoom } from './queue.js';
 import { withLookupSlot } from './lookups.js';
@@ -1223,6 +1225,8 @@ app.use((err, req, res, next) => {
 app.listen(config.port, () => {
   console.log(`Tharam Store Guard on ${config.baseUrl} (port ${config.port})`);
   if (process.env.DISABLE_SCHEDULER !== '1') startScheduler();
+  // Tests: run only the after-removal storefront watch, every few seconds (the scheduler stays off).
+  else if (Number(process.env.REMOVAL_WATCH_TICK_MS) > 0) setInterval(() => removalWatchTick({ startRun, busy: (e) => e instanceof Busy }).catch((e) => console.error('removal watch failed', e)), Number(process.env.REMOVAL_WATCH_TICK_MS)).unref();
 });
 
 // Docker sends SIGTERM on redeploy; Node as PID 1 ignores it unless handled. Runs in flight are
