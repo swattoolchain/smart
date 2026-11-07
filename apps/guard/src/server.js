@@ -37,6 +37,7 @@ import { saleReadiness, emailSaleReadiness, saleRecipients, saleGroups } from '.
 import { appHealth } from './app-health.js';
 import { runnerRoutes } from './runner-routes.js';
 import { runsCsv, checksCsv, productsCsv, reportHtml, reportPdf, runFor, exportName } from './export.js';
+import { brandingRoutes } from './branding.js';
 import { teamRoutes, membership, memberMay, teamAllowed, redactForViewer } from './team.js';
 import * as themeClean from './theme-clean.js';
 import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
@@ -401,6 +402,7 @@ app.get('/api/me', requireUser, (req, res) => {
   res.json({ user: req.user, member, admin: !req.member && isAdmin(req.user), license: licenseView(req.user.id), team: !req.member && isOn('teams') && teamAllowed(req.user.id), features: enabledKeys() });
 });
 teamRoutes(app, { requireUser });
+brandingRoutes(app, { requireUser });
 
 // The customer's own plan and payment history.
 app.get('/api/account/billing', requireUser, (req, res) => {

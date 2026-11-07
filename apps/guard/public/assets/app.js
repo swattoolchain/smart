@@ -544,7 +544,7 @@
     const h = hash.replace(/^#/, '').split('?')[0] || '/';
     let m;
     if ((m = /^\/s\/(\d+)(?:\/([a-z]+))?(?:\/([\w-]+))?(?:\/([\w-]+))?$/.exec(h))) return { store: Number(m[1]), module: m[2] || 'overview', a: m[3] || null, b: m[4] || null };
-    if ((m = /^\/account(?:\/(password|billing|team))?$/.exec(h))) return { page: 'account', a: m[1] || null };
+    if ((m = /^\/account(?:\/(password|billing|team|branding))?$/.exec(h))) return { page: 'account', a: m[1] || null };
     if (h === '/stores') return { page: 'stores' };
     if (h === '/add') return { page: 'add' };
     if (h === '/guide') return { page: 'guide' };
@@ -3287,11 +3287,12 @@
   }
 
   PAGES.account = async (ctx) => {
-    const tab = ['password', 'billing', 'team'].includes(ctx.r.a) ? ctx.r.a : null;
+    const tab = ['password', 'billing', 'team', 'branding'].includes(ctx.r.a) ? ctx.r.a : null;
     if (S.member) { ctx.main.innerHTML = `<div class="main-inner"><div class="panel empty"><h2>Account settings belong to the account owner</h2><p>You're working in ${esc(S.me.name || S.me.email)}'s workspace. Switch back to your own account in the account menu to see your settings.</p></div></div>`; return; }
-    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing']] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password'], ...(S.team ? [['team', 'Team']] : [])], tab);
+    const head = `<div class="page-head"><div><div class="crumbs">Workspace</div><h1>Account</h1><div class="meta">${esc(S.me.email)}</div></div></div>` + tabs('#/account', EMB ? [[null, 'Profile'], ['billing', 'Plan and billing']] : [[null, 'Profile'], ['billing', 'Plan and billing'], ['password', 'Password'], ...(S.team ? [['team', 'Team']] : []), ...(S.team && feat('agency_branding') ? [['branding', 'Branding']] : [])], tab);
     if (tab === 'billing') return billingPage(ctx, head);
     if (tab === 'team') return teamPage(ctx, head);
+    if (tab === 'branding') return S.team && feat('agency_branding') ? brandingPage(ctx, head) : (location.hash = '#/account');
     if (tab === 'password') {
       ctx.main.innerHTML = `<div class="main-inner">${head}<form class="settings-card" id="pwf"><div class="form-section"><div><h3>Change password</h3><p class="explain">Use at least 8 characters. You'll stay logged in on this device.</p></div>
         <div class="controls"><div class="field"><label for="cur">Current password</label><input id="cur" name="current" type="password" autocomplete="current-password" required></div>
@@ -3321,6 +3322,40 @@
     });
     form.addEventListener('input', mark);
   };
+
+  // Branding: the agency's own name and logo on the reports it hands to clients (website accounts only).
+  async function brandingPage(ctx, head) {
+    const d = await api('/api/branding');
+    if (!ctx.alive()) return;
+    ctx.main.innerHTML = `<div class="main-inner">${head}
+      <form class="settings-card" id="brn"><div class="form-section"><div><h3>Agency name</h3><p class="explain">Shown at the top of the printed and PDF reports you give to clients, instead of Tharam. A small "Checked by Tharam" line stays at the bottom.</p></div>
+        <div class="controls"><div class="field"><label for="bn">Name</label><input id="bn" name="name" maxlength="${d.limits.nameChars}" value="${esc(d.name)}" placeholder="Your agency"></div>
+        <div><button class="btn" type="submit">Save name</button></div><p class="error-msg" id="bn-err" role="alert"></p></div></div></form>
+      <section class="settings-card"><div class="form-section"><div><h3>Logo</h3><p class="explain">A PNG or SVG, up to ${d.limits.logoKb} KB. Plain SVG only: files with scripts or outside links are refused.</p></div>
+        <div class="controls">${d.logo ? `<p><img src="${esc(d.logo)}" alt="Your logo" style="max-width:200px;max-height:80px;border:1px solid var(--line,#e5e7eb);padding:6px;border-radius:6px;background:#fff"></p>` : '<p class="muted">No logo yet.</p>'}
+          <div class="field"><label for="bl">Choose a file</label><input id="bl" type="file" accept="image/png,image/svg+xml"></div>
+          <div class="inline-row"><button type="button" class="btn" id="bl-up">Upload logo</button>${d.hasLogo ? '<button type="button" class="btn secondary" id="bl-rm">Remove logo</button>' : ''}</div><p class="error-msg" id="bl-err" role="alert"></p></div></div></section></div>`;
+    $('#brn').onsubmit = async (e) => {
+      e.preventDefault();
+      const done = busy(e.target.querySelector('button[type=submit]'), 'Saving');
+      try { await api('/api/branding', { method: 'PUT', body: { name: new FormData(e.target).get('name') } }); toast('Agency name saved'); render({ silent: true }); }
+      catch (ex) { $('#bn-err').textContent = ex.message; done(); }
+    };
+    $('#bl-up').onclick = async () => {
+      const f = $('#bl').files[0];
+      if (!f) { $('#bl-err').textContent = 'Choose a PNG or SVG file first.'; return; }
+      const done = busy($('#bl-up'), 'Uploading');
+      try {
+        const headers = { 'Content-Type': f.type };
+        if (EMB) headers.Authorization = `Bearer ${await window.shopify.idToken()}`;
+        const r = await fetch('/api/branding/logo', { method: 'PUT', headers, credentials: 'same-origin', body: f });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || 'The logo could not be saved.');
+        toast('Logo saved'); render({ silent: true });
+      } catch (ex) { $('#bl-err').textContent = ex.message; done(); }
+    };
+    $('#bl-rm')?.addEventListener('click', async () => { await api('/api/branding/logo', { method: 'DELETE' }).catch((ex) => toast(ex.message, 'error')); toast('Logo removed'); render({ silent: true }); });
+  }
 
   // Team: invite people to work on this account's stores (website accounts only).
   async function teamPage(ctx, head) {

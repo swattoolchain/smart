@@ -38,6 +38,7 @@ export const FLAGS = [
   { key: 'sale_traffic', area: 'Sales', label: 'Sale traffic test', about: 'Opt-in: up to 5 shoppers at once during the full check, to show slowdowns before a sale.', checks: ['sale.traffic'] },
   { key: 'ai_shopper', area: 'AI', label: 'AI shopper', about: 'A goal-driven shopper that browses and buys on any theme and reports friction, also on draft themes in Safe to publish. Needs the AI key.', checks: ['ai.shopper'] },
   { key: 'teams', area: 'Accounts', label: 'Team members (agencies)', about: 'Website accounts invite team members with roles. Members already invited can still switch back and leave while this is off.' },
+  { key: 'agency_branding', area: 'Accounts', label: 'Agency branding on reports', about: 'Website accounts add their agency name and logo to the printable and PDF reports; "Checked by Tharam" stays in the footer. Needs team members to be useful.' },
   { key: 'spam_watch', area: 'Security watch', label: 'Spam links and defacement', about: 'Hidden spam links in page code, and pages that look defaced.', checks: ['security.spam', 'security.deface'] },
   { key: 'tamper_watch', area: 'Security watch', label: 'Product and discount tampering', about: 'Zero prices, mass edits, swapped products and unexpected discount codes, with before and after.', checks: ['security.tamper'] },
   { key: 'domain_watch', area: 'Security watch', label: 'Domain, certificate and email records', about: 'Domain and certificate expiry warnings; DNS, SPF and DMARC changes.', checks: ['security.domain'] },
