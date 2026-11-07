@@ -3552,6 +3552,7 @@
     const filt = new URLSearchParams(); keys.forEach((k) => { if (qs.get(k)) filt.set(k, qs.get(k)); });
     const page = Math.max(0, Number(qs.get('page')) || 0);
     const d = await api(`/api/admin/prospects?${filt}&limit=100&offset=${page * 100}`);
+    const ai = await api('/api/admin/prospects-ai').catch(() => null);
     if (!ctx.alive()) return;
     const sm = d.summary;
     const cur = (k) => esc(qs.get(k) || '');
@@ -3563,6 +3564,9 @@
         <div class="figure"><b>${sm.byState.done || 0}</b><span>read and checked</span></div>
         <div class="figure"><b>${sm.byState.queued || 0}</b><span>waiting to be read</span></div>
         <div class="figure"><b>${sm.checkedToday} / ${sm.dailyCap}</b><span>read today</span></div></div>
+      ${ai ? `<section class="panel" id="pai"><h2>Fit and opener drafts</h2>${ai.enabled
+        ? `<p class="muted">${ai.classified} read by AI, ${ai.drafts} opener drafts, ${ai.waiting} waiting${ai.inBatch ? ` (${ai.inBatch} sent in a batch, results come later)` : ''}. Each store is read once, many at a time.</p><button class="btn secondary" type="button" id="pairun">Run the AI step now</button> <span id="paimsg" class="muted" role="status"></span>`
+        : '<p class="muted">AI is not set up, so stores keep their plain score and no openers are drafted.</p>'}</section>` : ''}
       ${sm.idle ? `<p class="muted" role="status" id="pidle">${esc(sm.idleMessage)}</p>` : ''}
       <section class="panel"><h2>Add stores</h2>
         <p class="muted">Paste store addresses or choose a CSV or text file with one store a line (up to 100,000). Each store is kept once, however it is written. Stores marked opted out or do not contact are never added again.</p>
@@ -3584,7 +3588,7 @@
           <td><span class="cell-main">${esc(r.domain)}</span>${r.store_name ? `<div class="cell-sub">${esc(r.store_name)}</div>` : ''}</td>
           <td>${esc([r.city, r.country].filter(Boolean).join(', ') || '–')}</td><td class="num">${r.products ?? '–'}</td>
           <td>${r.email ? esc(r.email) : '<span class="muted">–</span>'}${r.phone ? `<div class="cell-sub">${esc(r.phone)}</div>` : ''}</td>
-          <td>${r.state === 'done' ? esc(r.finding || 'Nothing wrong found') : `<span class="muted">${esc(STATE[r.state] || '')}${r.note ? `: ${esc(r.note)}` : ''}</span>`}</td>
+          <td>${r.state === 'done' ? esc(r.finding || 'Nothing wrong found') : `<span class="muted">${esc(STATE[r.state] || '')}${r.note ? `: ${esc(r.note)}` : ''}</span>`}${r.ai_summary ? `<div class="cell-sub">${esc(r.ai_summary)}</div>` : ''}${r.draft_opener ? `<div class="cell-sub"><b>Draft opener:</b> <span class="popener">${esc(r.draft_opener)}</span></div>` : ''}</td>
           <td class="num">${r.state === 'done' ? r.score : '–'}</td>
           <td><select class="pstatus" data-domain="${esc(r.domain)}" aria-label="Status of ${esc(r.domain)}">${d.statuses.map((x) => `<option value="${x.key}" ${x.key === r.status ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>${['new', 'drafted'].includes(r.status) && r.state !== 'queued' ? ` <button type="button" class="btn small secondary pagain" data-domain="${esc(r.domain)}">Check again</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
           <p class="muted">Showing ${page * 100 + 1}–${page * 100 + d.rows.length} of ${d.total}. ${page > 0 ? `<a href="#/admin/prospects?${new URLSearchParams({ ...Object.fromEntries(filt), page: page - 1 })}">Previous</a> ` : ''}${(page + 1) * 100 < d.total ? `<a href="#/admin/prospects?${new URLSearchParams({ ...Object.fromEntries(filt), page: page + 1 })}">Next</a>` : ''}</p>`
@@ -3607,6 +3611,11 @@
     $('#prun', ctx.main).onclick = async (e) => {
       e.target.disabled = true;
       try { const r = await api('/api/admin/prospects/run', { method: 'POST', body: { max: 1 } }); toast(r.ran ? 'One store read' : ({ cap: 'Today’s limit is reached', customers: 'Customer checks are running; try again soon', empty: 'No stores are waiting', busy: 'A store is being read already', off: 'Prospects are switched off' }[r.stopped] || 'Nothing to read')); adminProspects(ctx, head); } catch (ex) { toast(ex.message); e.target.disabled = false; }
+    };
+    const airun = $('#pairun', ctx.main);
+    if (airun) airun.onclick = async () => {
+      airun.disabled = true;
+      try { const r = await api('/api/admin/prospects-ai/run', { method: 'POST', body: {} }); toast(r.submitted ? `${r.submitted} stores sent to the AI in a batch` : r.ran ? `${r.ran} stores read by AI` : ({ empty: 'Nothing new to read', no_key: 'AI is not set up', batch_running: 'A batch is still being answered', busy: 'Already running', error: 'The AI did not answer. Try later.' }[r.stopped] || 'Nothing to do')); adminProspects(ctx, head); } catch (ex) { toast(ex.message); airun.disabled = false; }
     };
     ctx.main.querySelectorAll('.pagain').forEach((b) => b.addEventListener('click', async () => {
       b.disabled = true;
@@ -3662,7 +3671,7 @@
   const METHODS = { bank: 'Bank transfer', upi: 'UPI', card: 'Card', razorpay: 'Razorpay', stripe: 'Stripe', shopify: 'Shopify billing', cash: 'Cash', other: 'Other' };
   const CURS = ['USD', 'EUR', 'INR', 'GBP', 'AUD', 'CAD', 'SGD', 'AED'];
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(v) === String(cur ?? '') ? 'selected' : ''}>${esc(l)}</option>`;
-  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed', 'store.sale': 'Sale mode', 'feature.change': 'Feature switched', 'prospects.import': 'Prospects imported', 'prospects.block': 'Do not contact added', 'prospects.status': 'Prospect status', 'prospects.check_again': 'Prospect checked again' };
+  const ACTION = { 'license.create': 'Licence created', 'license.update': 'Licence changed', 'payment.record': 'Payment recorded', note: 'Note', 'plan.create': 'Plan created', 'plan.update': 'Plan changed', 'setting.change': 'Setting changed', 'store.sale': 'Sale mode', 'feature.change': 'Feature switched', 'prospects.import': 'Prospects imported', 'prospects.block': 'Do not contact added', 'prospects.status': 'Prospect status', 'prospects.check_again': 'Prospect checked again', 'prospects.ai_run': 'Prospect AI step run' };
   function auditText(a) {
     const d = a.detail_json ? JSON.parse(a.detail_json) : {};
     if (a.action === 'note') return esc(d.text);

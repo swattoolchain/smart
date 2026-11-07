@@ -175,7 +175,7 @@ describe('Prospects switch', () => {
   after(async () => { await P?.stop(); });
 
   it('Prospects is hidden and refused while its switch is off, and answers when it is on', async (t) => {
-    const routes = [['GET', '/api/admin/prospects'], ['GET', '/api/admin/prospects.csv'], ['GET', '/api/admin/prospects.json'], ['POST', '/api/admin/prospects/run']];
+    const routes = [['GET', '/api/admin/prospects'], ['GET', '/api/admin/prospects.csv'], ['GET', '/api/admin/prospects.json'], ['POST', '/api/admin/prospects/run'], ['GET', '/api/admin/prospects-ai'], ['POST', '/api/admin/prospects-ai/run']];
     assert.ok(!(await founder.get('/api/me')).json.features.includes('prospects'), 'not offered to the app');
     for (const [m, u] of routes) assert.equal((await founder.req(m, u, m === 'POST' ? {} : undefined)).status, 404, `${m} ${u} is hidden while off`);
     assert.equal((await owner.get('/api/admin/prospects')).status, 404, 'customers see nothing either');

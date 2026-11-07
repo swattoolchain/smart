@@ -12,7 +12,7 @@
 import crypto from 'node:crypto';
 import express from 'express';
 import { chromium } from 'playwright';
-import { db } from './db.js';
+import { db, ensureColumn } from './db.js';
 import { config } from './config.js';
 import { audit } from './license.js';
 import { sendMail } from './alerts.js';
@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS prospect_blocked (
 );
 CREATE TABLE IF NOT EXISTS prospect_notice (key TEXT PRIMARY KEY, at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS prospect_daily (day TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0);`);
+// AI batch step (src/prospect-ai.js). ai_classified_at is set once per row and never cleared.
+for (const [c, t] of [['ai_classified_at', 'TEXT'], ['ai_icp', 'INTEGER'], ['ai_fit', 'INTEGER'], ['ai_summary', "TEXT NOT NULL DEFAULT ''"],
+  ['ai_search_terms', "TEXT NOT NULL DEFAULT '[]'"], ['draft_opener', "TEXT NOT NULL DEFAULT ''"], ['ai_batch_id', "TEXT NOT NULL DEFAULT ''"], ['ai_attempts', 'INTEGER NOT NULL DEFAULT 0']]) ensureColumn('prospects', c, t);
 
 // Stores that were contacted, answered or asked not to be contacted are never read or checked again.
 const LEFT_ALONE = "'contacted', 'replied', 'opted_out', 'do_not_contact'";
@@ -148,9 +151,11 @@ function where(f = {}) {
   if (f.q) { w.push("(domain LIKE ? ESCAPE '\\' OR store_name LIKE ? ESCAPE '\\')"); a.push(like(f.q), like(f.q)); }
   return { sql: w.join(' AND '), args: a };
 }
+const safeList = (j) => { try { const a = JSON.parse(j || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
 const view = (r) => ({
   domain: r.domain, status: r.status, state: r.state, source: r.source, shopify: r.shopify == null ? null : !!r.shopify, store_name: r.store_name, country: r.country, city: r.city,
   currency: r.currency, products: r.products, email: r.email, phone: r.phone, icp: r.icp, score: r.score, finding: r.finding, note: r.note, checked_at: r.checked_at, added_at: r.created_at,
+  ai_icp: r.ai_icp ?? null, ai_fit: r.ai_fit ?? null, ai_summary: r.ai_summary || '', ai_search_terms: safeList(r.ai_search_terms), draft_opener: r.draft_opener || '', ai_checked_at: r.ai_classified_at || null,
 });
 
 export function listProspects(filters = {}, { limit = 100, offset = 0 } = {}) {

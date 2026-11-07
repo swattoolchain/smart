@@ -19,6 +19,7 @@ import { pruneVideos } from './video.js';
 import { dueSaleRehearsals } from './sale-plans.js';
 import { isOn } from './features.js';
 import { enrichTick } from './prospect-list.js';
+import { aiTick } from './prospect-ai.js';
 import { dueSaleBursts, dueSaleEndChecks } from './sale-live.js';
 
 export function minutesSince(ts) {
@@ -119,6 +120,8 @@ export function startScheduler() {
     pruneVideos();
   });
   // Founder prospect list: read one queued store at a time, only while no customer check is running (within the daily cap).
+  // AI step for new prospects (batches; does nothing without an AI key).
+  cron.schedule('*/5 * * * *', () => { if (isOn('prospects')) aiTick({ log: (m) => console.error('prospect AI:', m) }).catch((e) => console.error('prospect AI failed', e)); });
   cron.schedule('* * * * *', () => { if (isOn('prospects')) enrichTick().catch((e) => console.error('prospect reading failed', e)); });
   // Once a day: keep Shopify-billed plans in step with Shopify (managed pricing sends no webhooks).
   cron.schedule('17 3 * * *', () => syncAllBilling().catch((e) => console.error('billing sync failed', e)));
