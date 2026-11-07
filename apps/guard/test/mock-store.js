@@ -422,7 +422,7 @@ const server = http.createServer(async (req, res) => {
   if (p === '/__pwcount') return send(res, 200, { posts: PW_POSTS }, 'application/json');
   // Every request the store received (method, path, user agent), for tests that limit how a visitor behaves.
   if (p === '/__requests') return send(res, 200, { requests: REQUESTS }, 'application/json');
-  if (!p.startsWith('/__')) REQUESTS.push({ method: req.method, path: p + u.search, ua: req.headers['user-agent'] || '' });
+  if (!p.startsWith('/__')) REQUESTS.push({ method: req.method, path: p + u.search, ua: req.headers['user-agent'] || '', at: Date.now() });
   // robots.txt: none by default. MOCK_EXTRA=robots-shopify serves Shopify's default rules (no cart or checkout
   // for bots); robots-block asks Tharam's checker to stay away entirely; robots-slow sets a crawl delay.
   if (p === '/robots.txt') {
@@ -581,6 +581,18 @@ document.addEventListener('submit',function(e){var f=e.target;if(!f.action.inclu
 <script>document.querySelector('[name=postalCode]').addEventListener('change',function(){var cc=document.querySelector('[name=countryCode]').value;fetch('/__rates.json?country='+cc).then(function(r){return r.json();}).then(function(j){document.getElementById('rates').innerHTML=j.rates.map(function(r){return '<label><input type="radio" name="shipping_rate" value="'+r.id+'"> '+r.title+' '+r.price+'</label>';}).join('');});});</script>
 <aside class="order-summary"><h2>Order summary</h2>${c.items.map((i) => `<div class="line"><span>${i.title} × ${i.quantity}</span> <span>${inr(i.final_line_price)}</span></div>`).join('')}
 <div class="row"><span>Subtotal · ${c.item_count} ${c.item_count === 1 ? 'item' : 'items'}</span> <span>${inr(sub)}</span></div><div class="row"><span>Shipping</span> <span>Enter shipping address</span></div></aside>`));
+  }
+  // Public store data for the prospect list (src/prospect-list.js). MOCK_EXTRA: meta-us / meta-eu (another country),
+  // meta-none (no /meta.json), contact-none (no public email or phone), contact-personal (only a personal address).
+  if (p === '/meta.json') {
+    if (EXTRA.includes('meta-none')) return send(res, 404, layout('Not found', '<h1>404</h1>'));
+    const m = EXTRA.includes('meta-eu') ? { country: 'DE', city: 'Berlin', currency: 'EUR' } : EXTRA.includes('meta-us') ? { country: 'US', city: 'Austin', currency: 'USD' } : { country: 'IN', city: 'Jaipur', currency: 'INR' };
+    return send(res, 200, { id: 1, name: 'Kaveri Handlooms', ...m, domain: 'kaveri.example', url: `http://localhost:${PORT}`, myshopify_domain: 'mock.myshopify.com', published_products_count: 42 }, 'application/json');
+  }
+  if (p === '/policies/contact-information') {
+    if (EXTRA.includes('contact-none')) return send(res, 404, layout('Not found', '<h1>404</h1>'));
+    if (EXTRA.includes('contact-personal')) return send(res, 200, layout('Contact information', '<h1>Contact information</h1><p>Write to <a href="mailto:ravi.kumar@gmail.com">ravi.kumar@gmail.com</a></p>'));
+    return send(res, 200, layout('Contact information', '<h1>Contact information</h1><p>Write to <a href="mailto:support@kaveri.example">support@kaveri.example</a> or call <a href="tel:+919876543210">+91 98765 43210</a></p>'));
   }
   if (p.startsWith('/policies/')) {
     if (!DE && (p.endsWith('terms-of-service') || p.endsWith('shipping-policy'))) return send(res, 404, layout('Not found', '<h1>404</h1>'));
