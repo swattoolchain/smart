@@ -503,6 +503,7 @@
       ${feat('app_health') ? item(`${base}/apps`, 'apps', 'App health', at('apps')) : ''}
       ${item(`${base}/alerts`, 'alerts', 'Alerts', at('alerts'), cur.failing.length ? `<span class="badge" aria-label="${cur.failing.length} open">${cur.failing.length}</span>` : '')}
       ${feat('security_checklist') ? item(`${base}/security`, 'shield', 'Security checklist', at('security')) : ''}
+      ${feat('security_report') ? item(`${base}/securityreport`, 'shield', 'Security report', at('securityreport')) : ''}
       ${feat('incident_mode') ? item(`${base}/incident`, 'lock', 'Incident mode', at('incident'), cur.incident ? '<span class="badge" aria-label="Incident mode is on">On</span>' : '') : ''}
       <div class="rail-label">Configure</div>
       ${item(`${base}/suite`, 'suite', 'Test suite', at('suite'))}
@@ -587,7 +588,7 @@
       if (!silent) { main.innerHTML = skeleton(); window.scrollTo(0, 0); }
       const ctx = { alive, main, r };
       // Pages of features that are switched off open the overview instead.
-      const PAGE_FEATURE = { sale: 'sale_report', apps: 'app_health', security: 'security_checklist', incident: 'incident_mode', sales: 'sale_plans', tests: 'custom_tests' };
+      const PAGE_FEATURE = { sale: 'sale_report', apps: 'app_health', security: 'security_checklist', securityreport: 'security_report', incident: 'incident_mode', sales: 'sale_plans', tests: 'custom_tests' };
       if (r.store) await ((!PAGE_FEATURE[r.module] || feat(PAGE_FEATURE[r.module])) && STORE_PAGES[r.module] || STORE_PAGES.overview)(ctx, S.stores.find((s) => s.id === r.store));
       else await PAGES[r.page](ctx);
       if (!silent && alive()) { const h1 = main.querySelector('h1'); document.title = `${h1 ? h1.textContent + ' – ' : ''}Tharam`; }
@@ -1988,6 +1989,36 @@
       });
     };
     draw();
+  };
+
+  // ---------- Monthly security report (S13) ----------
+  STORE_PAGES.securityreport = async (ctx, s) => {
+    const d = await api(`/api/stores/${s.id}/security-report`);
+    if (!ctx.alive()) return;
+    const day = (iso) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    const SEV = { critical: 'Serious', major: 'Important', minor: 'Minor' };
+    const color = { clear: 'var(--pass)', watch: 'var(--warn)', act: 'var(--fail)', nodata: 'var(--muted)' }[d.verdict];
+    const probs = d.problems.map((p) => `<li class="sc-item ${p.state === 'open' ? 'sc-todo' : 'sc-done'}"><div class="sc-body"><div class="sc-head"><b>${esc(p.title)}</b><span class="pill ${p.state === 'open' ? 'critical' : 'healthy'}">${p.state === 'open' ? 'Still open' : 'Fixed'}</span><span class="muted">${esc(SEV[p.severity] || p.severity)}</span></div>
+      <p class="sc-why">${esc(p.detail)}</p>${p.state === 'open' && p.fix ? `<p class="sc-how"><b>How to fix:</b> ${esc(p.fix)}</p>` : ''}
+      <p class="sc-meta muted">${esc(p.area)} · first seen ${day(p.firstSeen)}, last seen ${day(p.lastSeen)}${p.times > 1 ? ` · in ${p.times} checks` : ''}</p></div></li>`).join('');
+    const changes = [...d.changes.appCode.map((c) => `${esc(c.app)} changed its code on your store (${day(c.at)}).`), ...d.changes.incidents.map((i) => `Incident mode was on from ${day(i.startedAt)}${i.endedAt ? ` to ${day(i.endedAt)}` : ' (still on)'}.`)];
+    ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Monthly security report')}
+      <p class="lede-sm">What Tharam saw in the last ${d.period.days} days: security problems, what changed, and where your checklist stands. We email it once a month.</p>
+      <section class="panel"><h2 style="color:${color}">${esc(d.headline)}</h2>
+        <p class="muted">${day(d.period.from)} to ${day(d.period.to)} · ${d.checksRun} checks looked for threats · ${d.counts.found} found · ${d.counts.fixed} fixed · ${d.counts.open} still open</p>
+        <div class="row-actions" style="margin-top:10px"><a class="btn" href="/api/stores/${s.id}/security-report.html?print=1" target="_blank" rel="noopener">Print</a> <a class="btn" href="/api/stores/${s.id}/security-report.pdf" download>Download PDF</a> <button class="btn" type="button" id="sr-email">Email it to ${esc(d.recipient || 'me')}</button></div>
+        <label class="toggle-line" style="margin-top:12px"><span class="switch"><input type="checkbox" id="sr-monthly" ${d.monthly ? 'checked' : ''}><span></span></span><span class="tl-text"><b>Email me this report every month</b><span>Once a month, to ${esc(d.recipient || 'your email')}.</span></span></label></section>
+      <section class="panel"><h2>Threats and problems</h2>${d.problems.length ? `<ul class="sc-list">${probs}</ul>` : '<p>Nothing suspicious was seen this month.</p>'}</section>
+      <section class="panel"><h2>What changed</h2>${changes.length ? `<ul>${changes.map((c) => `<li>${c}</li>`).join('')}</ul>` : '<p>No app code changes and no incidents.</p>'}</section>
+      ${d.checklist ? `<section class="panel"><h2>Your security checklist</h2><p><b>${d.checklist.score} of 100</b> (${esc(d.checklist.grade)}). <a href="${`#/s/${s.id}/security`}">Open the checklist</a></p></section>` : ''}</div>`;
+    $('#sr-monthly').addEventListener('change', async (e) => {
+      try { const r = await api(`/api/stores/${s.id}/security-report`, { method: 'PATCH', body: { monthly: e.target.checked } }); toast(r.monthly ? 'Monthly email on' : 'Monthly email off'); }
+      catch (ex) { e.target.checked = !e.target.checked; toast(ex.message, 'error'); }
+    });
+    $('#sr-email').onclick = async (e) => {
+      const done = busy(e.currentTarget, 'Sending');
+      try { const r = await api(`/api/stores/${s.id}/security-report/email`, { method: 'POST' }); toast(`Sent to ${r.to}`); } catch (ex) { toast(ex.message, 'error'); } finally { done(); }
+    };
   };
 
   // ---------- Incident mode (S12) ----------
@@ -4023,7 +4054,7 @@
       const me = await api('/api/me'); S.me = me.user; S.admin = false; S.features = new Set(me.features || []);
       S.shop = sess;
       if (!location.hash || location.hash === '#/' || location.hash === '#') {
-        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', sales: '/sales', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', security: '/security', incident: '/incident', suite: '/suite', tests: '/tests', settings: '/settings' };
+        const map = { overview: '', welcome: '', reports: '/reports', publish: '/publish', sales: '/sales', catalog: '/catalog', sale: '/sale', apps: '/apps', alerts: '/alerts', security: '/security', securityreport: '/securityreport', incident: '/incident', suite: '/suite', tests: '/tests', settings: '/settings' };
         location.replace(sec === 'plan' ? '#/account/billing' : sec === 'account' ? '#/account' : sec === 'guide' ? '#/guide' : `#/s/${sess.storeId}${map[sec] ?? ''}`);
       }
     } catch (e) {

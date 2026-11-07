@@ -13,6 +13,7 @@ import { syncAllBilling, shopForStore } from './shopify.js';
 import { activeIncident, expiredIncidents, endEmail as incidentEndEmail, INCIDENT_JOURNEY_MIN } from './incident.js';
 import { sendMail } from './alerts.js';
 import { sendChecklistReminders } from './security-checklist.js';
+import { sendMonthlyReports } from './security-report.js';
 import { checkCapacityAlerts, sqlTime } from './capacity.js';
 import { queueDepth } from './queue.js';
 import { pruneVideos } from './video.js';
@@ -113,6 +114,8 @@ export function startScheduler() {
     sendLicenseNotices().catch((e) => console.error('licence notices failed', e));
     // Security checklist reminders: at most one a month per store, only while something is open.
     sendChecklistReminders({ isShopify: (st) => !!shopForStore(st.id) || /shopify/i.test(st.platform || '') }).catch((e) => console.error('checklist reminders failed', e));
+    // Monthly security report: once per store per calendar month (does nothing while the switch is off).
+    sendMonthlyReports({ isShopify: (st) => !!shopForStore(st.id) || /shopify/i.test(st.platform || '') }).catch((e) => console.error('monthly security reports failed', e));
     pruneOldRuns();
     checkCapacityAlerts({ queue: queueDepth() }).catch((e) => console.error('capacity alerts failed', e));
     pruneVideos();

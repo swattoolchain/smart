@@ -116,6 +116,22 @@ describe('Feature switches', () => {
     note(t, 'security.scripts / hijack / theme hidden by default; turning script watch on shows only that group');
   });
 
+  it('the monthly security report is hidden and refused while off, and works once on', async (t) => {
+    const storeId = (await owner.get('/api/stores')).json.stores[0].id;
+    const base = `/api/stores/${storeId}/security-report`;
+    assert.ok(!(await owner.get('/api/me')).json.features.includes('security_report'));
+    for (const [m, u, body] of [['get', base], ['get', `${base}.html`], ['get', `${base}.pdf`], ['post', `${base}/email`, {}], ['patch', base, { monthly: false }]]) {
+      assert.equal((await owner[m](u, body)).status, 404, `${m} ${u} refused while off`);
+    }
+    const nav = (await P.session().get('/shopify?shop=x.myshopify.com')).text;
+    if (nav.includes('<ui-nav-menu>')) assert.ok(!nav.includes('/shopify/securityreport'), 'no Security report link in Shopify admin');
+    await founder.patch('/api/admin/features/security_report', { on: true });
+    assert.equal((await owner.get(base)).status, 200, 'answers once on');
+    assert.ok((await owner.get('/api/me')).json.features.includes('security_report'));
+    await founder.patch('/api/admin/features/security_report', { on: false });
+    note(t, 'off: every security report route 404; on: the report answers; off again: hidden');
+  });
+
   it('sale readiness and webhook alerts answer "not found" while off, and work once on', async (t) => {
     const storeId = (await owner.get('/api/stores')).json.stores[0].id;
     const off = await owner.get(`/api/stores/${storeId}/sale-readiness`);
