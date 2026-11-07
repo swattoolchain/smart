@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { layout, esc, icon, badge, capCell, VERSION } from './layout.js';
 export { VERSION };
-import { PRODUCTS, PLATFORMS, MARKETPLACES, CAPS, FAQ, MANAGED, AUDIENCES, PROMISES } from './content.js';
+import { PRODUCTS, PLATFORMS as PLATFORM_LIST, WOO_AVAILABLE, MARKETPLACES, CAPS, FAQ, MANAGED, AUDIENCES, PROMISES } from './content.js';
 import { demoMarkup, demoScript } from './demo.js';
 import { ZIP_NAME, pluginVersion } from '../wp-plugin.js';
+import { isOn } from '../features.js';
 import { listPlans, getPlan, setting, FEATURES } from '../license.js';
 
 const checkForm = (id = 'check') => `<form class="check-form" id="check-form" novalidate><label for="${id}-url" class="sr-only">Your store address</label>
@@ -116,7 +117,7 @@ export function home() {
         .map((r) => `<tr><td>${esc(r[0])}</td><td class="no">${esc(r[1])}</td><td class="${r[2] === '✓' ? 'yes' : 'no'}">${esc(r[2])}</td><td class="us yes">✓</td></tr>`).join('')}
     </tbody></table></div>
   </div></section>
-  ${faq(FAQ)}
+  ${faq(faqList())}
   ${cta()}
   </main>`;
   return layout({ scripts: demoScript, title: '', description: 'Tharam checks your online store every few hours like a real customer and tells you the moment customers can’t buy. Product and price checks, tests for design changes, and AI that looks at your pages like a shopper. Free during the beta.', path: '/', body, alternates: { en: '/', de: '/de', fr: '/fr', es: '/es', 'x-default': '/' } });
@@ -178,20 +179,23 @@ export function product(slug) {
   <div class="plan-note"><div class="wrap">${esc(p.name)} is included in every Tharam plan. <a href="/pricing">See plans</a></div></div>
   <section class="band white"><div class="wrap"><div class="features">${p.points.map(([t, d]) => `<div class="feature"><span class="ft-ic">${icon('check', 16)}</span><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div></div></section>
   <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">Works with</h2></div>
-    <div class="support-grid">${PLATFORMS.map((pl) => `<a href="/platforms/${pl.slug}" class="sup"><span>${esc(pl.name)}</span>${capCell(pl.caps[k])}</a>`).join('')}</div></div></section>
+    <div class="support-grid">${platforms().map((pl) => `<a href="/platforms/${pl.slug}" class="sup"><span>${esc(pl.name)}</span>${capCell(pl.caps[k])}</a>`).join('')}</div></div></section>
   <section class="band white"><div class="wrap"><div class="sec-head"><h2 class="h2">Also included</h2></div><div class="pillars three">${others.map((o) => featureCard(o, false)).join('')}</div></div></section>
   ${cta()}</main>`;
   return layout({ title: p.name, description: p.short, path: `/features/${slug}`, body });
 }
 
 /* ---------- Platforms ---------- */
+const faqList = () => (isOn('woocommerce') ? FAQ.map((f) => (/^Does it work with my store/.test(f[0]) ? [f[0], 'Yes. Tharam works with Shopify, WooCommerce, BigCommerce, Magento, Wix, Squarespace and custom-built stores. Shopify and WooCommerce stores get shopping tests; other platforms are joining early access for them.'] : f)) : FAQ);
+/** The platform list as it is today: WooCommerce says its shopping tests are available once that switch is on. */
+const platforms = () => PLATFORM_LIST.map((p) => (p.slug === 'woocommerce' && isOn('woocommerce') ? { ...p, ...WOO_AVAILABLE } : p));
 const capTable = (list) => `<div class="table-scroll"><table class="cmp caps"><thead><tr><th>What Tharam checks</th>${list.map((p) => `<th><a href="/platforms/${p.slug}">${esc(p.name)}</a></th>`).join('')}</tr></thead><tbody>
   ${CAPS.map(([k, l]) => `<tr><td>${esc(l)}</td>${list.map((p) => `<td>${capCell(p.caps[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 
 export function platformIndex() {
   const body = `<main>${pageHead({ eyebrow: 'Platforms', title: 'Works with the store you already have', lede: 'Tharam works with the store you already have: Shopify, WooCommerce, BigCommerce, Magento, Salesforce Commerce Cloud, Wix, Squarespace and custom-built stores.' })}
-    <section class="band white"><div class="wrap"><div class="plat-grid">${PLATFORMS.map((p) => `<a class="plat" href="/platforms/${p.slug}"><div class="plat-h"><h3>${esc(p.name)}</h3>${badge(p.status)}</div><p>${esc(p.blurb)}</p><span class="more">Details ${icon('arrow', 14)}</span></a>`).join('')}</div></div></section>
-    <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">What works where</h2></div>${capTable(PLATFORMS)}</div></section>${cta()}</main>`;
+    <section class="band white"><div class="wrap"><div class="plat-grid">${platforms().map((p) => `<a class="plat" href="/platforms/${p.slug}"><div class="plat-h"><h3>${esc(p.name)}</h3>${badge(p.status)}</div><p>${esc(p.blurb)}</p><span class="more">Details ${icon('arrow', 14)}</span></a>`).join('')}</div></div></section>
+    <section class="band"><div class="wrap"><div class="sec-head"><h2 class="h2">What works where</h2></div>${capTable(platforms())}</div></section>${cta()}</main>`;
   return layout({ title: 'Platforms', description: 'Tharam works with Shopify, WooCommerce, BigCommerce, Magento, Salesforce Commerce Cloud, Wix, Squarespace and custom-built stores.', path: '/platforms', body });
 }
 
@@ -208,7 +212,7 @@ const wooPlugin = () => `<section class="band white" id="plugin"><div class="wra
   </div></section>`;
 
 export function platform(slug) {
-  const p = PLATFORMS.find((x) => x.slug === slug);
+  const p = platforms().find((x) => x.slug === slug);
   if (!p) return null;
   const live = p.status === 'live';
   const short = p.name.split(' ')[0];
@@ -293,7 +297,7 @@ export function pricing() {
   <section class="band"><div class="wrap"><div class="sec-head"><p class="eyebrow">Compare plans</p><h2 class="h2">What each plan includes</h2></div>${table}</div></section>
   <section class="band white"><div class="wrap"><div class="sec-head"><p class="eyebrow">How billing works</p><h2 class="h2">No surprises</h2></div>
     <div class="features">${how.map(([t, d]) => `<div class="feature"><span class="ft-ic">${icon('check', 16)}</span><h3>${esc(t)}</h3><p>${esc(d)}</p></div>`).join('')}</div></div></section>
-  ${faq(FAQ.slice(0, 4))}</main>`;
+  ${faq(faqList().slice(0, 4))}</main>`;
   const script = `<script>(function(){var tz='';try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone||''}catch(e){}
 var pick=tz==='Asia/Kolkata'||tz==='Asia/Calcutta'?'INR':/^Europe\\//.test(tz)&&tz!=='Europe/London'?'EUR':tz==='Europe/London'?'GBP':'USD';
 var r=document.querySelector('input[name=cur][value='+pick+']');if(r)r.checked=true;

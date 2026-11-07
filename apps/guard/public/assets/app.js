@@ -86,6 +86,8 @@
   const S = { me: null, admin: false, features: new Set(), stores: [], catalog: null, storeId: null, dirty: false, wizard: null, token: 0, timer: null, route: '', stopping: new Set(), focus: null };
   /** Whether a feature is switched on in the founder console (the server enforces it too). */
   const feat = (k) => S.features.has(k);
+  // Shopping tests (add to cart, checkout) run on Shopify, and on WooCommerce once that switch is on.
+  const canShop = (platform) => !platform || /shopify/i.test(platform) || (/woocommerce/i.test(platform) && feat('woocommerce'));
 
   // ---------- Helpers ----------
   // Inside Shopify admin (the Shopify app) there are no cookies: each request carries a fresh Shopify session token.
@@ -896,7 +898,7 @@
 
   // Run validations: choose what to check, see the plan, then start. Nothing runs without this preview.
   function availability(g, s) {
-    const shopify = !s.platform || /shopify/i.test(s.platform);
+    const shopify = canShop(s.platform);
     const woo = /woocommerce/i.test(s.platform || '');
     if (!shopify && ((g.key.startsWith('journey.') && !g.locked) || ((g.key === 'catalog' || g.key === 'ai.copy') && !woo))) return 'Shopify stores only for now';
     if (!groupAllowed(g)) return `In ${plansFor(featureOf(g.key))}`;
@@ -1070,7 +1072,7 @@
     if (!ctx.alive()) return;
     const tab = ['product', 'codes', ...(feat('price_checks') ? ['prices'] : []), ...(feat('ab_tests') ? ['abtests'] : [])].includes(ctx.r.a) ? ctx.r.a : null;
     const base = `#/s/${s.id}/suite`;
-    const shopify = !s.platform || /shopify/i.test(s.platform);
+    const shopify = canShop(s.platform);
     const head = storeHead(s, 'Test suite') + `<p class="lede-sm">Choose what Store Guard checks on ${esc(s.name || host(s.url))}. Journey checks run on every scheduled test; the rest run with the full check.</p>` + tabs(base, [[null, 'Checks'], ['product', 'Test product'], ['codes', 'Discount codes'], ...(feat('price_checks') ? [['prices', 'Price rules']] : []), ...(feat('ab_tests') ? [['abtests', 'A/B tests']] : [])], tab);
     if (!tab) {
       ctx.main.innerHTML = `<div class="main-inner narrow-page">${head}<form id="suite">${suiteRows(S.catalog.groups, s.config.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: s.config.markets, storeId: s.id, saleTraffic: !!s.config.saleTraffic })}</form></div>`;
@@ -3236,7 +3238,7 @@
       <h1>${S.me.name ? `Welcome, ${esc(S.me.name.split(' ')[0])}.` : 'Welcome to Tharam.'} Let's set up your first store.</h1>
       <p class="lede">It takes about two minutes, and nothing runs until you say so.</p>
       <ol>
-        <li><b>Find your store.</b> Enter its address and we'll detect the platform, products and collections.</li>
+        <li><b>Find your store.</b> Enter its address and we'll detect the platform${feat('woocommerce') ? ' (Shopify or WooCommerce)' : ''}, products and collections.</li>
         <li><b>Choose what to test.</b> The shopping journey, speed, SEO, accessibility, broken links and visual changes, all switchable.</li>
         <li><b>Choose how often and where alerts go.</b> Email or Slack, only when something breaks or recovers.</li>
         <li><b>Run the first check.</b> See your store's health in about two minutes. Scheduled monitoring starts after it.</li>
@@ -3885,6 +3887,8 @@
       if (r) r.onclick = () => { S.wizard = null; render(); };
     };
     const shopify = w.found?.isShopify || w.found?.blocked;
+    const wooShop = !!w.found?.isWoo && feat('woocommerce');
+    const shopping = shopify || wooShop;
 
     if (w.step === 1) {
       wrap(`<form id="w1" novalidate>
@@ -3920,7 +3924,7 @@
           w.found = d;
           w.url = d.origin;
           w.testProduct = '';
-          w.disabled = d.isShopify || d.blocked ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key);
+          w.disabled = d.isShopify || d.blocked || (d.isWoo && feat('woocommerce')) ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key);
           // A first guess at where they sell, from the store's domain. The owner confirms it on the next step.
           const tld = host(d.origin).split('.').pop();
           w.markets = w.markets || ({ de: ['DE'], at: ['AT'], uk: ['UK'], in: ['IN'], sg: ['SG'], au: ['AU'], ca: ['CA'], ae: ['AE'], us: ['US'], fr: ['EU'], es: ['EU'], it: ['EU'], nl: ['EU'], be: ['EU'], ie: ['EU'] }[tld] || []);
@@ -3937,21 +3941,22 @@
     if (w.step === 2) {
       wrap(`${foundCard}
         ${f.blocked ? `<div class="notice"><p><b>${esc(f.blockedBy)} asked our test browser to verify itself.</b> You can still add the store, but tests will show as blocked until Tharam is allowed in. ${f.blockedBy === 'Cloudflare' ? 'In Cloudflare, add a WAF custom rule that skips bot protection when the User Agent contains “TharamStoreGuard”.' : 'Write to hello@tharam.store and we will help you allow it.'}</p></div>` : ''}
-        ${shopify || f.blocked ? '' : `<div class="notice info"><p>${esc(f.platform?.label || 'This platform')} is detected. Add to cart and checkout tests run on Shopify today; speed, SEO, accessibility, links and errors are fully tested.</p></div>`}
+        ${wooShop && !f.blocked ? `<div class="notice info"><p><b>WooCommerce store found${f.productCount ? `, ${f.productCount >= 50 ? '50+' : f.productCount} products` : ''}.</b> We will add a product to the cart and open checkout like a customer, and stop before payment. No orders are placed.</p></div>` : ''}
+        ${shopping || f.blocked ? '' : `<div class="notice info"><p>${esc(f.platform?.label || 'This platform')} is detected. Add to cart and checkout tests run on Shopify today; speed, SEO, accessibility, links and errors are fully tested.</p></div>`}
         <form id="w2">
-        ${shopify && f.catalog?.length ? `<div class="field" style="margin-bottom:28px"><label for="wtp">Product used in tests</label><select id="wtp"><option value="">Choose automatically (recommended)</option>${f.catalog.map((p) => `<option value="${esc(p.handle)}" ${p.handle === w.testProduct ? 'selected' : ''}>${esc(p.title)}${p.variants > 1 ? ` (${p.variants} variants)` : ''}</option>`).join('')}</select><p class="hint">Each test adds one to a fresh cart, opens checkout, then empties the cart. No orders are created.</p></div>` : ''}
+        ${shopping && f.catalog?.length ? `<div class="field" style="margin-bottom:28px"><label for="wtp">Product used in tests</label><select id="wtp"><option value="">Choose automatically (recommended)</option>${f.catalog.map((p) => `<option value="${esc(p.handle)}" ${p.handle === w.testProduct ? 'selected' : ''}>${esc(p.title)}${p.variants > 1 ? ` (${p.variants} variants)` : ''}</option>`).join('')}</select><p class="hint">Each test adds one to a fresh cart, opens checkout, then empties the cart. No orders are created.</p></div>` : ''}
         ${feat('laws') ? `<div class="field" style="margin-bottom:24px"><label>Where do you sell?</label><div class="market-chips">${S.catalog.markets.map((m) => `<label class="mchip"><input type="checkbox" name="market" value="${m.code}" ${(w.markets || []).includes(m.code) ? 'checked' : ''}><span>${esc(m.label)}</span></label>`).join('')}</div>
           <p class="hint">We add checks for the laws in these countries. You can change this later in Store settings.</p></div>` : ''}
-        <div id="w-suite">${suiteRows(S.catalog.groups, w.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: w.markets || [] })}</div>
+        <div id="w-suite">${suiteRows(S.catalog.groups, w.disabled, { shopify: shopping, aiEnabled: S.catalog.aiEnabled, markets: w.markets || [] })}</div>
         <div class="wiz-actions"><button class="btn secondary" type="button" id="back">Back</button><div class="right"><button class="btn" type="submit">Continue</button></div></div></form>`);
       const form = $('#w2');
       form.addEventListener('change', (e) => e.target.name === 'g' && e.target.closest('.check-row')?.classList.toggle('off', !e.target.checked));
       $$('input[name=market]', form).forEach((i) => (i.onchange = () => {
         w.disabled = readDisabled($('#w-suite'));
         w.markets = $$('input[name=market]:checked', form).map((x) => x.value);
-        $('#w-suite').innerHTML = suiteRows(S.catalog.groups, w.disabled, { shopify, aiEnabled: S.catalog.aiEnabled, markets: w.markets });
+        $('#w-suite').innerHTML = suiteRows(S.catalog.groups, w.disabled, { shopify: shopping, aiEnabled: S.catalog.aiEnabled, markets: w.markets });
       }));
-      const save = () => { if (feat('laws')) w.markets = $$('input[name=market]:checked', form).map((x) => x.value); w.disabled = readDisabled(form).concat(shopify ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key)); w.testProduct = $('#wtp')?.value || ''; };
+      const save = () => { if (feat('laws')) w.markets = $$('input[name=market]:checked', form).map((x) => x.value); w.disabled = readDisabled(form).concat(shopping ? [] : S.catalog.groups.filter((g) => g.key.startsWith('journey.') && !g.locked).map((g) => g.key)); w.testProduct = $('#wtp')?.value || ''; };
       $('#back').onclick = () => { save(); w.step = 1; wizardStep(ctx); };
       form.onsubmit = (e) => { e.preventDefault(); save(); w.step = 3; wizardStep(ctx); };
       return;
