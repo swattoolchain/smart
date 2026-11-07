@@ -3551,9 +3551,20 @@
     const keys = ['q', 'country', 'min_products', 'has_email', 'finding', 'status'];
     const filt = new URLSearchParams(); keys.forEach((k) => { if (qs.get(k)) filt.set(k, qs.get(k)); });
     const page = Math.max(0, Number(qs.get('page')) || 0);
-    const d = await api(`/api/admin/prospects?${filt}&limit=100&offset=${page * 100}`);
+    const [d, cc] = await Promise.all([api(`/api/admin/prospects?${filt}&limit=100&offset=${page * 100}`), api('/api/admin/prospects/crawl').catch(() => null)]);
     if (!ctx.alive()) return;
     const sm = d.summary;
+    const CC_STATE = { queued: 'Waiting', running: 'Reading now', done: 'Done', failed: 'Could not be read' };
+    const crawlPanel = cc ? `<section class="panel" id="pcrawl"><h2>Find stores automatically (Common Crawl)</h2>
+        <p class="muted">Common Crawl is a free public copy of the web. We read a bounded part of it for pages that run on Shopify and add those stores to the list. Stores already in the list, and stores that asked not to be contacted, are never added again.</p>
+        ${cc.pausedNote ? `<p class="notice" style="display:block" role="status" id="pcpaused">${esc(cc.pausedNote)}</p>` : ''}
+        ${cc.backoffUntil ? `<p class="muted" role="status">Common Crawl is slow right now. We wait until ${esc(new Date(cc.backoffUntil).toLocaleTimeString())} before trying again.</p>` : ''}
+        <div class="table-wrap"><table class="data" id="pcrawl-table"><thead><tr><th>Archive</th><th>Status</th><th class="num">Files read</th><th class="num">Stores found</th><th class="num">New stores added</th><th class="num">New share</th></tr></thead><tbody>${cc.archives.map((a) => `<tr>
+          <td>${esc(a.id)}</td><td>${esc(CC_STATE[a.state] || a.state)}${a.note ? `<div class="cell-sub">${esc(a.note)}</div>` : ''}</td>
+          <td class="num">${a.files_done} / ${a.files_total || '–'}</td><td class="num">${a.stores_found}</td><td class="num">${a.stores_added}</td><td class="num">${a.yield_percent == null ? '–' : a.yield_percent + '%'}</td></tr>`).join('')}</tbody></table></div>
+        <p class="row" style="gap:8px;margin-top:8px"><button class="btn secondary" type="button" id="pcrun">Read more now</button>
+          <label><input type="checkbox" id="pcauto" ${cc.auto ? 'checked' : ''}> Keep reading in the background</label>
+          <input id="pcadd" placeholder="Add archive, e.g. CC-MAIN-2025-30" aria-label="Archive name" size="28"><button class="btn secondary" type="button" id="pcaddbtn">Add</button></p></section>` : '';
     const cur = (k) => esc(qs.get(k) || '');
     const sel = (k, opts) => `<select name="${k}" aria-label="${esc(k)}">${opts.map(([v, l]) => `<option value="${esc(v)}" ${(qs.get(k) || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
     const STATE = { queued: 'Waiting to be read', skipped: 'Left out', failed: 'Could not be read' };
@@ -3569,6 +3580,7 @@
         <form id="pimport"><div class="field"><label for="ptext">Store addresses</label><textarea id="ptext" rows="4" placeholder="shop.example.com&#10;https://www.another-store.in/products/x"></textarea></div>
           <div class="field"><label for="pfile">Or a file</label><input id="pfile" type="file" accept=".csv,.txt,text/plain,text/csv"></div>
           <button class="btn" type="submit">Add to the list</button> <span id="pmsg" class="muted" role="status"></span></form></section>
+      ${crawlPanel}
       <section class="panel"><h2>Stores</h2>
         <form id="pfilter" class="row" style="gap:8px;flex-wrap:wrap;align-items:end">
           <input name="q" placeholder="Search" aria-label="Search" value="${cur('q')}">
@@ -3598,6 +3610,14 @@
       msg.textContent = 'Adding…';
       try { const r = await (await ytRaw('/api/admin/prospects/import?source=console', { method: 'POST', text })).json(); toast(r.message); adminProspects(ctx, head); } catch (ex) { msg.textContent = ex.message; }
     };
+    if (cc) {
+      $('#pcrun', ctx.main).onclick = async (e) => {
+        e.target.disabled = true;
+        try { const r = await api('/api/admin/prospects/crawl/run', { method: 'POST', body: {} }); toast(r.added ? `${r.added} new stores added` : ({ backoff: 'Common Crawl is slow; we will wait a little', empty: 'Every archive has been read', busy: 'Reading is already running' }[r.stopped] || 'Nothing new this time')); adminProspects(ctx, head); } catch (ex) { toast(ex.message); e.target.disabled = false; }
+      };
+      $('#pcauto', ctx.main).onchange = async (e) => { try { await api('/api/admin/prospects/crawl/auto', { method: 'POST', body: { on: e.target.checked } }); toast(e.target.checked ? 'Reading in the background' : 'Background reading stopped'); adminProspects(ctx, head); } catch (ex) { toast(ex.message); } };
+      $('#pcaddbtn', ctx.main).onclick = async () => { try { await api('/api/admin/prospects/crawl/archives', { method: 'POST', body: { id: $('#pcadd', ctx.main).value } }); adminProspects(ctx, head); } catch (ex) { toast(ex.message); } };
+    }
     $('#pfilter', ctx.main).onsubmit = (e) => {
       e.preventDefault();
       const f = new FormData(e.target), p = new URLSearchParams();

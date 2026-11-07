@@ -12,7 +12,7 @@
 import crypto from 'node:crypto';
 import express from 'express';
 import { chromium } from 'playwright';
-import { db } from './db.js';
+import { db, ensureColumn } from './db.js';
 import { config } from './config.js';
 import { audit } from './license.js';
 import { sendMail } from './alerts.js';
@@ -59,11 +59,12 @@ CREATE TABLE IF NOT EXISTS prospect_blocked (
 );
 CREATE TABLE IF NOT EXISTS prospect_notice (key TEXT PRIMARY KEY, at TEXT NOT NULL DEFAULT (datetime('now')));
 CREATE TABLE IF NOT EXISTS prospect_daily (day TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0);`);
+ensureColumn('prospects', 'source_detail', "TEXT NOT NULL DEFAULT ''"); // e.g. the Common Crawl archive a store came from
 
 // Stores that were contacted, answered or asked not to be contacted are never read or checked again.
 const LEFT_ALONE = "'contacted', 'replied', 'opted_out', 'do_not_contact'";
 const S = {
-  insert: db.prepare('INSERT OR IGNORE INTO prospects (domain, source) VALUES (?, ?)'),
+  insert: db.prepare('INSERT OR IGNORE INTO prospects (domain, source, source_detail) VALUES (?, ?, ?)'),
   blocked: db.prepare('SELECT 1 FROM prospect_blocked WHERE domain = ?'),
   block: db.prepare('INSERT OR IGNORE INTO prospect_blocked (domain, reason) VALUES (?, ?)'),
   get: db.prepare('SELECT * FROM prospects WHERE domain = ?'),
@@ -82,14 +83,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- import ----------
 /** Adds domains. A domain is stored once ever: known ones (any status) and blocked ones are never added again. */
-export function importDomains(text, { source = 'import', actor = '' } = {}) {
+export function importDomains(text, { source = 'import', detail = '', actor = '' } = {}) {
   const { domains, invalid, truncated } = parseList(text);
   let added = 0, already = 0, blocked = 0;
   db.exec('BEGIN');
   try {
     for (const d of domains) {
       if (S.blocked.get(d)) { blocked++; continue; }
-      if (S.insert.run(d, String(source).slice(0, 80)).changes) added++; else already++;
+      if (S.insert.run(d, String(source).slice(0, 80), String(detail).slice(0, 80)).changes) added++; else already++;
     }
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
@@ -149,7 +150,7 @@ function where(f = {}) {
   return { sql: w.join(' AND '), args: a };
 }
 const view = (r) => ({
-  domain: r.domain, status: r.status, state: r.state, source: r.source, shopify: r.shopify == null ? null : !!r.shopify, store_name: r.store_name, country: r.country, city: r.city,
+  domain: r.domain, status: r.status, state: r.state, source: r.source, source_detail: r.source_detail, shopify: r.shopify == null ? null : !!r.shopify, store_name: r.store_name, country: r.country, city: r.city,
   currency: r.currency, products: r.products, email: r.email, phone: r.phone, icp: r.icp, score: r.score, finding: r.finding, note: r.note, checked_at: r.checked_at, added_at: r.created_at,
 });
 
