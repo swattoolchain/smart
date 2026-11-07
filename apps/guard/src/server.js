@@ -41,6 +41,7 @@ import { teamRoutes, membership, memberMay, teamAllowed, redactForViewer } from 
 import * as themeClean from './theme-clean.js';
 import { checklist as securityChecklist, tick as tickSecurity, setReminders as setSecurityReminders, isItem as isSecurityItem } from './security-checklist.js';
 import { recoveryPacket } from './recovery-packet.js';
+import { closeStoreInfo, closedView, checkNow as checkStoreClosed } from './store-closed.js';
 import { incidentView, startIncident, updateIncident, endIncident, incidentBrief, startEmail as incidentStartEmail, endEmail as incidentEndEmail } from './incident.js';
 import { warningsFor } from './early-warning.js';
 import { cspMiddleware, cspReportRoute } from './csp.js';
@@ -695,10 +696,12 @@ app.patch('/api/stores/:id/security-checklist', requireUser, requireFeature('sec
 
 // ---------- Incident mode (S12): one button when the store may be hacked or badly broken ----------
 const onShopify = (s) => !!shopify.shopForStore(s.id) || /shopify/i.test(s.platform || '');
+// The view plus the "close your store" step (Shopify's password page) and what we last saw on the storefront.
+const incView = (s) => ({ ...incidentView(s, { shopify: onShopify(s) }), closeStore: { ...closeStoreInfo(s, { shopify: onShopify(s), shop: shopify.shopForStore(s.id)?.shop || null }), ...closedView(s.id) } });
 app.get('/api/stores/:id/incident', requireUser, requireFeature('incident_mode'), (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
-  res.json(incidentView(s, { shopify: onShopify(s) }));
+  res.json(incView(s));
 });
 app.post('/api/stores/:id/incident', requireUser, requireFeature('incident_mode'), async (req, res) => {
   const s = ownStore(req, res);
@@ -712,14 +715,14 @@ app.post('/api/stores/:id/incident', requireUser, requireFeature('incident_mode'
   // A full check right away, unless one is already running.
   const runId = q.activeRunForStore.get(s.id) ? null : startRun({ storeId: s.id, origin: s.url, kind: 'full', password: storePassword(s), trigger: 'incident' });
   sendMail(incidentStartEmail(s, row, { shopify: onShopify(s) })).catch((e) => console.error('incident email failed', e));
-  res.json({ ...incidentView(s, { shopify: onShopify(s) }), runId });
+  res.json({ ...incView(s), runId });
 });
 app.patch('/api/stores/:id/incident', requireUser, requireFeature('incident_mode'), (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
   try { updateIncident(s.id, { contacts: req.body?.contacts, steps: req.body?.steps }); }
   catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
-  res.json(incidentView(s, { shopify: onShopify(s) }));
+  res.json(incView(s));
 });
 app.post('/api/stores/:id/incident/end', requireUser, requireFeature('incident_mode'), (req, res) => {
   const s = ownStore(req, res);
@@ -727,14 +730,21 @@ app.post('/api/stores/:id/incident/end', requireUser, requireFeature('incident_m
   const row = endIncident(s.id, 'owner');
   if (!row) return res.status(404).json({ error: 'Incident mode is not on for this store.' });
   sendMail(incidentEndEmail(s, row)).catch((e) => console.error('incident email failed', e));
-  res.json(incidentView(s, { shopify: onShopify(s) }));
+  res.json(incView(s));
+});
+
+app.post('/api/stores/:id/incident/closed-check', requireUser, requireFeature('incident_mode'), async (req, res) => {
+  const s = ownStore(req, res);
+  if (!s) return;
+  try { await checkStoreClosed(s); } catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  res.json(incView(s));
 });
 
 // Recovery packet (S17): password reset link and a ready-to-send message to Shopify Support.
 app.get('/api/stores/:id/recovery-packet', requireUser, requireFeature('incident_mode'), (req, res) => {
   const s = ownStore(req, res);
   if (!s) return;
-  res.json(recoveryPacket(s, { shopify: onShopify(s) }));
+  res.json({ ...recoveryPacket(s, { shopify: onShopify(s) }), closeStore: closeStoreInfo(s, { shopify: onShopify(s), shop: shopify.shopForStore(s.id)?.shop || null }) });
 });
 app.get('/api/stores/:id/recovery-packet.txt', requireUser, requireFeature('incident_mode'), (req, res) => {
   const s = ownStore(req, res);

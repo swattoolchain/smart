@@ -2010,11 +2010,38 @@
       return `<p class="sub">Compared with the last healthy check, ${esc(when(c.healthy.created_at))}${c.latest ? ` and the latest check, ${esc(when(c.latest.created_at))}` : ''}. <a href="#/s/${s.id}/reports/${c.latest?.id || ''}">Open the latest report</a></p>
         ${rows.length ? `<ul class="sale-items inc-changes">${rows.join('')}</ul>` : `<p class="muted">${esc(c.note || 'Nothing we check has changed since then.')}</p>`}`;
     };
+    // "Close your store to shoppers now": Shopify's own password page. Link, message, and what we see on the storefront.
+    const closeHtml = (c, { status = true } = {}) => {
+      if (!c) return '';
+      const st = c.state === 'closed' ? `<p class="notice ok" id="cs-state"><b>Your store is closed.</b> Shoppers see the password page${c.since ? ` (since ${esc(when(c.since))})` : ''}. Remember to switch it off after you recover.</p>`
+        : c.state === 'open' ? `<p class="notice warn-n" id="cs-state"><b>Your store is still open to shoppers.</b> We do not see the password page yet. It can take a minute after you save in Shopify.</p>`
+        : c.state === 'unknown' ? `<p class="notice" id="cs-state">We could not tell if your store is closed. We will try again in a few minutes.</p>`
+        : c.on ? `<p class="notice" id="cs-state">We will check in a moment whether shoppers see the password page.</p>` : '';
+      return `<section class="panel" id="cs-panel"><h2>1. Close your store to shoppers now</h2>
+        <p class="sub">Shopify's own password page keeps shoppers, and anyone using your store, out while you recover. Nobody can buy until you switch it off.</p>
+        <ol>${c.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>
+        <div class="field"><label for="cs-msg">Message for the password page</label><input id="cs-msg" readonly value="${esc(c.message)}"></div>
+        <p class="inline-row"><a class="btn danger" id="cs-open" href="${esc(c.adminUrl)}" target="_blank" rel="noopener">${icon('lock', 16)}Open password protection</a><button class="btn secondary" type="button" id="cs-copy">${icon('copy', 16)}Copy message</button>${status && c.on ? '<button class="btn secondary" type="button" id="cs-check">Check now</button>' : ''}</p>
+        ${status ? st : ''}<p class="muted">${esc(c.reminder)}</p></section>`;
+    };
+    const wireClose = () => {
+      $('#cs-copy', ctx.main)?.addEventListener('click', async () => {
+        const t = $('#cs-msg', ctx.main).value;
+        try { await navigator.clipboard.writeText(t); } catch { const f = $('#cs-msg', ctx.main); f.focus(); f.select(); document.execCommand?.('copy'); }
+        toast('Copied. Paste it into the password page message.');
+      });
+      $('#cs-check', ctx.main)?.addEventListener('click', async (e) => {
+        const done = busy(e.currentTarget, 'Checking');
+        try { d = await api(`/api/stores/${s.id}/incident/closed-check`, { method: 'POST' }); if (ctx.alive()) draw(); }
+        catch (ex) { toast(ex.message, 'error'); done(); }
+      });
+    };
     const draw = () => {
       const a = d.active;
       if (!a) {
         ctx.main.innerHTML = `<div class="main-inner">${storeHead(s, 'Incident mode')}
           <p class="lede-sm">Think your store was hacked, or something just broke badly? Switch on incident mode. For ${d.hours} hours we check your store every ${d.everyMinutes} minutes, show what changed since the last healthy check, give you a recovery checklist, and send every alert to the people you add below. It can be started once a week per store.</p>
+          ${closeHtml(d.closeStore, { status: false })}
           <section class="panel inc-start"><h2>Start incident mode</h2>
             <form id="inc-form" class="stack">
               <div class="field"><label for="inc-reason">What happened? <span class="muted">(optional, goes in the emails)</span></label><input id="inc-reason" maxlength="500" placeholder="For example: prices changed by themselves, strange app installed"></div>
@@ -2035,6 +2062,7 @@
             if (ctx.alive()) draw();
           } catch (ex) { toast(ex.message, 'error'); done(); }
         });
+        wireClose();
         packetSection();
         return;
       }
@@ -2046,6 +2074,7 @@
             <div class="figure"><b>${a.runs.length}</b><span>checks since it started</span></div>
             <div class="figure"><b>${a.runs[0] ? esc(VLABEL[a.runs[0].verdict] || (a.runs[0].status === 'done' ? '–' : 'Running')) : '–'}</b><span>latest check</span></div>
             <div class="figure"><b>${stepsDone} of ${a.steps.length}</b><span>recovery steps done</span></div></div></section>
+        ${closeHtml(d.closeStore)}
         <section class="panel"><h2>What changed since the last healthy check</h2>${changesHtml(d.changes)}</section>
         <section class="panel"><h2>Recovery checklist</h2><ul class="sc-list">${a.steps.map((x) => `<li class="sc-item ${x.doneAt ? 'sc-done' : ''}" data-step="${esc(x.key)}">
             <label class="sc-tick"><input type="checkbox" ${x.doneAt ? 'checked' : ''} aria-label="${esc(x.title)}"><span class="sc-box">${icon('check', 15)}</span></label>
@@ -2060,6 +2089,7 @@
         try { d = await api(`/api/stores/${s.id}/incident`, { method: 'PATCH', body: { steps: { [key]: box.checked } } }); if (ctx.alive()) draw(); }
         catch (ex) { box.checked = !box.checked; box.disabled = false; toast(ex.message, 'error'); }
       }));
+      wireClose();
       $('#inc-team-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         try { d = await api(`/api/stores/${s.id}/incident`, { method: 'PATCH', body: { contacts: $('#inc-team').value } }); toast('Saved'); if (ctx.alive()) draw(); }
@@ -2081,9 +2111,11 @@
       try { p = await api(`/api/stores/${s.id}/recovery-packet`); } catch (ex) { box.innerHTML = `<p class="muted">${esc(ex.message)}</p>`; return; }
       if (!ctx.alive() || !box.isConnected) return;
       box.innerHTML = `<h2>Recovery packet</h2><p class="sub">Locked out, or think someone else got in? Reset your password first, then send this message to ${p.support ? 'Shopify Support' : 'your platform\'s support'}. It says what changed and when, from our checks.</p>
-        <div class="rp-grid"><div class="rp-reset"><h3>1. Reset your password</h3><ol>${p.reset.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>
+        <div class="rp-grid"><div class="rp-close"><h3>1. Close your store to shoppers now</h3><p>Switch on Shopify's password page so nobody can use the store while you recover. Message to show: <i>${esc(p.closeStore?.message || '')}</i></p>
+          <p><a class="btn danger" id="rp-close" href="${esc(p.closeStore?.adminUrl || '#')}" target="_blank" rel="noopener">${icon('lock', 16)}Open password protection</a></p><p class="muted">${esc(p.closeStore?.reminder || '')}</p></div>
+        <div class="rp-reset"><h3>2. Reset your password</h3><ol>${p.reset.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>
           <p><a class="btn" id="rp-reset" href="${esc(p.reset.url)}" target="_blank" rel="noopener">${icon('lock', 16)}Reset password</a>${p.reset.help ? ` <a class="btn secondary" href="${esc(p.reset.help)}" target="_blank" rel="noopener">Shopify's help</a>` : ''}</p></div>
-        <div class="rp-msg"><h3>2. Send this to ${p.support ? 'Shopify Support' : 'support'}</h3>
+        <div class="rp-msg"><h3>3. Send this to ${p.support ? 'Shopify Support' : 'support'}</h3>
           <div class="field"><label for="rp-subject">Subject</label><input id="rp-subject" readonly value="${esc(p.message.subject)}"></div>
           <div class="field"><label for="rp-text">Message</label><textarea id="rp-text" readonly rows="14">${esc(p.message.text)}</textarea></div>
           <p class="inline-row"><button class="btn" type="button" id="rp-copy">${icon('copy', 16)}Copy message</button><button class="btn secondary" type="button" id="rp-download">Download</button>${p.support ? `<a class="btn secondary" href="${esc(p.support.url)}" target="_blank" rel="noopener">${icon('external', 16)}Contact Shopify Support</a>` : ''}</p></div></div>`;
