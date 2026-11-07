@@ -102,7 +102,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * Checks one store. Returns findings only. `browser` is a Playwright browser; `log` receives each request
  * the checker makes on purpose ({ kind: 'page'|'fetch', path }), for tests and audits.
  */
-export async function checkStore(input, { browser, log = () => {}, now = () => new Date() } = {}) {
+export async function checkStore(input, { browser, log = () => {}, now = () => new Date(), minGapMs = 500, robotsText } = {}) {
   const out = {
     store: String(input || '').trim(), checked_at: now().toISOString(), status: 'ok',
     home_ok: null, home_load_ms: null, phone_lcp_ms: null, products: null, zero_price_products: null, zero_price_example: '',
@@ -121,7 +121,7 @@ export async function checkStore(input, { browser, log = () => {}, now = () => n
   const claim = async (kind, path) => {
     if (visited.has(path)) throw new Error(`already visited ${path}`);
     visited.add(path);
-    const wait = lastAt + Math.max(robots.delayMs, 500) - Date.now();
+    const wait = lastAt + Math.max(robots.delayMs, minGapMs) - Date.now();
     if (lastAt && wait > 0) await sleep(wait);
     lastAt = Date.now();
     log({ kind, path });
@@ -133,7 +133,11 @@ export async function checkStore(input, { browser, log = () => {}, now = () => n
   };
 
   // robots.txt first. Missing (4xx) means no rules; an error from the store means we stay away.
-  try {
+  if (typeof robotsText === 'string') {
+    // The caller already read robots.txt for this store (once is enough): use its rules.
+    visited.add('/robots.txt');
+    robots = parseRobots(robotsText);
+  } else try {
     await claim('fetch', '/robots.txt');
     const r = await fetch(origin + '/robots.txt', { headers: { 'user-agent': USER_AGENT }, redirect: 'follow', signal: AbortSignal.timeout(15000) });
     if (r.status >= 500) return { ...out, status: 'skipped', error: `robots.txt answered ${r.status}`, skipped: ['whole store (robots.txt unavailable)'] };

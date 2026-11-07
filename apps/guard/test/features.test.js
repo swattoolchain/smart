@@ -168,3 +168,23 @@ describe('Feature switches', () => {
     note(t, 'console switch changes the feature for customers; store settings hide "Where you sell" while it is off');
   });
 });
+
+describe('Prospects switch', () => {
+  let P, founder, owner;
+  before(async () => { P = await startProduct({ env: { FEATURES_DEFAULT: '' } }); founder = await founderSession(P); owner = await signup(P); });
+  after(async () => { await P?.stop(); });
+
+  it('Prospects is hidden and refused while its switch is off, and answers when it is on', async (t) => {
+    const routes = [['GET', '/api/admin/prospects'], ['GET', '/api/admin/prospects.csv'], ['GET', '/api/admin/prospects.json'], ['POST', '/api/admin/prospects/run'], ['GET', '/api/admin/prospects-ai'], ['POST', '/api/admin/prospects-ai/run']];
+    assert.ok(!(await founder.get('/api/me')).json.features.includes('prospects'), 'not offered to the app');
+    for (const [m, u] of routes) assert.equal((await founder.req(m, u, m === 'POST' ? {} : undefined)).status, 404, `${m} ${u} is hidden while off`);
+    assert.equal((await owner.get('/api/admin/prospects')).status, 404, 'customers see nothing either');
+    assert.equal((await founder.patch('/api/admin/features/prospects', { on: true })).status, 200);
+    assert.ok((await founder.get('/api/me')).json.features.includes('prospects'));
+    assert.equal((await founder.get('/api/admin/prospects')).status, 200);
+    assert.equal((await owner.get('/api/admin/prospects')).status, 403, 'on, but still founders only');
+    await founder.patch('/api/admin/features/prospects', { on: false });
+    assert.equal((await founder.get('/api/admin/prospects')).status, 404);
+    note(t, 'off: every route 404 and not in /api/me; on: founders only; off again: hidden');
+  });
+});

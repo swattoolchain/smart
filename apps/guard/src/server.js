@@ -16,6 +16,8 @@ import { scorecard, weekBuyability } from './scorecard.js';
 import crypto from 'node:crypto';
 import { entitlements, has, blockReason, licenseView, ensureLicense, notIncluded, plansWith, FEATURES, envAllowed, listPlans } from './license.js';
 import { adminRoutes } from './admin.js';
+import { prospectRoutes } from './prospect-list.js';
+import { prospectAiRoutes } from './prospect-ai.js';
 import { enabledKeys, checkOn, isOn, requireFeature } from './features.js';
 import * as shopify from './shopify.js';
 import { shopifyRoutes, shopifyWebhook } from './shopify-routes.js';
@@ -1147,6 +1149,8 @@ saleCalendarRoutes(app, { requireUser, ownStore, refuse });
 
 // ---------- Founder console: customers, licences, payments, plans ----------
 adminRoutes(app, { requireUser, isAdmin });
+prospectRoutes(app, { requireUser, isAdmin });
+prospectAiRoutes(app, { requireUser, isAdmin });
 runnerRoutes(app, { requireUser, isAdmin });
 
 // ---------- Founder view ----------
